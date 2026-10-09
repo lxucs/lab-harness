@@ -57,10 +57,13 @@ This works only if events stay plain data — see [events.md](events.md).
 | `before_tool_call` | after args validate, before execute | approval gate |
 | `after_tool_call` | after execute, before events emit | truncation, redaction |
 | `prepare_request` | before every provider request | compaction (later) |
-| `finish_turn` | after a turn's results, before `turn_end` | auto-continue (later) |
 
 Hooks are optional async callables. A feature that fits a hook does not belong
 in the loop.
+
+A fourth hook, `finish_turn` (for deciding to continue after a turn would
+otherwise end), was in the design but is not implemented — nothing needed it
+yet. It belongs here when an auto-continue feature does.
 
 ## Relationship to pi
 

@@ -49,9 +49,9 @@ run. The terminal is a subscriber; so is the JSONL writer. Every event is a
 frozen dataclass of JSON primitives, enforced by a round-trip test — which is
 what lets a frontend in another language be a third subscriber later.
 
-**The hooks.** `before_tool_call`, `after_tool_call`, `prepare_request`, and
-`finish_turn`. A feature that fits a hook does not belong in the loop. Tool
-approval is a hook; context compaction will be one.
+**The hooks.** `before_tool_call`, `after_tool_call`, and `prepare_request`. A
+feature that fits a hook does not belong in the loop. Tool approval is a hook;
+context compaction will be one.
 
 Details in [docs/architecture.md](docs/architecture.md).
 

@@ -106,7 +106,7 @@ provider-specific shapes out of the core types.
 agent/
   types.py   # AgentEvent, AgentTool, AgentContext, hook protocols
   loop.py    # run_agent_loop() — pure async function, no state
-  agent.py   # Agent — owns transcript, subscribers, abort, queue
+  agent.py   # Agent — owns transcript, subscribers, abort
 ```
 
 Two tiers, as in pi: `loop.py` is a function you hand a context and a config;
@@ -126,7 +126,9 @@ in-flight message read `agent.state.streaming_message`.
 | `before_tool_call` | `(ctx) -> BeforeResult \| None` | approval gate |
 | `after_tool_call` | `(ctx) -> AfterResult \| None` | truncation, redaction |
 | `prepare_request` | `(req) -> RequestUpdate \| None` | compaction (later) |
-| `finish_turn` | `(turn) -> Decision \| None` | auto-continue (later) |
+
+`finish_turn` was in this design but was not built — nothing needed it. It
+belongs here when an auto-continue feature does.
 
 **Simplification over pi:** no message queue at all. pi has separate steering
 and follow-up queues with `all` / `one-at-a-time` drain modes. Here a single run
