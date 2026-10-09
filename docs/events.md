@@ -45,12 +45,26 @@ agent_end
 | `agent_end` | `messages` | Last event of a run |
 | `turn_start` | — | One assistant response + its tool calls |
 | `turn_end` | `message`, `tool_results` | |
-| `message_start` | `message` | system, user, assistant, or tool result |
+| `message_start` | `message` | system, user, assistant, or tool result — see the note below |
 | `message_update` | `block_index`, `delta`, `kind` | Assistant streaming only |
 | `message_end` | `message` | |
 | `tool_execution_start` | `tool_call_id`, `tool_name`, `arguments` | |
 | `tool_execution_update` | `tool_call_id`, `tool_name`, `content` | Streaming partial results |
 | `tool_execution_end` | `tool_call_id`, `tool_name`, `content`, `is_error`, `duration_ms` | |
+
+### `message_start` on an assistant message is a placeholder
+
+For an assistant message, `message_start.message` has **empty `content`**. The
+assembled message does not exist until the provider's terminal event, so the
+start event exists to tell you *when to open a buffer*, not what is in it.
+`message_end` carries the authoritative message.
+
+Tool-result `message_start` events are different — those carry the full message,
+because it is already complete when emitted.
+
+So do not read `message_start.message.content` for an assistant message.
+Accumulate the `message_update` deltas, or read
+`agent.state.streaming_message`.
 
 ### Why `message_update` carries a delta
 
