@@ -58,7 +58,7 @@ def block_from_dict(data: dict[str, Any]) -> _types.ContentBlock:
     cls = _BLOCKS.get(tag)
     if cls is None:
         raise ValueError(f"Unknown content block type: {tag!r}")
-    return cls(**payload)  # type: ignore[return-value]
+    return cls(**payload)
 
 
 def message_from_dict(data: dict[str, Any]) -> _types.Message:
@@ -71,7 +71,7 @@ def message_from_dict(data: dict[str, Any]) -> _types.Message:
         payload["content"] = tuple(block_from_dict(b) for b in payload["content"])
     if "usage" in payload and isinstance(payload["usage"], dict):
         payload["usage"] = _types.Usage(**payload["usage"])
-    return cls(**payload)  # type: ignore[return-value]
+    return cls(**payload)
 
 
 def event_from_dict(data: dict[str, Any]) -> _events.StreamEvent:
@@ -84,4 +84,4 @@ def event_from_dict(data: dict[str, Any]) -> _events.StreamEvent:
         payload["message"] = message_from_dict(payload["message"])
     if isinstance(payload.get("tool_call"), dict):
         payload["tool_call"] = block_from_dict(payload["tool_call"])
-    return cls(**payload)  # type: ignore[return-value]
+    return cls(**payload)

@@ -89,9 +89,7 @@ def test_block_roundtrip(block: object) -> None:
 
 
 def _msg_id(m: object) -> str:
-    from harness.llm.types import AssistantMessage as AM
-
-    return f"{m.role}-{m.stop_reason if isinstance(m, AM) else ''}"  # type: ignore[union-attr]
+    return f"{m.role}-{m.stop_reason if isinstance(m, AssistantMessage) else ''}"  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize("message", MESSAGES, ids=_msg_id)
@@ -116,4 +114,26 @@ def test_every_event_type_is_covered() -> None:
 
     union_members = set(get_args(events_module.StreamEvent))
     covered = {type(e) for e in EVENTS}
+    assert covered == union_members
+
+
+def test_every_block_type_is_covered() -> None:
+    """Guard against adding a content block without a round-trip test case."""
+    from typing import get_args
+
+    from harness.llm import types as types_module
+
+    union_members = set(get_args(types_module.ContentBlock))
+    covered = {type(b) for b in BLOCKS}
+    assert covered == union_members
+
+
+def test_every_message_type_is_covered() -> None:
+    """Guard against adding a message type without a round-trip test case."""
+    from typing import get_args
+
+    from harness.llm import types as types_module
+
+    union_members = set(get_args(types_module.Message))
+    covered = {type(m) for m in MESSAGES}
     assert covered == union_members
