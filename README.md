@@ -94,15 +94,15 @@ should also read [AGENTS.md](AGENTS.md).
 
 ### In progress
 
-Nothing yet — implementation continues at step 2.
+Nothing yet — implementation continues at step 4.
 
 ### Planned
 
 Build order. Each step is independently verifiable.
 
 - [x] 1 · `llm/` core types, event protocol, serialization tests
-- [ ] 2 · `FakeProvider` and the `Provider` protocol
-- [ ] 3 · `agent/loop.py` — the agentic loop
+- [x] 2 · `FakeProvider` and the `Provider` protocol
+- [x] 3 · `agent/loop.py` — the agentic loop
 - [ ] 4 · `agent/agent.py` — state, subscribers, abort, message queue
 - [ ] 5 · `tools/` base, registry, filesystem tools
 - [ ] 6 · `cli/json_sink.py` — first end-to-end run

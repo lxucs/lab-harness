@@ -8,6 +8,19 @@ import json
 
 import pytest
 
+from harness.agent.types import (
+    AgentEnd,
+    AgentEvent,
+    AgentStart,
+    MessageEnd,
+    MessageStart,
+    MessageUpdate,
+    ToolExecutionEnd,
+    ToolExecutionStart,
+    ToolExecutionUpdate,
+    TurnEnd,
+    TurnStart,
+)
 from harness.llm.events import (
     StreamDone,
     StreamError,
@@ -137,3 +150,35 @@ def test_every_message_type_is_covered() -> None:
     union_members = set(get_args(types_module.Message))
     covered = {type(m) for m in MESSAGES}
     assert covered == union_members
+
+
+AGENT_EVENTS = [
+    AgentStart(),
+    AgentEnd(messages=(UserMessage(content=text("hi")),)),
+    TurnStart(),
+    TurnEnd(message=_ASSISTANT, tool_results=()),
+    MessageStart(message=UserMessage(content=text("hi"))),
+    MessageUpdate(block_index=0, delta="a", kind="text"),
+    MessageEnd(message=_ASSISTANT),
+    ToolExecutionStart(tool_call_id="c1", tool_name="read", arguments={"p": "a"}),
+    ToolExecutionUpdate(tool_call_id="c1", tool_name="read", content=text("partial")),
+    ToolExecutionEnd(
+        tool_call_id="c1", tool_name="read", content=text("done"), is_error=False, duration_ms=5
+    ),
+]
+
+
+@pytest.mark.parametrize("event", AGENT_EVENTS, ids=lambda e: e.type)
+def test_agent_event_is_json_serializable(event: AgentEvent) -> None:
+    """Agent events must be plain data — this is what keeps cli/ swappable."""
+    encoded = json.dumps(to_dict(event))
+    assert json.loads(encoded)["type"] == event.type
+
+
+def test_every_agent_event_type_is_covered() -> None:
+    from typing import get_args
+
+    from harness.agent import types as agent_types
+
+    union_members = set(get_args(agent_types.AgentEvent))
+    assert {type(e) for e in AGENT_EVENTS} == union_members

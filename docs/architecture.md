@@ -102,8 +102,8 @@ proceeds.
 | # | Step | Status |
 |---|---|---|
 | 1 | `llm/types.py`, `events.py`, serialization tests | Complete |
-| 2 | `llm/fake.py`, `provider.py` | Not started |
-| 3 | `agent/loop.py` against `FakeProvider` | Not started |
+| 2 | `llm/fake.py`, `provider.py` | Complete |
+| 3 | `agent/loop.py` against `FakeProvider` | Complete |
 | 4 | `agent/agent.py` — state, subscribers, abort, queue | Not started |
 | 5 | `tools/base.py`, `registry.py`, `fs.py` | Not started |
 | 6 | `cli/json_sink.py` → first end-to-end run | Not started |

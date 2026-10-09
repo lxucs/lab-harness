@@ -5,7 +5,8 @@ The event stream is the contract between the runtime and anything watching it.
 
 > **Status:** The provider stream protocol (`StreamEvent` and its members) is
 > implemented in `harness/llm/events.py` as of Task 1. Agent-level events
-> (`AgentEvent` and the subscriber model described below) arrive in Task 3.
+> (`AgentEvent` and the subscriber model described below) are implemented in
+> `harness/agent/types.py` as of Task 3.
 
 ## The rule that makes this work
 
@@ -45,11 +46,11 @@ agent_end
 | `turn_start` | — | One assistant response + its tool calls |
 | `turn_end` | `message`, `tool_results` | |
 | `message_start` | `message` | system, user, assistant, or tool result |
-| `message_update` | `block_index`, `delta` | Assistant streaming only |
+| `message_update` | `block_index`, `delta`, `kind` | Assistant streaming only |
 | `message_end` | `message` | |
-| `tool_execution_start` | `tool_call_id`, `tool_name`, `args` | |
-| `tool_execution_update` | `tool_call_id`, `partial` | Streaming partial results |
-| `tool_execution_end` | `tool_call_id`, `result`, `is_error`, `duration_ms` | |
+| `tool_execution_start` | `tool_call_id`, `tool_name`, `arguments` | |
+| `tool_execution_update` | `tool_call_id`, `tool_name`, `content` | Streaming partial results |
+| `tool_execution_end` | `tool_call_id`, `tool_name`, `content`, `is_error`, `duration_ms` | |
 
 ### Why `message_update` carries a delta
 
