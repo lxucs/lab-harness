@@ -104,7 +104,7 @@ proceeds.
 | 1 | `llm/types.py`, `events.py`, serialization tests | Complete |
 | 2 | `llm/fake.py`, `provider.py` | Complete |
 | 3 | `agent/loop.py` against `FakeProvider` | Complete |
-| 4 | `agent/agent.py` — state, subscribers, abort, queue | Not started |
+| 4 | `agent/agent.py` — state, subscribers, abort, queue | Complete |
 | 5 | `tools/base.py`, `registry.py`, `fs.py` | Not started |
 | 6 | `cli/json_sink.py` → first end-to-end run | Not started |
 | 7 | `llm/providers/anthropic.py` → first real run | Not started |

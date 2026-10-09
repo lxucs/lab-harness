@@ -6,7 +6,9 @@ The event stream is the contract between the runtime and anything watching it.
 > **Status:** The provider stream protocol (`StreamEvent` and its members) is
 > implemented in `harness/llm/events.py` as of Task 1. Agent-level events
 > (`AgentEvent` and the subscriber model described below) are implemented in
-> `harness/agent/types.py` as of Task 3.
+> `harness/agent/types.py` as of Task 3. The `Agent` class — subscriber
+> fan-out, `_emit`, and the full event lifecycle — is implemented in
+> `harness/agent/agent.py` as of Task 4.
 
 ## The rule that makes this work
 
