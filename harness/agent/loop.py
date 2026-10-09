@@ -173,7 +173,9 @@ async def _stream_turn(
         await _safe_emit(
             emit,
             MessageStart(
-                message=AssistantMessage(content=(), model=cfg.model.id, provider=cfg.provider.name)
+                # model, not cfg.model: prepare_request may have swapped it for
+                # this turn, and MessageStart must name the model actually used.
+                message=AssistantMessage(content=(), model=model.id, provider=cfg.provider.name)
             ),
         )
 
@@ -199,7 +201,7 @@ async def _stream_turn(
         # it as an error turn rather than hanging the loop.
         final = AssistantMessage(
             content=(),
-            model=cfg.model.id,
+            model=model.id,
             provider=cfg.provider.name,
             stop_reason="error",
             error_message="Provider stream ended without a terminal event",
@@ -328,64 +330,77 @@ async def _execute_tool_calls(
     # collapse to a single entry and hand the same outcome to both messages.
     outcomes: dict[int, tuple[ToolResult, int]] = {}
 
-    if run_serially:
-        for index, (call, tool, _immediate) in enumerate(prepared):
-            if tool is None:
-                continue
-            if _aborted(cfg):
-                # Backstop for tools that ignore the signal they were handed:
-                # without it a long sequential batch runs to completion after
-                # the user has already asked for it to stop.
-                outcomes[index] = (await _finish(call, _aborted_result(), 0, cfg, emit), 0)
-                continue
-            outcomes[index] = await run_one(call, tool)
-    else:
-        runnable = [
-            (index, call, tool)
-            for index, (call, tool, _immediate) in enumerate(prepared)
-            if tool is not None
-        ]
-        if runnable:
-            # return_exceptions=True so one child blowing up cannot leave its
-            # siblings running unsupervised after the gather has given up.
-            gathered = await asyncio.gather(
-                *(run_one(call, tool) for _index, call, tool in runnable),
-                return_exceptions=True,
-            )
-            for (index, call, _tool), outcome in zip(runnable, gathered, strict=True):
-                if isinstance(outcome, BaseException):
-                    # run_one already converts tool failures, so reaching here
-                    # means the loop's own machinery failed. Report it as an
-                    # error result rather than losing the call entirely.
-                    _log.error(
-                        "Tool %r failed outside its own error handling", call.name, exc_info=outcome
-                    )
-                    failed = ToolResult(content=text(str(outcome)), is_error=True)
-                    outcomes[index] = (await _finish(call, failed, 0, cfg, emit), 0)
-                else:
-                    outcomes[index] = outcome
-
-    results: list[ToolResultMessage] = []
-    for index, (call, _tool, immediate) in enumerate(prepared):
-        if immediate is not None:
-            final = await _finish(call, immediate, 0, cfg, emit)
-            duration = 0
+    # finally, not a trailing await: on cancellation the drain below would be
+    # skipped and an in-flight update task would outlive the loop, which is the
+    # abandonment `update_tasks` exists to prevent.
+    try:
+        if run_serially:
+            for index, (call, tool, _immediate) in enumerate(prepared):
+                if tool is None:
+                    continue
+                if _aborted(cfg):
+                    # Backstop for tools that ignore the signal they were handed:
+                    # without it a long sequential batch runs to completion after
+                    # the user has already asked for it to stop.
+                    outcomes[index] = (await _finish(call, _aborted_result(), 0, cfg, emit), 0)
+                    continue
+                outcomes[index] = await run_one(call, tool)
         else:
-            final, duration = outcomes[index]
-        results.append(
-            ToolResultMessage(
-                tool_call_id=call.id,
-                tool_name=call.name,
-                content=final.content,
-                is_error=final.is_error,
-                duration_ms=duration,
-            )
-        )
+            runnable = [
+                (index, call, tool)
+                for index, (call, tool, _immediate) in enumerate(prepared)
+                if tool is not None
+            ]
+            if runnable:
+                # return_exceptions=True so one child blowing up cannot leave its
+                # siblings running unsupervised after the gather has given up.
+                gathered = await asyncio.gather(
+                    *(run_one(call, tool) for _index, call, tool in runnable),
+                    return_exceptions=True,
+                )
+                for (index, call, _tool), outcome in zip(runnable, gathered, strict=True):
+                    if isinstance(outcome, asyncio.CancelledError):
+                        # return_exceptions=True hands cancellation back as a value
+                        # rather than propagating it. Re-raise so cancelling the run
+                        # actually stops it: swallowing this would turn a cancelled
+                        # child into a blank error result and let the loop issue
+                        # another provider request.
+                        raise outcome
+                    if isinstance(outcome, BaseException):
+                        # run_one already converts tool failures, so reaching here
+                        # means the loop's own machinery failed. Report it as an
+                        # error result rather than losing the call entirely.
+                        _log.error(
+                            "Tool %r failed outside its own error handling",
+                            call.name,
+                            exc_info=outcome,
+                        )
+                        failed = ToolResult(content=text(str(outcome)), is_error=True)
+                        outcomes[index] = (await _finish(call, failed, 0, cfg, emit), 0)
+                    else:
+                        outcomes[index] = outcome
 
-    if update_tasks:
-        # Anything a cancelled or abandoned child left behind.
-        await asyncio.gather(*update_tasks, return_exceptions=True)
-    return results
+        results: list[ToolResultMessage] = []
+        for index, (call, _tool, immediate) in enumerate(prepared):
+            if immediate is not None:
+                final = await _finish(call, immediate, 0, cfg, emit)
+                duration = 0
+            else:
+                final, duration = outcomes[index]
+            results.append(
+                ToolResultMessage(
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    content=final.content,
+                    is_error=final.is_error,
+                    duration_ms=duration,
+                )
+            )
+        return results
+    finally:
+        if update_tasks:
+            # Anything a cancelled or abandoned child left behind.
+            await asyncio.gather(*update_tasks, return_exceptions=True)
 
 
 async def _before_call(

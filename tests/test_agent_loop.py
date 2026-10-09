@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -17,6 +18,8 @@ from harness.agent.types import (
     MessageEnd,
     MessageStart,
     MessageUpdate,
+    PrepareRequestContext,
+    RequestUpdate,
     ToolContext,
     ToolExecutionEnd,
     ToolExecutionStart,
@@ -642,3 +645,60 @@ async def test_failing_update_emit_is_observable_not_an_orphaned_task(
     # The run survived.
     roles = [m.role for m in messages]
     assert roles == ["assistant", "tool_result", "assistant"]
+
+
+class CancellingTool:
+    """A tool whose own task is cancelled while it runs.
+
+    Distinct from outer cancellation of the whole run: here CancelledError
+    escapes execute() and reaches gather as a returned value.
+    """
+
+    def __init__(self) -> None:
+        self.name = "cancelling"
+        self.description = "cancels itself"
+        self.parameters: dict[str, object] = {"type": "object", "properties": {}}
+        self.execution_mode: ExecutionMode = "parallel"
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()
+        await asyncio.sleep(0)
+        return ToolResult(content=text("never reached"))
+
+
+async def test_cancelled_child_propagates_instead_of_becoming_an_error_result() -> None:
+    """gather(return_exceptions=True) hands CancelledError back as a value.
+
+    Swallowing it would convert cancellation into a blank error result and let
+    the loop issue another provider request -- the same "kept going after you
+    asked it to stop" failure the abort rechecks exist to prevent.
+    """
+    call = ToolCallBlock(id="c1", name="cancelling", arguments={})
+    # A second script entry: if cancellation is swallowed the loop consumes it.
+    provider = FakeProvider([tool_call_response([call]), text_response("SHOULD NOT RUN")])
+    _, emit = _collector()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_agent_loop(_ctx(CancellingTool()), _cfg(provider), emit)
+
+    assert len(provider.requests) == 1, "loop issued another request after cancellation"
+
+
+async def test_message_start_reports_the_model_prepare_request_selected() -> None:
+    """A swapped model must be named by MessageStart, not just MessageEnd."""
+    swapped = replace(FAKE_MODEL, id="swapped-model")
+    provider = FakeProvider([text_response("ok")])
+    events, emit = _collector()
+
+    async def swap(request: PrepareRequestContext) -> RequestUpdate:
+        return RequestUpdate(model=swapped)
+
+    await run_agent_loop(_ctx(), _cfg(provider, prepare_request=swap), emit)
+
+    starts = [e for e in events if isinstance(e, MessageStart)]
+    assert len(starts) == 1
+    opened = starts[0].message
+    assert isinstance(opened, AssistantMessage)
+    assert opened.model == "swapped-model"
