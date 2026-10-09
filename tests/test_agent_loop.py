@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from typing import Any
+
+import pytest
 
 from harness.agent.loop import run_agent_loop
 from harness.agent.types import (
@@ -11,10 +14,13 @@ from harness.agent.types import (
     EventSink,
     ExecutionMode,
     LoopConfig,
+    MessageEnd,
+    MessageStart,
     MessageUpdate,
     ToolContext,
     ToolExecutionEnd,
     ToolExecutionStart,
+    ToolExecutionUpdate,
     ToolResult,
 )
 from harness.config import Config
@@ -124,6 +130,49 @@ async def test_streaming_deltas_become_message_updates() -> None:
     assert deltas == ["a", "b", "c"]
 
 
+async def test_message_start_precedes_its_deltas() -> None:
+    """docs/events.md: message_start -> message_update x N -> message_end.
+
+    A renderer allocating its streaming buffer on message_start must not
+    receive deltas for a message that has not begun.
+    """
+    provider = FakeProvider([text_response("abc", chunk_size=1)])
+    events, emit = _collector()
+
+    await run_agent_loop(_ctx(), _cfg(provider), emit)
+
+    kinds = [e.type for e in events if e.type.startswith("message_")]
+    assert kinds == [
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end",
+    ]
+
+    # message_start carries a placeholder; message_end is the authoritative one.
+    start = next(e for e in events if isinstance(e, MessageStart))
+    end = next(e for e in events if isinstance(e, MessageEnd))
+    assert isinstance(start.message, AssistantMessage)
+    assert start.message.content == ()
+    assert isinstance(end.message, AssistantMessage)
+    first_block = end.message.content[0]
+    assert isinstance(first_block, TextBlock)
+    assert first_block.text == "abc"
+
+
+async def test_lone_stream_error_still_emits_exactly_one_message_start() -> None:
+    """A provider may terminate with `error` as its first event, with no
+    StreamStart — the fallback must still open the message exactly once."""
+    provider = FakeProvider([error_response("setup failed")])
+    events, emit = _collector()
+
+    await run_agent_loop(_ctx(), _cfg(provider), emit)
+
+    kinds = [e.type for e in events if e.type.startswith("message_")]
+    assert kinds == ["message_start", "message_end"]
+
+
 async def test_executes_tool_call_then_continues() -> None:
     tool = RecordingTool()
     call = ToolCallBlock(id="c1", name="echo", arguments={"v": 1})
@@ -212,9 +261,14 @@ async def test_truncated_response_fails_all_tool_calls_unexecuted() -> None:
     results = [m for m in messages if isinstance(m, ToolResultMessage)]
     assert len(results) == 2
     assert all(r.is_error for r in results)
-    assert all(
-        "token limit" in b.text for r in results for b in r.content if isinstance(b, TextBlock)
-    )
+    # Assert the block IS a TextBlock before reading .text: an `isinstance`
+    # filter inside the comprehension would make this pass vacuously for
+    # results carrying no text at all.
+    for result in results:
+        assert len(result.content) == 1
+        block = result.content[0]
+        assert isinstance(block, TextBlock)
+        assert "token limit" in block.text
 
 
 async def test_before_tool_call_can_block() -> None:
@@ -340,3 +394,251 @@ async def test_abort_signal_stops_the_run() -> None:
     assert isinstance(last, AssistantMessage)
     assert last.stop_reason == "aborted"
     assert isinstance(events[-1], AgentEnd)
+
+    # Finding 7: the aborted message must be announced, not just returned, or a
+    # sink rendering from message events shows nothing for a message that exists.
+    starts = [e for e in events if isinstance(e, MessageStart)]
+    ends = [e for e in events if isinstance(e, MessageEnd)]
+    assert [e.message for e in starts] == [last]
+    assert [e.message for e in ends] == [last]
+
+
+# --- hook and subscriber isolation (Finding 1) ----------------------------
+
+
+async def test_raising_after_tool_call_hook_does_not_kill_the_run() -> None:
+    """Hooks are the approval-gate seam; a raising one must degrade, not escape."""
+    slow = RecordingTool(name="slow", result="slow-done", delay=0.05)
+    fast = RecordingTool(name="fast", result="fast-done", delay=0.0)
+    calls = [
+        ToolCallBlock(id="c1", name="slow", arguments={}),
+        ToolCallBlock(id="c2", name="fast", arguments={}),
+    ]
+    provider = FakeProvider([tool_call_response(calls), text_response("recovered")])
+    _, emit = _collector()
+
+    async def boom(ctx: object) -> None:
+        raise RuntimeError("hook exploded")
+
+    messages = await run_agent_loop(_ctx(slow, fast), _cfg(provider, after_tool_call=boom), emit)
+
+    results = [m for m in messages if isinstance(m, ToolResultMessage)]
+    assert [m.tool_call_id for m in results] == ["c1", "c2"]
+    for result in results:
+        assert result.is_error, "a failing hook must surface as an error result"
+        block = result.content[0]
+        assert isinstance(block, TextBlock)
+        assert "hook exploded" in block.text
+    # The run continued to the next turn rather than dying mid-batch.
+    assert isinstance(messages[-1], AssistantMessage)
+    assert messages[-1].stop_reason == "stop"
+
+
+async def test_raising_subscriber_does_not_break_the_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """docs/events.md: listener exceptions are isolated."""
+    tool = RecordingTool()
+    call = ToolCallBlock(id="c1", name="echo", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("done")])
+
+    seen: list[str] = []
+
+    async def hostile(event: AgentEvent) -> None:
+        seen.append(event.type)
+        raise RuntimeError(f"subscriber exploded on {event.type}")
+
+    with caplog.at_level(logging.ERROR, logger="harness.agent.loop"):
+        messages = await run_agent_loop(_ctx(tool), _cfg(provider), hostile)
+
+    assert tool.calls == [{}]
+    assert "agent_start" in seen and "agent_end" in seen
+    roles = [m.role for m in messages]
+    assert roles == ["assistant", "tool_result", "assistant"]
+    assert any("subscriber exploded" in r.message or r.exc_info for r in caplog.records)
+
+
+# --- abort during a batch (Finding 2) -------------------------------------
+
+
+class AbortingTool:
+    """Fires the abort signal, then keeps running — a tool that ignores it."""
+
+    def __init__(self, signal: asyncio.Event, name: str = "aborter") -> None:
+        self.name = name
+        self.description = name
+        self.parameters: dict[str, object] = {"type": "object", "properties": {}}
+        self.execution_mode: ExecutionMode = "sequential"
+        self._signal = signal
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        self._signal.set()
+        return ToolResult(content=text("aborting"))
+
+
+async def test_abort_mid_batch_skips_remaining_serial_tools() -> None:
+    signal = asyncio.Event()
+    aborter = AbortingTool(signal)
+    later = RecordingTool(name="later", execution_mode="sequential")
+    calls = [
+        ToolCallBlock(id="c1", name="aborter", arguments={}),
+        ToolCallBlock(id="c2", name="later", arguments={}),
+        ToolCallBlock(id="c3", name="later", arguments={}),
+    ]
+    provider = FakeProvider([tool_call_response(calls)])
+    _, emit = _collector()
+
+    messages = await run_agent_loop(_ctx(aborter, later), _cfg(provider, signal=signal), emit)
+
+    assert later.calls == [], "tools after the abort must not execute"
+    results = [m for m in messages if isinstance(m, ToolResultMessage)]
+    assert [m.tool_call_id for m in results] == ["c1", "c2", "c3"]
+    assert not results[0].is_error
+    for result in results[1:]:
+        assert result.is_error
+        block = result.content[0]
+        assert isinstance(block, TextBlock)
+        assert "aborted" in block.text.lower()
+    # Only one provider request: the loop must not start another turn.
+    assert len(provider.requests) == 1
+
+
+async def test_abort_during_parallel_batch_is_reported_on_the_last_turn() -> None:
+    """The post-batch recheck is not redundant with the one at the top of the
+    turn: on the final turn that one never runs, so an abort that fired during
+    the batch would go unreported."""
+    from dataclasses import replace as dc_replace
+
+    from harness.config import AgentConfig
+
+    signal = asyncio.Event()
+
+    class Aborting:
+        name = "aborter"
+        description = "aborter"
+
+        def __init__(self) -> None:
+            self.parameters: dict[str, object] = {"type": "object", "properties": {}}
+            self.execution_mode: ExecutionMode = "parallel"
+
+        async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+            signal.set()
+            return ToolResult(content=text("aborting"))
+
+    calls = [ToolCallBlock(id="c1", name="aborter", arguments={})]
+    provider = FakeProvider([tool_call_response(calls)])
+    events, emit = _collector()
+    cfg = LoopConfig(
+        model=FAKE_MODEL,
+        provider=provider,
+        config=dc_replace(Config(), agent=AgentConfig(max_turns=1)),
+        signal=signal,
+    )
+
+    messages = await run_agent_loop(_ctx(Aborting()), cfg, emit)
+
+    assert len(provider.requests) == 1, "no provider request after the abort"
+    last = messages[-1]
+    assert isinstance(last, AssistantMessage)
+    assert last.stop_reason == "aborted"
+    assert any(isinstance(e, MessageEnd) and e.message is last for e in events)
+
+
+# --- duplicate tool call ids (Finding 3) ----------------------------------
+
+
+async def test_duplicate_tool_call_ids_do_not_cross_wire_results() -> None:
+    """Call ids come from the provider — untrusted. Duplicates must not collapse."""
+    alpha = RecordingTool(name="alpha", result="alpha-result")
+    beta = RecordingTool(name="beta", result="beta-result")
+    calls = [
+        ToolCallBlock(id="dup", name="alpha", arguments={}),
+        ToolCallBlock(id="dup", name="beta", arguments={}),
+    ]
+    provider = FakeProvider([tool_call_response(calls), text_response("done")])
+    _, emit = _collector()
+
+    messages = await run_agent_loop(_ctx(alpha, beta), _cfg(provider), emit)
+
+    results = [m for m in messages if isinstance(m, ToolResultMessage)]
+    assert len(results) == 2
+    by_name = {}
+    for result in results:
+        block = result.content[0]
+        assert isinstance(block, TextBlock)
+        by_name[result.tool_name] = block.text
+    assert by_name == {"alpha": "alpha-result", "beta": "beta-result"}
+
+
+# --- tool update ordering (Finding 4) -------------------------------------
+
+
+class UpdatingTool:
+    """Reports progress through ctx.on_update before returning."""
+
+    def __init__(self, name: str = "updating", *, updates: int = 1) -> None:
+        self.name = name
+        self.description = name
+        self.parameters: dict[str, object] = {"type": "object", "properties": {}}
+        self.execution_mode: ExecutionMode = "parallel"
+        self._updates = updates
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        assert ctx.on_update is not None
+        for i in range(self._updates):
+            ctx.on_update(ToolResult(content=text(f"partial-{i}")))
+        return ToolResult(content=text("final"))
+
+
+async def test_tool_update_is_emitted_before_that_tools_end_event() -> None:
+    """docs/events.md orders update before end. A renderer that tears down its
+    per-tool widget on end must not then receive an update for it."""
+    call = ToolCallBlock(id="c1", name="updating", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("done")])
+    events, emit = _collector()
+
+    await run_agent_loop(_ctx(UpdatingTool(updates=2)), _cfg(provider), emit)
+
+    tool_events = [e.type for e in events if e.type.startswith("tool_execution_")]
+    assert tool_events == [
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_update",
+        "tool_execution_end",
+    ]
+    updates = [e for e in events if isinstance(e, ToolExecutionUpdate)]
+    assert [e.tool_call_id for e in updates] == ["c1", "c1"]
+    texts = []
+    for update in updates:
+        block = update.content[0]
+        assert isinstance(block, TextBlock)
+        texts.append(block.text)
+    assert texts == ["partial-0", "partial-1"]
+
+
+async def test_failing_update_emit_is_observable_not_an_orphaned_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A fire-and-forget update task swallows its exception into a stderr dump."""
+    call = ToolCallBlock(id="c1", name="updating", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("done")])
+    events: list[AgentEvent] = []
+
+    async def emit(event: AgentEvent) -> None:
+        events.append(event)
+        if isinstance(event, ToolExecutionUpdate):
+            raise RuntimeError("update sink exploded")
+
+    with caplog.at_level(logging.ERROR):
+        messages = await run_agent_loop(_ctx(UpdatingTool()), _cfg(provider), emit)
+
+    assert any(isinstance(e, ToolExecutionUpdate) for e in events)
+    # Attributed to the loop's own logger. A fire-and-forget task instead
+    # surfaces this as asyncio's "Task exception was never retrieved" dump,
+    # which lands on the `asyncio` logger at an unpredictable time.
+    ours = [r for r in caplog.records if r.name == "harness.agent.loop" and r.exc_info]
+    assert ours, f"expected a loop-logged failure, got {[r.name for r in caplog.records]}"
+    assert not any(r.name == "asyncio" for r in caplog.records)
+    # The run survived.
+    roles = [m.role for m in messages]
+    assert roles == ["assistant", "tool_result", "assistant"]

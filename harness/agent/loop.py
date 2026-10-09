@@ -3,12 +3,14 @@
 A pure async function. It owns no state — the caller passes a context and gets
 back the messages the run produced. `Agent` wraps this with transcript state.
 
-Error handling is concentrated at two boundaries, so the body stays linear:
-providers terminate with an error event rather than raising, and tool failures
-become error results rather than propagating.
+Error handling is concentrated at three boundaries, so the body stays linear:
+providers terminate with an error event rather than raising, tool failures
+become error results rather than propagating, and third-party code reached
+through hooks or the event sink is isolated from the run.
 """
 
 import asyncio
+import logging
 import time
 from collections.abc import Sequence
 
@@ -16,6 +18,7 @@ from harness.agent.types import (
     AfterToolCallContext,
     AgentContext,
     AgentEnd,
+    AgentEvent,
     AgentStart,
     AgentTool,
     BeforeToolCallContext,
@@ -45,16 +48,23 @@ from harness.llm.types import (
     AssistantMessage,
     Context,
     Message,
+    Model,
     ToolCallBlock,
     ToolResultMessage,
     text,
 )
+
+_log = logging.getLogger(__name__)
 
 _TRUNCATED_NOTICE = (
     "Tool call {name!r} was not executed: the response hit the output token "
     "limit, so its arguments may be truncated. Re-issue the call with complete "
     "arguments."
 )
+
+_ABORTED_NOTICE = "Operation aborted"
+
+_HOOK_FAILED_NOTICE = "{hook} hook failed: {error}"
 
 
 async def run_agent_loop(
@@ -72,14 +82,14 @@ async def run_agent_loop(
     tools_by_name = {t.name: t for t in ctx.tools}
     declarations = declarations_for(ctx.tools)
 
-    await emit(AgentStart())
+    await _safe_emit(emit, AgentStart())
 
     for _turn in range(cfg.config.agent.max_turns):
         if _aborted(cfg):
-            produced.append(_aborted_message(cfg))
+            produced.append(await _emit_aborted(cfg, emit))
             break
 
-        await emit(TurnStart())
+        await _safe_emit(emit, TurnStart())
 
         messages = tuple(transcript)
         model = cfg.model
@@ -98,12 +108,12 @@ async def run_agent_loop(
         produced.append(assistant)
 
         if assistant.stop_reason in ("error", "aborted"):
-            await emit(TurnEnd(message=assistant, tool_results=()))
+            await _safe_emit(emit, TurnEnd(message=assistant, tool_results=()))
             break
 
         calls = assistant.tool_calls
         if not calls:
-            await emit(TurnEnd(message=assistant, tool_results=()))
+            await _safe_emit(emit, TurnEnd(message=assistant, tool_results=()))
             break
 
         results = await _execute_tool_calls(
@@ -115,20 +125,27 @@ async def run_agent_loop(
             truncated=assistant.stop_reason == "length",
         )
         for result in results:
-            await emit(MessageStart(message=result))
-            await emit(MessageEnd(message=result))
+            await _safe_emit(emit, MessageStart(message=result))
+            await _safe_emit(emit, MessageEnd(message=result))
             transcript.append(result)
             produced.append(result)
 
-        await emit(TurnEnd(message=assistant, tool_results=tuple(results)))
+        await _safe_emit(emit, TurnEnd(message=assistant, tool_results=tuple(results)))
 
-    await emit(AgentEnd(messages=tuple(produced)))
+        # A batch can run for a long time, so the signal may have fired while it
+        # was in flight. Check here rather than leaning on the next iteration's
+        # check: that one never runs when the batch landed on the final turn.
+        if _aborted(cfg):
+            produced.append(await _emit_aborted(cfg, emit))
+            break
+
+    await _safe_emit(emit, AgentEnd(messages=tuple(produced)))
     return produced
 
 
 async def _stream_turn(
     request: Context,
-    model: object,
+    model: Model,
     cfg: LoopConfig,
     emit: EventSink,
 ) -> AssistantMessage:
@@ -139,16 +156,40 @@ async def _stream_turn(
     """
     opts = StreamOptions(signal=cfg.signal)
     final: AssistantMessage | None = None
+    started = False
+
+    async def start_message() -> None:
+        """Open the message before any delta can reference it.
+
+        The assembled message does not exist until the terminal event, so
+        MessageStart carries an empty placeholder and MessageEnd remains the
+        authoritative one. Consumers that need the in-flight text accumulate
+        the deltas; this event exists to tell them when to start.
+        """
+        nonlocal started
+        if started:
+            return
+        started = True
+        await _safe_emit(
+            emit,
+            MessageStart(
+                message=AssistantMessage(content=(), model=cfg.model.id, provider=cfg.provider.name)
+            ),
+        )
 
     # A stream may terminate with StreamError as its FIRST event when request
     # setup fails before generation starts, so nothing here may assume a
-    # preceding StreamStart.
-    async for event in cfg.provider.stream(model, request, opts):  # type: ignore[arg-type]
+    # preceding StreamStart — every branch opens the message if it is not open.
+    async for event in cfg.provider.stream(model, request, opts):
+        await start_message()
         if isinstance(event, TextDelta):
-            await emit(MessageUpdate(block_index=event.block_index, delta=event.delta, kind="text"))
+            await _safe_emit(
+                emit, MessageUpdate(block_index=event.block_index, delta=event.delta, kind="text")
+            )
         elif isinstance(event, ThinkingDelta):
-            await emit(
-                MessageUpdate(block_index=event.block_index, delta=event.delta, kind="thinking")
+            await _safe_emit(
+                emit,
+                MessageUpdate(block_index=event.block_index, delta=event.delta, kind="thinking"),
             )
         elif isinstance(event, (StreamDone, StreamError)):
             final = event.message
@@ -164,8 +205,9 @@ async def _stream_turn(
             error_message="Provider stream ended without a terminal event",
         )
 
-    await emit(MessageStart(message=final))
-    await emit(MessageEnd(message=final))
+    # A stream that yielded nothing at all never opened the message.
+    await start_message()
+    await _safe_emit(emit, MessageEnd(message=final))
     return final
 
 
@@ -188,10 +230,11 @@ async def _execute_tool_calls(
     if truncated:
         truncated_results: list[ToolResultMessage] = []
         for call in calls:
-            await emit(
+            await _safe_emit(
+                emit,
                 ToolExecutionStart(
                     tool_call_id=call.id, tool_name=call.name, arguments=call.arguments
-                )
+                ),
             )
             final = await _finish(
                 call,
@@ -213,27 +256,28 @@ async def _execute_tool_calls(
 
     prepared: list[tuple[ToolCallBlock, AgentTool | None, ToolResult | None]] = []
     for call in calls:
-        await emit(
-            ToolExecutionStart(tool_call_id=call.id, tool_name=call.name, arguments=call.arguments)
+        await _safe_emit(
+            emit,
+            ToolExecutionStart(tool_call_id=call.id, tool_name=call.name, arguments=call.arguments),
         )
         tool = tools_by_name.get(call.name)
         if tool is None:
             error_result = ToolResult(content=text(f"Tool {call.name!r} not found"), is_error=True)
             prepared.append((call, None, error_result))
             continue
-        if cfg.before_tool_call is not None:
-            decision = await cfg.before_tool_call(
-                BeforeToolCallContext(tool_call=call, messages=transcript)
-            )
-            if decision is not None and decision.block:
-                reason = decision.reason or "Tool execution was blocked"
-                prepared.append((call, None, ToolResult(content=text(reason), is_error=True)))
-                continue
+        refusal = await _before_call(call, cfg, transcript)
+        if refusal is not None:
+            prepared.append((call, None, refusal))
+            continue
         prepared.append((call, tool, None))
 
     run_serially = not cfg.config.agent.parallel_tools or any(
         tool is not None and tool.execution_mode == "sequential" for _, tool, _ in prepared
     )
+
+    # Strong references to in-flight update emits, so nothing is garbage
+    # collected mid-flight. Each call awaits its own before its end event.
+    update_tasks: set[asyncio.Task[None]] = set()
 
     async def run_one(call: ToolCallBlock, tool: AgentTool) -> tuple[ToolResult, int]:
         """Execute one tool and emit its end event.
@@ -244,17 +288,24 @@ async def _execute_tool_calls(
         this emit outside would collapse both orderings into one.
         """
         start = time.monotonic()
+        pending: list[asyncio.Task[None]] = []
 
         def on_update(partial: ToolResult) -> None:
-            # Fire-and-forget: tool updates are advisory, and awaiting here would
-            # serialize parallel tools.
-            asyncio.ensure_future(  # noqa: RUF006
-                emit(
+            # Scheduled rather than awaited, because tools report progress from
+            # a synchronous callback and awaiting here would serialize parallel
+            # tools. The tasks are drained before the end event below, which is
+            # what keeps `update` ahead of `end` and keeps failures observable.
+            task = asyncio.create_task(
+                _safe_emit(
+                    emit,
                     ToolExecutionUpdate(
                         tool_call_id=call.id, tool_name=call.name, content=partial.content
-                    )
+                    ),
                 )
             )
+            pending.append(task)
+            update_tasks.add(task)
+            task.add_done_callback(update_tasks.discard)
 
         tool_ctx = ToolContext(cwd=cfg.cwd, call_id=call.id, signal=cfg.signal, on_update=on_update)
         try:
@@ -264,33 +315,63 @@ async def _execute_tool_calls(
         except Exception as exc:  # a tool must never kill the loop
             result = ToolResult(content=text(str(exc)), is_error=True)
 
+        if pending:
+            # _safe_emit never raises, so this cannot fail the tool.
+            await asyncio.gather(*pending)
+
         duration_ms = int((time.monotonic() - start) * 1000)
         final = await _finish(call, result, duration_ms, cfg, emit)
         return final, duration_ms
 
-    # call id -> (final result, duration). Populated in completion order by the
-    # coroutines; read back below in assistant source order.
-    outcomes: dict[str, tuple[ToolResult, int]] = {}
+    # POSITION in `prepared` -> (final result, duration). Deliberately not keyed
+    # on call.id: ids come from the provider, and two calls sharing one would
+    # collapse to a single entry and hand the same outcome to both messages.
+    outcomes: dict[int, tuple[ToolResult, int]] = {}
 
     if run_serially:
-        for call, tool, _immediate in prepared:
+        for index, (call, tool, _immediate) in enumerate(prepared):
             if tool is None:
                 continue
-            outcomes[call.id] = await run_one(call, tool)
+            if _aborted(cfg):
+                # Backstop for tools that ignore the signal they were handed:
+                # without it a long sequential batch runs to completion after
+                # the user has already asked for it to stop.
+                outcomes[index] = (await _finish(call, _aborted_result(), 0, cfg, emit), 0)
+                continue
+            outcomes[index] = await run_one(call, tool)
     else:
-        runnable = [(call, tool) for call, tool, _i in prepared if tool is not None]
+        runnable = [
+            (index, call, tool)
+            for index, (call, tool, _immediate) in enumerate(prepared)
+            if tool is not None
+        ]
         if runnable:
-            gathered = await asyncio.gather(*(run_one(c, t) for c, t in runnable))
-            outcomes = {
-                call.id: outcome for (call, _), outcome in zip(runnable, gathered, strict=True)
-            }
+            # return_exceptions=True so one child blowing up cannot leave its
+            # siblings running unsupervised after the gather has given up.
+            gathered = await asyncio.gather(
+                *(run_one(call, tool) for _index, call, tool in runnable),
+                return_exceptions=True,
+            )
+            for (index, call, _tool), outcome in zip(runnable, gathered, strict=True):
+                if isinstance(outcome, BaseException):
+                    # run_one already converts tool failures, so reaching here
+                    # means the loop's own machinery failed. Report it as an
+                    # error result rather than losing the call entirely.
+                    _log.error(
+                        "Tool %r failed outside its own error handling", call.name, exc_info=outcome
+                    )
+                    failed = ToolResult(content=text(str(outcome)), is_error=True)
+                    outcomes[index] = (await _finish(call, failed, 0, cfg, emit), 0)
+                else:
+                    outcomes[index] = outcome
 
     results: list[ToolResultMessage] = []
-    for call, _tool, immediate in prepared:
+    for index, (call, _tool, immediate) in enumerate(prepared):
         if immediate is not None:
-            final, duration = await _finish(call, immediate, 0, cfg, emit), 0
+            final = await _finish(call, immediate, 0, cfg, emit)
+            duration = 0
         else:
-            final, duration = outcomes[call.id]
+            final, duration = outcomes[index]
         results.append(
             ToolResultMessage(
                 tool_call_id=call.id,
@@ -300,7 +381,40 @@ async def _execute_tool_calls(
                 duration_ms=duration,
             )
         )
+
+    if update_tasks:
+        # Anything a cancelled or abandoned child left behind.
+        await asyncio.gather(*update_tasks, return_exceptions=True)
     return results
+
+
+async def _before_call(
+    call: ToolCallBlock,
+    cfg: LoopConfig,
+    transcript: tuple[Message, ...],
+) -> ToolResult | None:
+    """Run before_tool_call. A non-None return replaces executing the tool."""
+    if cfg.before_tool_call is None:
+        return None
+    try:
+        decision = await cfg.before_tool_call(
+            BeforeToolCallContext(tool_call=call, messages=transcript)
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # This hook is the approval gate. A gate that errors must deny rather
+        # than fall open, and it must not take the run down with it.
+        _log.exception("before_tool_call hook failed for %r", call.name)
+        return ToolResult(
+            content=text(_HOOK_FAILED_NOTICE.format(hook="before_tool_call", error=exc)),
+            is_error=True,
+        )
+    if decision is not None and decision.block:
+        return ToolResult(
+            content=text(decision.reason or "Tool execution was blocked"), is_error=True
+        )
+    return None
 
 
 async def _finish(
@@ -316,28 +430,79 @@ async def _finish(
     message ordering stays independent of completion ordering.
     """
     if cfg.after_tool_call is not None:
-        override = await cfg.after_tool_call(AfterToolCallContext(tool_call=call, result=result))
-        if override is not None:
+        try:
+            override = await cfg.after_tool_call(
+                AfterToolCallContext(tool_call=call, result=result)
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Report the hook failure rather than passing the tool's result
+            # through: this seam is where result redaction and approval live,
+            # so silently forwarding an unreviewed result is the worse default.
+            _log.exception("after_tool_call hook failed for %r", call.name)
             result = ToolResult(
-                content=override.content if override.content is not None else result.content,
-                is_error=(override.is_error if override.is_error is not None else result.is_error),
+                content=text(_HOOK_FAILED_NOTICE.format(hook="after_tool_call", error=exc)),
+                is_error=True,
                 details=result.details,
             )
+        else:
+            if override is not None:
+                result = ToolResult(
+                    content=override.content if override.content is not None else result.content,
+                    is_error=(
+                        override.is_error if override.is_error is not None else result.is_error
+                    ),
+                    details=result.details,
+                )
 
-    await emit(
+    await _safe_emit(
+        emit,
         ToolExecutionEnd(
             tool_call_id=call.id,
             tool_name=call.name,
             content=result.content,
             is_error=result.is_error,
             duration_ms=duration_ms,
-        )
+        ),
     )
     return result
 
 
+async def _safe_emit(emit: EventSink, event: AgentEvent) -> None:
+    """Deliver an event, isolating subscriber failures.
+
+    docs/events.md promises that a failing subscriber must not break a run. The
+    sink is third-party code — a terminal renderer, a JSONL writer — and the
+    loop has no way to repair its state, so the only sane response is to log
+    and keep going.
+    """
+    try:
+        await emit(event)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        _log.exception("Event subscriber failed on %s", event.type)
+
+
+async def _emit_aborted(cfg: LoopConfig, emit: EventSink) -> AssistantMessage:
+    """Announce the aborted message like any other the loop produces.
+
+    Without the start/end pair a sink rendering from message events shows
+    nothing for a message the run still returns.
+    """
+    message = _aborted_message(cfg)
+    await _safe_emit(emit, MessageStart(message=message))
+    await _safe_emit(emit, MessageEnd(message=message))
+    return message
+
+
 def _aborted(cfg: LoopConfig) -> bool:
     return cfg.signal is not None and cfg.signal.is_set()
+
+
+def _aborted_result() -> ToolResult:
+    return ToolResult(content=text(_ABORTED_NOTICE), is_error=True)
 
 
 def _aborted_message(cfg: LoopConfig) -> AssistantMessage:
@@ -346,5 +511,5 @@ def _aborted_message(cfg: LoopConfig) -> AssistantMessage:
         model=cfg.model.id,
         provider=cfg.provider.name,
         stop_reason="aborted",
-        error_message="Operation aborted",
+        error_message=_ABORTED_NOTICE,
     )
