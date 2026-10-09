@@ -13,7 +13,7 @@ The event stream is the contract between the runtime and anything watching it.
 **Every event is a frozen dataclass of JSON primitives.** No live objects, no
 file handles, no provider SDK types, no callables.
 
-`tests/test_event_serialization.py` round-trips every event type through
+`tests/test_serialization.py` round-trips every event type through
 `json.dumps` and fails if this is violated. The rule matters because it is what
 lets a second consumer exist — the JSONL sink today, a frontend in another
 language later — without the runtime changing.

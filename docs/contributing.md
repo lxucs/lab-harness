@@ -37,7 +37,7 @@ See [architecture.md](architecture.md).
 ### 2. Events stay serializable
 
 Every `AgentEvent` is a frozen dataclass of JSON primitives. No live objects,
-file handles, SDK types, or callables. `tests/test_event_serialization.py`
+file handles, SDK types, or callables. `tests/test_serialization.py`
 round-trips every event type and fails if this breaks.
 
 This is what lets a second consumer exist — the JSONL sink today, a frontend in
