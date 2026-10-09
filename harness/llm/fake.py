@@ -117,7 +117,13 @@ def error_response(
     provider: str = "fake",
     reason: str = "error",
 ) -> list[StreamEvent]:
-    """A turn that fails. Note it terminates with StreamError, never an exception."""
+    """A turn that fails. Note it terminates with StreamError, never an exception.
+
+    Emits a lone StreamError with no leading StreamStart. That is faithful to
+    the protocol rather than a shortcut: a stream may terminate with `error` as
+    its first event when request setup fails before generation starts, so
+    consumers must not assume a StreamStart preceded it.
+    """
     message = AssistantMessage(
         content=(),
         model=model,

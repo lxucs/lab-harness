@@ -1879,13 +1879,13 @@ async def _stream_turn(
     is no try/except here.
     """
     opts = StreamOptions(signal=cfg.signal)
-    started = False
     final: AssistantMessage | None = None
 
+    # A stream may terminate with StreamError as its FIRST event when request
+    # setup fails before generation starts, so nothing here may assume a
+    # preceding StreamStart.
     async for event in cfg.provider.stream(model, request, opts):  # type: ignore[arg-type]
         if isinstance(event, TextDelta):
-            if not started:
-                started = True
             await emit(MessageUpdate(block_index=event.block_index, delta=event.delta, kind="text"))
         elif isinstance(event, ThinkingDelta):
             await emit(

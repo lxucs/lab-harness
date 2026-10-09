@@ -1,7 +1,8 @@
 # Providers
 
-> **Status:** Not yet implemented. This page describes the designed contract and
-> is updated as `llm/` lands.
+> **Status:** The `Provider` protocol, `StreamOptions`, and `FakeProvider` are
+> implemented. Real adapters (Anthropic, OpenAI-compatible) arrive in a later
+> milestone — see the build order in [architecture.md](architecture.md).
 
 ## The contract
 
@@ -73,3 +74,23 @@ core types. A single adapter would let Anthropic's shapes — thinking blocks,
 `llm/fake.py` provides `FakeProvider`, which replays a scripted list of
 `StreamEvent`s. Every loop and agent test uses it. The suite never touches the
 network — see [`../AGENTS.md`](../AGENTS.md).
+
+Build scripts with the helpers rather than by hand — they emit protocol-correct
+sequences, so a test that passes is testing the loop and not a malformed script:
+
+| Helper | Produces |
+|---|---|
+| `text_response(value, chunk_size=0)` | A complete text turn; `chunk_size` splits it into multiple deltas |
+| `tool_call_response(calls, preamble=None)` | A turn requesting tool calls, `stop_reason="tool_use"` |
+| `error_response(error, reason="error")` | A failed turn — **a lone `StreamError`, with no leading `StreamStart`** |
+| `truncated_tool_call_response(calls)` | Tool calls cut off by the token limit, `stop_reason="length"` |
+
+That `error_response` detail is a real part of the protocol, not a shortcut in
+the fake: a stream may terminate with `error` as its *first* event when request
+setup fails before generation starts. Consumers must not assume a `StreamStart`
+preceded it.
+
+`FakeProvider` raises `AssertionError` when its script is exhausted. That does
+not violate the never-raise contract — a run making more requests than its
+script provides is a bug in the test, which is a programming error rather than a
+request failure.
