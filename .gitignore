@@ -188,7 +188,7 @@ cython_debug/
 #   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
 #   and can be added to the global gitignore or merged into this file.  For a more nuclear
 #   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
+.idea/
 
 # Abstra
 #   Abstra is an AI-powered process automation framework.
@@ -218,3 +218,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.DS_Store
+
+# Harness local configuration — may contain API keys, absolute paths, private
+# endpoints. Never commit. See AGENTS.md "Configuration hygiene".
+#
+# Ignore .harness/ contents by default, then re-admit the two committed files.
+# Note: this must list the directory's *contents* (.harness/*), not the
+# directory itself — git does not descend into an excluded directory, so a
+# negation under `.harness/` would never match.
+.harness/*
+!.harness/config.toml
+!.harness/config.toml.example
+
+*.local.toml
+config.local.toml
+.env
+.env.*
+!.env.example
+.superpowers/
