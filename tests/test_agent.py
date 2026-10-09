@@ -94,8 +94,13 @@ async def test_failing_subscriber_does_not_break_the_run() -> None:
 
 
 async def test_rejects_concurrent_prompts() -> None:
-    agent = _agent(FakeProvider([text_response("a"), text_response("b")]))
+    provider = FakeProvider([text_response("a"), text_response("b")])
+    agent = _agent(provider)
 
+    # The listener yields, so the first run is genuinely in flight across an
+    # await when the second prompt arrives. Without it FakeProvider never
+    # suspends, the first run completes synchronously, and there is no overlap
+    # left for this test to exercise.
     async def slow_listener(event: AgentEvent) -> None:
         await asyncio.sleep(0.01)
 
@@ -107,6 +112,15 @@ async def test_rejects_concurrent_prompts() -> None:
         await agent.prompt("two")
 
     await first
+
+    # The rejected prompt must leave no trace: no provider request, and its
+    # user message must not have been appended before the guard fired.
+    assert len(provider.requests) == 1
+    roles = [m.role for m in agent.state.messages]
+    assert roles == ["user", "assistant"]
+    first_user = agent.state.messages[0]
+    assert isinstance(first_user, UserMessage)
+    assert first_user.content[0].text == "one"  # type: ignore[union-attr]
 
 
 async def test_queued_message_is_injected_at_the_next_turn() -> None:

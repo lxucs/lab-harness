@@ -116,17 +116,22 @@ class Agent:
 
     async def prompt(self, message: str | Message) -> list[Message]:
         """Send a message and run until the agent stops."""
+        # Claim the run in the same synchronous step as the check, so there is
+        # no await between testing the flag and setting it.
         if self.state.is_running:
             raise RuntimeError(
                 "Agent is already running. Use queue() to inject a message, or "
                 "await wait_for_idle()."
             )
+        self.state.is_running = True
 
         user = UserMessage(content=text(message)) if isinstance(message, str) else message
         self.state.messages.append(user)
         return await self._run()
 
     async def _run(self) -> list[Message]:
+        # Idempotent with the claim in prompt(); set here too so _run() is
+        # correct on its own. _run's finally always clears it.
         self.state.is_running = True
         self._idle.clear()
         self._signal = asyncio.Event()
