@@ -77,9 +77,19 @@ provider directly. We lose mid-session tool-change provenance; the core gets
 several hundred lines smaller. For a harness whose tool set is fixed at startup,
 that is the right trade.
 
-**One message queue.** pi has separate steering and follow-up queues, each with
-`all` and `one-at-a-time` drain modes. We have one queue drained at turn
-boundaries, which covers "type while it's working" at a fraction of the cost.
+**One run at a time, no queue.** pi has separate steering and follow-up queues,
+each with `all` and `one-at-a-time` drain modes, so a message can be injected
+into a run already in flight. We have none of it: `prompt()` refuses while a run
+is active. A frontend that wants to accept typing mid-run buffers the text
+itself and prompts again when the run returns.
+
+The first cut did have a queue, and review found it had quietly broken the
+transcript: an injected message survived one request and then vanished from the
+provider's view while remaining in `state.messages`, and a message queued on the
+final turn was stranded entirely. Deleting the queue made both impossible by
+construction rather than merely fixed — there is no second source of messages.
+`prepare_request` went back to being what its docstring always claimed, a
+per-request view transform.
 
 **Dropped entirely:** the provider catalog, codemode, durable/RPC/server,
 extensions-as-plugins, MCP, branch summarization.
@@ -104,7 +114,7 @@ proceeds.
 | 1 | `llm/types.py`, `events.py`, serialization tests | Complete |
 | 2 | `llm/fake.py`, `provider.py` | Complete |
 | 3 | `agent/loop.py` against `FakeProvider` | Complete |
-| 4 | `agent/agent.py` — state, subscribers, abort, queue | Complete |
+| 4 | `agent/agent.py` — state, subscribers, abort | Complete |
 | 5 | `tools/base.py`, `registry.py`, `fs.py` | Not started |
 | 6 | `cli/json_sink.py` → first end-to-end run | Not started |
 | 7 | `llm/providers/anthropic.py` → first real run | Not started |

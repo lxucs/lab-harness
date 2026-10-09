@@ -128,10 +128,17 @@ in-flight message read `agent.state.streaming_message`.
 | `prepare_request` | `(req) -> RequestUpdate \| None` | compaction (later) |
 | `finish_turn` | `(turn) -> Decision \| None` | auto-continue (later) |
 
-**Simplification over pi:** one message queue drained at turn boundaries,
-replacing pi's separate steering and follow-up queues with `all` /
-`one-at-a-time` modes. This covers "type while it's working" at a fraction of
-the complexity.
+**Simplification over pi:** no message queue at all. pi has separate steering
+and follow-up queues with `all` / `one-at-a-time` drain modes. Here a single run
+is active at a time and `prompt()` refuses while one is in flight; a frontend
+buffers mid-run typing itself.
+
+*Revised during implementation.* The first cut did have one queue drained at turn
+boundaries. Review found it broke transcript fidelity — an injected message
+survived a single request and then disappeared from the provider's view while
+staying in `state.messages` — and that a message queued on the final turn was
+never delivered. Removing it was cheaper than correcting it, and makes the
+failure impossible rather than fixed.
 
 **Parallel tool execution:** prepare calls sequentially, so approval prompts
 stay ordered, then `asyncio.gather` the allowed ones. `tool_execution_end` fires
@@ -288,7 +295,7 @@ Each step is independently verifiable:
 1. `llm/types.py` + `events.py` + serialization tests
 2. `llm/fake.py` + `provider.py`
 3. `agent/loop.py` against `FakeProvider`
-4. `agent/agent.py` — state, subscribers, abort, queue
+4. `agent/agent.py` — state, subscribers, abort
 5. `tools/base.py` + `registry.py` + `fs.py`
 6. `cli/json_sink.py` → first end-to-end run
 7. `llm/providers/anthropic.py` → first real run

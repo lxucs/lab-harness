@@ -7,9 +7,9 @@ and searches the web — and it is small enough to read in an afternoon.
 Architecturally it follows [pi](https://github.com/earendil-works/pi): the same
 layering, trimmed to the parts that earn their keep.
 
-> **Status: pre-implementation.** The design is settled and documented; code is
-> being written against the build order below. See
-> [In progress](#in-progress) and [Planned](#planned).
+> **Status: runtime core working.** The agentic loop, provider layer, and
+> event protocol are implemented and tested (82 tests, offline). Tools, a real
+> provider, and the terminal are next — see [Progress](#progress).
 
 ## Why
 
@@ -103,7 +103,7 @@ Build order. Each step is independently verifiable.
 - [x] 1 · `llm/` core types, event protocol, serialization tests
 - [x] 2 · `FakeProvider` and the `Provider` protocol
 - [x] 3 · `agent/loop.py` — the agentic loop
-- [x] 4 · `agent/agent.py` — state, subscribers, abort, message queue
+- [x] 4 · `agent/agent.py` — state, subscribers, abort
 - [ ] 5 · `tools/` base, registry, filesystem tools
 - [ ] 6 · `cli/json_sink.py` — first end-to-end run
 - [ ] 7 · Anthropic provider — first real run

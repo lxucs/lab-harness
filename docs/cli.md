@@ -43,8 +43,9 @@ The config defines three…
 | `Enter` | Submit |
 | `Alt-Enter` | Newline without submitting |
 
-Typing while the agent works queues the message; it is injected at the next turn
-boundary.
+The agent runs one turn sequence at a time. Typing while it works is buffered by
+the terminal and submitted when the run finishes — the runtime itself refuses a
+second concurrent `prompt()` rather than coordinating with the one in flight.
 
 ## JSON mode
 
