@@ -35,7 +35,7 @@ agent_start
     tool_execution_end    × N
     message_start/end     × N  ← tool results, in assistant source order
   turn_end
-  …more turns while tool calls or queued messages remain…
+  …more turns while the model keeps requesting tools…
 agent_end
 ```
 
