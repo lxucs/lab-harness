@@ -7,9 +7,10 @@ and searches the web — and it is small enough to read in an afternoon.
 Architecturally it follows [pi](https://github.com/earendil-works/pi): the same
 layering, trimmed to the parts that earn their keep.
 
-> **Status: runtime core working.** The agentic loop, provider layer, and
-> event protocol are implemented and tested (82 tests, offline). Tools, a real
-> provider, and the terminal are next — see [Progress](#progress).
+> **Status: usable.** The agentic loop, the full local tool set, web search and
+> fetch, the Anthropic provider, an interactive terminal, tool approval,
+> layered config, and session persistence are implemented and tested (431
+> tests, offline). A second provider is next — see [Progress](#progress).
 
 ## Why
 
@@ -39,7 +40,7 @@ dependencies at all.
 | `llm/` | Provider-neutral LLM access — messages, models, streaming, tool declarations |
 | `agent/` | The agentic loop and a stateful `Agent` that owns the transcript and emits events |
 | `tools/` | Built-in capabilities and the registry that declares them to the model |
-| `session/` | Append-only JSONL transcripts, resume |
+| `session/` | Append-only JSONL transcripts, resume — a subscriber, not a dependency |
 | `cli/` | Terminal and JSONL subscribers to the event stream |
 
 Two seams carry almost everything extensible:
@@ -50,8 +51,9 @@ frozen dataclass of JSON primitives, enforced by a round-trip test — which is
 what lets a frontend in another language be a third subscriber later.
 
 **The hooks.** `before_tool_call`, `after_tool_call`, and `prepare_request`. A
-feature that fits a hook does not belong in the loop. Tool approval is a hook;
-context compaction will be one.
+feature that fits a hook does not belong in the loop — tool approval is one,
+which is why `-p` and interactive modes differ without the loop branching.
+Context compaction will be another.
 
 Details in [docs/architecture.md](docs/architecture.md).
 
@@ -59,17 +61,27 @@ Details in [docs/architecture.md](docs/architecture.md).
 
 ```bash
 uv sync
-uv run harness
+export ANTHROPIC_API_KEY=sk-...
+export TAVILY_API_KEY=tvly-...       # optional, for web_search
+uv run harness                       # interactive
 ```
 
 ```bash
 uv run harness -p "summarize the config module"   # one-shot
 uv run harness -p "..." --json                    # JSONL event stream
-uv run harness --resume                           # continue last session
+uv run harness --resume                           # continue where you left off
+uv run harness --sessions                         # list saved sessions here
+uv run harness -p "..." --model claude-opus-5
+uv run harness --cwd ../other-project
 ```
 
-Configure a provider with `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. See
-[docs/configuration.md](docs/configuration.md).
+In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
+session and `Ctrl-D` exits. Mutating tools (`bash`, `write`, `edit`) ask before
+running. Conversations are saved per project under `~/.harness/sessions/` and
+`--resume` picks the last one back up; `--no-save` skips persistence. Exit
+status is `0` on a clean run, `1` when the final turn errored or was aborted.
+
+Configuration and every environment variable: [docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
@@ -94,7 +106,12 @@ should also read [AGENTS.md](AGENTS.md).
 
 ### In progress
 
-Milestone 1a complete: tested runtime core (steps 1–4). Tools, providers, and the CLI are next.
+Steps 1–11 complete: a tested runtime core, the full local tool set
+(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch`
+with pluggable backends, the Anthropic adapter, an interactive terminal, a
+fail-closed approval gate, layered TOML config, and durable sessions.
+
+Next: the OpenAI-compatible provider (step 12).
 
 ### Planned
 
@@ -104,14 +121,26 @@ Build order. Each step is independently verifiable.
 - [x] 2 · `FakeProvider` and the `Provider` protocol
 - [x] 3 · `agent/loop.py` — the agentic loop
 - [x] 4 · `agent/agent.py` — state, subscribers, abort
-- [ ] 5 · `tools/` base, registry, filesystem tools
-- [ ] 6 · `cli/json_sink.py` — first end-to-end run
-- [ ] 7 · Anthropic provider — first real run
-- [ ] 8 · `cli/terminal.py` — interactive terminal
-- [ ] 9 · `bash`, `grep`, `glob`, tool approval gate
-- [ ] 10 · `session/` — persistence and resume
-- [ ] 11 · Web search and fetch
+- [x] 5 · `tools/` base, registry, filesystem tools
+- [x] 6 · `cli/json_sink.py` — first end-to-end run
+- [x] 7 · Anthropic provider — first real run
+- [x] 8 · `cli/terminal.py` — interactive terminal
+- [x] 9 · `bash`, `grep`, `glob`, tool approval gate
+- [x] 10 · `session/` — persistence and resume
+- [x] 11 · Web search and fetch, layered TOML config
 - [ ] 12 · OpenAI-compatible provider
+
+**Worth knowing before you use it:** `-p` one-shot mode has **no approval
+gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
+`edit` run unprompted. Interactive mode asks, and fails closed on anything but
+an explicit yes.
+
+**Web search needs a key.** The default backend is
+[Tavily](https://tavily.com) (free tier available); the keyless `ddgs`
+alternative is implemented but did not return results from the development
+machine — see [docs/tools.md](docs/tools.md#web-tools). `web_fetch` needs no
+key either way. Forwarding search to Anthropic's server-side tool, which would
+need no key at all, is designed but not built.
 
 ### Deferred
 

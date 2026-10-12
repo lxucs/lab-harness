@@ -1,0 +1,127 @@
+# Example harness configuration.
+#
+# Copy to .harness/config.toml (committed, non-sensitive) or
+# .harness/config.local.toml (gitignored, for machine-specific values).
+#
+# NEVER put API keys, absolute paths, or private endpoints in config.toml.
+# Keys belong in environment variables, or in config.local.toml. See
+# docs/configuration.md.
+#
+# Every value shown is the current default, so a key you do not set behaves
+# exactly as written here. Unknown keys are an error rather than being ignored:
+# a typo that silently left the default in place would be found days later.
+
+[agent]
+# Ceiling on provider requests in one run. Guards against a model that calls
+# tools forever.
+max_turns = 50
+# Run independent tool calls from one assistant message concurrently.
+parallel_tools = true
+
+[tools.read]
+# Lines returned when the model requests no explicit limit.
+default_limit = 2000
+# Longer lines are clipped, so one minified file cannot flood the context.
+max_line_length = 2000
+# Files above this are refused rather than read.
+max_bytes = 256000
+
+[tools.list]
+# Entries returned per `ls`.
+max_entries = 1000
+
+[tools.bash]
+# Default wall-clock ceiling for one command, in seconds.
+timeout_seconds = 120
+# Highest timeout a single call may request. A model asking for an hour is a bug.
+max_timeout_seconds = 600
+# Combined stdout+stderr kept. Head and tail are preserved, middle elided.
+max_output_bytes = 30000
+# How often streaming output is forwarded, in seconds.
+update_interval_seconds = 0.5
+
+[tools.search]
+# Matches returned by one grep.
+max_results = 200
+# Paths returned by one glob.
+max_files = 500
+# Longer matching lines are clipped in grep output.
+max_line_length = 400
+# Directory names never descended into.
+ignored_directories = [
+    ".git", ".venv", "venv", "node_modules", "__pycache__",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build", ".tox",
+]
+
+[tools.web]
+# Which backend web_search uses: "tavily" (needs a key) or "ddgs" (keyless,
+# scrapes, so rate-limited and occasionally brittle).
+backend = "tavily"
+# Results requested per search.
+max_results = 5
+# Wall-clock limit for one search or one fetch, in seconds.
+timeout_seconds = 30.0
+# Largest response web_fetch will download, before text extraction.
+max_bytes = 2000000
+# Characters of extracted text handed to the model.
+max_content_chars = 50000
+# Sent on every outbound request. Some sites refuse an unidentified client.
+user_agent = "harness/0.1 (+https://github.com/lxucs/harness)"
+
+[tools.web.tavily]
+# Name of the environment variable the key is read from. The key itself goes
+# in the environment or in config.local.toml -- NEVER in this file.
+api_key_env = "TAVILY_API_KEY"
+# "basic" spends one API credit per search, "advanced" two for better
+# extraction. Basic by default so a free tier lasts.
+search_depth = "basic"
+# Request full page text beside each snippet. Off by default: raw content for
+# five results is usually far more than the answer needs, and web_fetch can
+# get it for the one result that matters.
+include_raw_content = false
+
+[tools.web.ddgs]
+# Upstream engine to query. "auto" lets ddgs choose and rotate.
+engine = "auto"
+# Result region, e.g. "us-en", "uk-en", "ru-ru".
+region = "us-en"
+
+[tools.approval]
+# Tools that prompt before executing in interactive mode. One-shot (-p) runs
+# have no gate at all -- there is nobody at the keyboard to answer.
+required = ["bash", "write", "edit"]
+# Whether answering "always" is remembered. Session-only, never persisted.
+allow_remember = true
+
+[terminal]
+# Tools the interactive terminal enables.
+enabled_tools = [
+    "read", "write", "edit", "ls", "bash", "grep", "glob",
+    "web_search", "web_fetch",
+]
+# Lines of tool output shown before collapsing to a summary.
+max_result_lines = 12
+# Render assistant text as markdown.
+markdown = true
+
+[session]
+# Root for all harness state. Overridden by $HARNESS_HOME.
+home = "~/.harness"
+home_env = "HARNESS_HOME"
+# Subdirectory of home holding per-project session directories.
+directory_name = "sessions"
+# Write transcripts to disk at all.
+enabled = true
+# Schema version written into each file header. A protocol constant, not a knob.
+version = 1
+
+[providers.anthropic]
+# Names of the environment variables credentials are read from. The values
+# themselves are never written here.
+auth_token_env = "ANTHROPIC_AUTH_TOKEN"
+api_key_env = "ANTHROPIC_API_KEY"
+base_url_env = "ANTHROPIC_BASE_URL"
+# Sampling ceiling when the model declares none.
+default_max_tokens = 8192
+# Thinking budget when reasoning is requested, in tokens.
+thinking_budget_tokens = 4096

@@ -7,8 +7,8 @@ consumer in another language must be possible.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from dataclasses import dataclass
+from typing import Literal
 
 from harness.config import Config
 from harness.llm.provider import Provider
@@ -21,38 +21,14 @@ from harness.llm.types import (
     ToolDeclaration,
     ToolResultMessage,
 )
+from harness.tools.base import AgentTool, ToolResult
 
-# --- tools ----------------------------------------------------------------
-
-ExecutionMode = Literal["parallel", "sequential"]
-
-
-@dataclass(frozen=True, slots=True)
-class ToolResult:
-    content: tuple[ContentBlock, ...]
-    is_error: bool = False
-    #: Structured data for renderers. Never sent to the model.
-    details: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class ToolContext:
-    """What a tool receives. Tools never reach for globals."""
-
-    cwd: str
-    call_id: str
-    signal: asyncio.Event | None = None
-    on_update: Callable[[ToolResult], None] | None = None
-
-
-class AgentTool(Protocol):
-    name: str
-    description: str
-    parameters: dict[str, object]
-    execution_mode: ExecutionMode
-
-    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult: ...
-
+# The tool contract lives one layer down, in tools/base.py, so that tools never
+# import from agent/. `AgentTool` and `ToolResult` are used below; these two are
+# re-exported (the `as` form is what marks that deliberate) because callers
+# reach for the whole contract through agent/.
+from harness.tools.base import ExecutionMode as ExecutionMode
+from harness.tools.base import ToolContext as ToolContext
 
 # --- events ---------------------------------------------------------------
 
@@ -194,6 +170,13 @@ class AgentContext:
     system_prompt: str
     messages: tuple[Message, ...]
     tools: tuple[AgentTool, ...] = ()
+    #: Messages already in `messages` that subscribers have not seen yet —
+    #: normally the user turn that triggered this run. The loop announces them
+    #: after `agent_start` so that a subscriber sees the whole conversation.
+    #: Without this, a session writer persists an unresumable transcript with
+    #: no user messages in it. They are announced, not appended: the caller
+    #: already holds them.
+    unannounced: tuple[Message, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

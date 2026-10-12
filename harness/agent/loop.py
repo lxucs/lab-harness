@@ -84,6 +84,10 @@ async def run_agent_loop(
 
     await _safe_emit(emit, AgentStart())
 
+    for message in ctx.unannounced:
+        await _safe_emit(emit, MessageStart(message=message))
+        await _safe_emit(emit, MessageEnd(message=message))
+
     for _turn in range(cfg.config.agent.max_turns):
         if _aborted(cfg):
             produced.append(await _emit_aborted(cfg, emit))
@@ -309,7 +313,13 @@ async def _execute_tool_calls(
             update_tasks.add(task)
             task.add_done_callback(update_tasks.discard)
 
-        tool_ctx = ToolContext(cwd=cfg.cwd, call_id=call.id, signal=cfg.signal, on_update=on_update)
+        tool_ctx = ToolContext(
+            cwd=cfg.cwd,
+            call_id=call.id,
+            config=cfg.config,
+            signal=cfg.signal,
+            on_update=on_update,
+        )
         try:
             result = await tool.execute(call.arguments, tool_ctx)
         except asyncio.CancelledError:

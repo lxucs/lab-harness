@@ -3,12 +3,11 @@
 The event stream is the contract between the runtime and anything watching it.
 `Agent.subscribe(listener)` is the only way to observe a run.
 
-> **Status:** The provider stream protocol (`StreamEvent` and its members) is
-> implemented in `harness/llm/events.py` as of Task 1. Agent-level events
-> (`AgentEvent` and the subscriber model described below) are implemented in
-> `harness/agent/types.py` as of Task 3. The `Agent` class — subscriber
-> fan-out, `_emit`, and the full event lifecycle — is implemented in
-> `harness/agent/agent.py` as of Task 4.
+> **Status:** Fully implemented. The provider stream protocol lives in
+> `harness/llm/events.py`, agent-level events in `harness/agent/types.py`, and
+> subscriber fan-out in `harness/agent/agent.py`. The JSONL sink in
+> `harness/cli/json_sink.py` is the second consumer that keeps the plain-data
+> rule honest.
 
 ## The rule that makes this work
 
@@ -26,6 +25,7 @@ A rule nobody executes decays. That test is the enforcement.
 
 ```
 agent_start
+  message_start/end          ← the user message that triggered this run
   turn_start
     message_start   (assistant)
     message_update  × N        ← streaming deltas
@@ -47,7 +47,7 @@ agent_end
 | `agent_end` | `messages` | Last event of a run |
 | `turn_start` | — | One assistant response + its tool calls |
 | `turn_end` | `message`, `tool_results` | |
-| `message_start` | `message` | system, user, assistant, or tool result — see the note below |
+| `message_start` | `message` | user, assistant, or tool result — see the note below |
 | `message_update` | `block_index`, `delta`, `kind` | Assistant streaming only |
 | `message_end` | `message` | |
 | `tool_execution_start` | `tool_call_id`, `tool_name`, `arguments` | |
@@ -67,6 +67,18 @@ because it is already complete when emitted.
 So do not read `message_start.message.content` for an assistant message.
 Accumulate the `message_update` deltas, or read
 `agent.state.streaming_message`.
+
+### The user message is on the stream too
+
+A run announces the user message that triggered it, right after `agent_start`.
+Without it a subscriber sees only the assistant's side, and a session writer
+records a transcript that cannot be resumed from — the model would be replayed
+its own answers with none of the questions.
+
+`Agent.prompt()` hands the message to the loop rather than appending it, so that
+`_reduce` stays the single writer to `state.messages`. The consequence worth
+knowing: **the event stream reproduces the transcript exactly**, in order. That
+is what makes the session recorder a plain subscriber.
 
 ### Why `message_update` carries a delta
 
@@ -91,15 +103,22 @@ protocol requirement.
 ## Subscribers
 
 ```python
-agent.subscribe(terminal.on_event)  # rich rendering
-agent.subscribe(json_sink)  # JSONL to stdout
+from harness.cli.json_sink import json_sink
+
+agent.subscribe(json_sink())  # JSONL to stdout
+agent.subscribe(json_sink(some_file))  # or any text stream
 ```
 
-The JSONL sink is about thirty lines:
+The sink is the whole implementation — about ten lines:
 
 ```python
-def json_sink(event: AgentEvent) -> None:
-    print(json.dumps(event.to_dict()), flush=True)
+async def write(event: AgentEvent) -> None:
+    target.write(json.dumps(to_dict(event)) + "\n")
+    target.flush()
 ```
 
+It flushes per line so a piped consumer sees events as they happen rather than
+when the process exits.
+
 Listener exceptions are isolated — a failing subscriber must not break a run.
+`tests/test_json_sink.py` proves it with a sink whose every write raises.

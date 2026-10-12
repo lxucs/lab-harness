@@ -1,8 +1,9 @@
 # Providers
 
-> **Status:** The `Provider` protocol, `StreamOptions`, and `FakeProvider` are
-> implemented. Real adapters (Anthropic, OpenAI-compatible) arrive in a later
-> milestone — see the build order in [architecture.md](architecture.md).
+> **Status:** The `Provider` protocol, `StreamOptions`, `FakeProvider`, the
+> model registry, and the **Anthropic** adapter are implemented. The
+> OpenAI-compatible adapter arrives in step 12 — see the build order in
+> [architecture.md](architecture.md).
 
 ## The contract
 
@@ -51,14 +52,60 @@ though compaction does not — it is where token accounting will hang.
 
 ## Shipped providers
 
-| Provider | API | Also reaches |
-|---|---|---|
-| `anthropic` | Messages | — |
-| `openai` | Chat Completions | DeepSeek, Groq, OpenRouter, vLLM, Ollama via `base_url` |
+| Provider | API | Status | Also reaches |
+|---|---|---|---|
+| `anthropic` | Messages | implemented | — |
+| `openai` | Chat Completions | step 12 | DeepSeek, Groq, OpenRouter, vLLM, Ollama via `base_url` |
 
 Two adapters is the minimum that keeps provider-specific assumptions out of the
 core types. A single adapter would let Anthropic's shapes — thinking blocks,
 `cache_control`, server tools — quietly become the core's shapes.
+
+## The Anthropic adapter
+
+`harness/llm/providers/anthropic.py`. Credentials come from the environment,
+never from a config file or a constructor argument; config holds only the env
+var *names*.
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token. Takes precedence over the key. |
+| `ANTHROPIC_API_KEY` | API key |
+| `ANTHROPIC_BASE_URL` | Override the endpoint |
+
+**Missing credentials do not raise.** The client is built in the constructor,
+but a failure there is recorded and reported on the first `stream()` call as a
+`StreamError` — because a missing key is a request failure like any other, and
+the contract says the stream reports it. `_failure()` is the single place in the
+module that builds one.
+
+Four translation details that are not obvious:
+
+- **Tool results merge.** The API requires every `tool_result` for a turn to
+  arrive in one user message; the loop emits them as separate messages, so the
+  adapter merges consecutive ones.
+- **Empty content is dropped.** The API rejects a message with no content. An
+  errored or aborted assistant turn has none, so it is not replayed.
+- **Signature-less thinking blocks are dropped.** The API rejects a replayed
+  thinking block without its signature.
+- **Partial tool JSON is never salvaged.** A truncated argument object can parse
+  into something that validates while silently missing fields. Malformed JSON
+  yields `{}`, and the loop already refuses to execute calls from a
+  length-stopped turn.
+
+## Model registry
+
+`harness/llm/registry.py` holds the catalog and `resolve_model()`. Precedence:
+explicit argument, then `HARNESS_MODEL`, then the configured default.
+
+An **unknown model id is not an error**. Model names ship faster than this
+catalog does, so an unlisted id is assumed to be a current Anthropic model and
+given conservative limits. Being unable to use a model released last week is
+worse than a slightly wrong `context_window`.
+
+Capability flags live with the model because the runtime acts on them:
+`supports_reasoning` gates the thinking request, `supports_server_tools` will
+decide whether `web_search` is forwarded or executed locally.
 
 ## Adding a provider
 
@@ -66,7 +113,7 @@ core types. A single adapter would let Anthropic's shapes — thinking blocks,
 2. Translate core `Message` objects to the provider's wire format, and the
    provider's stream back to `StreamEvent`s.
 3. Map failures to an `error` event. Never raise.
-4. Register it in `llm/registry.py`.
+4. Add its models to `llm/registry.py`.
 5. Update the table above.
 
 ## Testing

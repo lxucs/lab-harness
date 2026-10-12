@@ -27,10 +27,18 @@ or that there is a UI.
 **`agent/`** — the loop, tools-as-executables, and the event stream. It does not
 know the filesystem layout or anything about rendering.
 
-**`tools/`** — individual capabilities. A tool receives a `ToolContext` with its
-`cwd`, a cancel token, and an update callback. Tools never reach for globals.
+**`tools/`** — individual capabilities, *and the tool contract itself*. A tool
+receives a `ToolContext` with its `cwd`, resolved config, a cancel token, and an
+update callback. Tools never reach for globals.
 
-**`session/`** — the append-only transcript on disk.
+`AgentTool`, `ToolResult`, and `ToolContext` are defined in `tools/base.py`
+rather than in `agent/`, precisely because of the rule above: `agent/` consumes
+tools, so a definition in `agent/` would force every tool module to import
+upward. `agent/types.py` re-exports them for callers.
+
+**`session/`** — the append-only transcript on disk. The recorder is a
+*subscriber*, so persistence is wiring rather than a branch in the loop: `cli/`
+decides whether to attach one.
 
 **`cli/`** — a *subscriber* to the agent's event stream. The runtime never
 imports from `cli/`. Deleting `cli/` leaves the runtime working.
@@ -54,7 +62,7 @@ This works only if events stay plain data — see [events.md](events.md).
 
 | Hook | When | Used by |
 |---|---|---|
-| `before_tool_call` | after args validate, before execute | approval gate |
+| `before_tool_call` | after args validate, before execute | approval gate (`cli/approval.py`) |
 | `after_tool_call` | after execute, before events emit | truncation, redaction |
 | `prepare_request` | before every provider request | compaction (later) |
 
@@ -118,11 +126,11 @@ proceeds.
 | 2 | `llm/fake.py`, `provider.py` | Complete |
 | 3 | `agent/loop.py` against `FakeProvider` | Complete |
 | 4 | `agent/agent.py` — state, subscribers, abort | Complete |
-| 5 | `tools/base.py`, `registry.py`, `fs.py` | Not started |
-| 6 | `cli/json_sink.py` → first end-to-end run | Not started |
-| 7 | `llm/providers/anthropic.py` → first real run | Not started |
-| 8 | `cli/terminal.py` — interactive | Not started |
-| 9 | `tools/shell.py`, `search.py`, approval gate | Not started |
-| 10 | `session/` | Not started |
-| 11 | `tools/web.py`, `native.py` | Not started |
+| 5 | `tools/base.py`, `registry.py`, `fs.py` | Complete |
+| 6 | `cli/json_sink.py` → first end-to-end run | Complete |
+| 7 | `llm/providers/anthropic.py` → first real run | Complete |
+| 8 | `cli/terminal.py` — interactive | Complete |
+| 9 | `tools/shell.py`, `search.py`, approval gate | Complete |
+| 10 | `session/` | Complete |
+| 11 | `tools/web.py`, `html_text.py`, config loading | Complete |
 | 12 | `llm/providers/openai.py` | Not started |

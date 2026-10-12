@@ -13,7 +13,7 @@ when the run finishes.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from harness.agent.loop import run_agent_loop
@@ -82,6 +82,17 @@ class Agent:
         self._listeners: list[Listener] = []
         self._signal: asyncio.Event | None = None
 
+    def restore(self, messages: Sequence[Message]) -> None:
+        """Seed the transcript from a saved session.
+
+        Deliberately silent: these messages are already on disk, so announcing
+        them would make a resumed session re-record its own history on the
+        first write. Call before any `prompt()`.
+        """
+        if self.state.is_running:
+            raise RuntimeError("Cannot restore while a run is in flight.")
+        self.state.messages = list(messages)
+
     # --- subscriptions ----------------------------------------------------
 
     def subscribe(self, listener: Listener) -> Callable[[], None]:
@@ -107,9 +118,10 @@ class Agent:
     def _reduce(self, event: AgentEvent) -> None:
         """Fold an event into agent state before listeners see it.
 
-        This owns every append to `state.messages`. The loop announces each
-        message it produces exactly once, so appending anywhere else would
-        duplicate it.
+        This owns every append to `state.messages` — including the user
+        message, which `prompt()` hands to the loop rather than appending, so
+        that this stays the only writer. Every message is announced exactly
+        once, so appending anywhere else would duplicate it.
         """
         if isinstance(event, MessageEnd):
             self.state.messages.append(event.message)
@@ -138,11 +150,15 @@ class Agent:
 
         try:
             user = UserMessage(content=text(message)) if isinstance(message, str) else message
-            self.state.messages.append(user)
+            # Deliberately not appended here. The loop announces it, and
+            # `_reduce` appends it on the way through — keeping `_reduce` the
+            # single writer to state.messages with no special case. It still
+            # has to reach the provider on this turn, hence `messages` below.
             ctx = AgentContext(
                 system_prompt=self.state.system_prompt,
-                messages=tuple(self.state.messages),
+                messages=(*self.state.messages, user),
                 tools=self._tools,
+                unannounced=(user,),
             )
             cfg = LoopConfig(
                 model=self.state.model,
