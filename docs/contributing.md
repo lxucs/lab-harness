@@ -101,6 +101,51 @@ running environment.
 
 See [configuration.md](configuration.md).
 
+### Nothing sensitive is logged
+
+The same list, one step further. Debug output is pasted into issues, so a
+credential that reaches a log record is a credential published.
+
+```python
+# Right — the name says which source won, and leaks nothing
+_log.debug("Credentials taken from %s", cfg.api_key_env)
+
+# Wrong
+_log.debug("Using key %s", api_key)
+```
+
+This covers private endpoints too — `ANTHROPIC_BASE_URL` is often an internal
+gateway. Log the variable's *name*, never its value.
+`tests/test_logging.py` asserts a key set in the environment does not appear in
+debug output; extend it when you add a provider.
+
+## Logging
+
+Take a logger the ordinary way and emit unconditionally:
+
+```python
+_log = logging.getLogger(__name__)
+```
+
+Name it `_log`, and never call `basicConfig` or add a handler — only `cli/`
+configures logging, through `harness/logs.py`. A library that configures
+logging hijacks the application embedding it.
+
+Pick the level by who needs the line:
+
+| Level | For |
+|---|---|
+| `warning` | A problem with no other channel. It prints by default, so it must be worth interrupting a working run |
+| `info` | One line per significant decision — the model in use, the transcript path |
+| `debug` | The trace: config files read, request shapes, durations, outbound URLs |
+
+Never log message content or tool output. The transcript holds the
+conversation; a log that duplicates it is both a privacy problem and unreadable.
+Log *shape* instead — counts, ids, durations.
+
+Levels are documented in [configuration.md](configuration.md#logging), so a new
+record at a level that page does not describe means one of the two is wrong.
+
 ## Documentation
 
 Docs are written alongside the code, not after. A module whose doc page was not
@@ -113,10 +158,10 @@ updated is not finished.
 | Event protocol change | [events.md](events.md) |
 | Layering or module change | [architecture.md](architecture.md) |
 | Transcript format change | [sessions.md](sessions.md) |
-| New config key | [configuration.md](configuration.md) |
+| New config key, env var, or log level | [configuration.md](configuration.md) |
 
-Also tick the build-order checklist in [`../README.md`](../README.md) as steps
-complete.
+Keep [`../README.md`](../README.md)'s Status section honest when something
+lands or is abandoned.
 
 ## Checks
 

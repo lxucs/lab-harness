@@ -14,6 +14,7 @@ new core type.
 """
 
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -81,6 +82,8 @@ _STOP_REASONS: dict[str, StopReason] = {
 
 _ABORTED_NOTICE = "Operation aborted"
 
+_log = logging.getLogger(__name__)
+
 
 class AnthropicProvider:
     """Streams from the Anthropic Messages API.
@@ -124,8 +127,12 @@ class AnthropicProvider:
             kwargs["auth_token"] = token
         else:
             kwargs["api_key"] = key
+        # The variable's name, never its value. Same for base_url, which is a
+        # private endpoint often enough to treat as sensitive.
+        _log.debug("Credentials taken from %s", cfg.auth_token_env if token else cfg.api_key_env)
         base_url = os.environ.get(cfg.base_url_env)
         if base_url:
+            _log.debug("Endpoint overridden by %s", cfg.base_url_env)
             kwargs["base_url"] = base_url
         return anthropic.AsyncAnthropic(**kwargs)  # type: ignore[arg-type]
 
@@ -151,6 +158,15 @@ class AnthropicProvider:
             # run down. The loop cannot repair them either way.
             yield _failure(model, self.name, f"Could not build request: {exc}")
             return
+
+        # Shape, not content — the transcript already holds the conversation.
+        _log.debug(
+            "Streaming from %s: %d message(s), %d tool(s), max_tokens=%s",
+            model.id,
+            len(request.get("messages", ())),
+            len(request.get("tools", ())),
+            request.get("max_tokens"),
+        )
 
         accumulator = _Accumulator(model=model, provider=self.name)
         try:
@@ -499,6 +515,10 @@ def _failure(
     reason: str = "error",
 ) -> StreamError:
     """The one place a failure becomes a stream event. Nothing here raises."""
+    if reason == "aborted":
+        _log.debug("Stream aborted for %s", model.id)
+    else:
+        _log.warning("%s request failed for %s: %s", provider, model.id, error)
     return StreamError(
         message=AssistantMessage(
             content=(),

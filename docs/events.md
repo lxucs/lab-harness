@@ -3,11 +3,10 @@
 The event stream is the contract between the runtime and anything watching it.
 `Agent.subscribe(listener)` is the only way to observe a run.
 
-> **Status:** Fully implemented. The provider stream protocol lives in
-> `harness/llm/events.py`, agent-level events in `harness/agent/types.py`, and
-> subscriber fan-out in `harness/agent/agent.py`. The JSONL sink in
-> `harness/cli/json_sink.py` is the second consumer that keeps the plain-data
-> rule honest.
+The provider stream protocol lives in `harness/llm/events.py`, agent-level
+events in `harness/agent/types.py`, and subscriber fan-out in
+`harness/agent/agent.py`. The JSONL sink in `harness/cli/json_sink.py` is the
+second consumer, which is what keeps the plain-data rule honest.
 
 ## The rule that makes this work
 

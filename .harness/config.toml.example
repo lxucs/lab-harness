@@ -17,6 +17,25 @@
 max_turns = 50
 # Run independent tool calls from one assistant message concurrently.
 parallel_tools = true
+# Model used when neither --model nor $HARNESS_MODEL names one. An id missing
+# from the catalog still works; it is assumed current and given conservative
+# limits.
+model = "claude-sonnet-5"
+# Name of the environment variable that overrides `model`. The name is a
+# config key so a deployment using a different one changes config, not code.
+model_env = "HARNESS_MODEL"
+# Provider for a model id nothing else routes -- not listed in any
+# providers.openai profile and not in the catalog. --provider overrides it.
+provider = "anthropic"
+
+[project]
+# Files read from the working directory for this project's own instructions,
+# which are appended to the system prompt. The first that exists wins -- an
+# empty file therefore means "no instructions", not "try the next one".
+context_files = ["HARNESS.md", "AGENTS.md"]
+# A longer file is truncated. These instructions ride along on every request,
+# so an unbounded file is an unbounded bill.
+max_bytes = 32000
 
 [tools.read]
 # Lines returned when the model requests no explicit limit.
@@ -125,3 +144,90 @@ base_url_env = "ANTHROPIC_BASE_URL"
 default_max_tokens = 8192
 # Thinking budget when reasoning is requested, in tokens.
 thinking_budget_tokens = 4096
+
+# Endpoints in the OpenAI family, keyed by profile name. Unlike every other
+# section, NEW KEYS HERE ARE ALLOWED: adding [providers.openai.<name>] creates
+# a profile, which is how a vendor is supported without touching code. Keys
+# *inside* a profile are still checked.
+#
+# `api` picks the protocol:
+#   "responses"         OpenAI's current API. Carries a reasoning model's
+#                       chain of thought across a tool call (encrypted).
+#   "chat_completions"  What everyone else speaks -- DeepSeek, GLM, Groq,
+#                       OpenRouter, vLLM, Ollama.
+#
+# A model id listed in a profile's `models` routes to it, so
+# `harness --model deepseek-chat` needs no --provider flag.
+#
+# Keys are never written here. Set the environment variable named by
+# api_key_env, or put api_key in gitignored config.local.toml.
+
+[providers.openai.openai]
+api = "responses"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+base_url_env = "OPENAI_BASE_URL"
+# Model ids this profile serves. Empty here: OpenAI ids change often enough
+# that routing by --provider or agent.provider is the honest default.
+models = []
+# Sampling ceiling when the model declares none.
+default_max_tokens = 8192
+# Wall-clock limit for one streamed request.
+timeout_seconds = 120.0
+# chat_completions only: ask for token counts in the stream. Turn off for a
+# server that rejects stream_options -- some implementations do.
+include_usage = true
+# responses only: detail of the reasoning summary ("auto", "concise",
+# "detailed"). Empty asks for none, which makes thinking invisible -- the raw
+# chain is never returned, so the summary is the only readable form.
+reasoning_summary = "auto"
+# responses only: let the server keep the conversation and refer to it by id.
+# Off, because this harness owns its transcript. Turning it on disables
+# encrypted-reasoning replay.
+store = false
+
+[providers.openai.deepseek]
+api = "chat_completions"
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url_env = "DEEPSEEK_BASE_URL"
+models = ["deepseek-chat", "deepseek-reasoner"]
+default_max_tokens = 8192
+timeout_seconds = 120.0
+include_usage = true
+reasoning_summary = "auto"
+store = false
+
+[providers.openai.glm]
+api = "chat_completions"
+# The mainland endpoint. International is https://api.z.ai/api/paas/v4
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "ZHIPUAI_API_KEY"
+base_url_env = "ZHIPUAI_BASE_URL"
+models = ["glm-4.6", "glm-4.5", "glm-4.5-air"]
+default_max_tokens = 8192
+timeout_seconds = 120.0
+include_usage = true
+reasoning_summary = "auto"
+store = false
+
+# Any other endpoint is one more section. For example:
+#
+# [providers.openai.groq]
+# base_url = "https://api.groq.com/openai/v1"
+# api_key_env = "GROQ_API_KEY"
+# models = ["llama-3.3-70b-versatile"]
+#
+# [providers.openai.local]
+# base_url = "http://localhost:11434/v1"   # Ollama
+# api_key_env = "OLLAMA_API_KEY"
+# models = ["qwen3:8b"]
+
+[logging]
+# Diagnostics about the harness itself, written to stderr. One of:
+# debug, info, warning, error. A level set here cannot report the loading of
+# this file — use $HARNESS_LOG_LEVEL or --log-level to debug config itself.
+level = "warning"
+level_env = "HARNESS_LOG_LEVEL"
+# Format for one record.
+format = "%(levelname)s %(name)s: %(message)s"

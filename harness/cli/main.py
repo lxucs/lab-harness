@@ -18,9 +18,10 @@ from harness.agent.types import AgentEvent, MessageEnd
 from harness.cli.json_sink import json_sink
 from harness.cli.terminal import Terminal, build_approval_gate
 from harness.config import Config, ConfigError, load_config
-from harness.llm.providers.anthropic import AnthropicProvider
-from harness.llm.registry import resolve_model
+from harness.llm.providers import route
 from harness.llm.types import AssistantMessage, TextBlock
+from harness.logs import LEVELS, configure_logging
+from harness.project import ProjectContext, load_project_context
 from harness.session import (
     ResumeError,
     SessionRecorder,
@@ -43,12 +44,47 @@ SYSTEM_PROMPT = (
 )
 
 
+def build_system_prompt(context: ProjectContext | None) -> str:
+    """The base prompt, plus the project's own instructions when it has any.
+
+    The file name is kept in the heading so the model can cite and edit the
+    source of a convention rather than treating it as an unattributable rule.
+    """
+    if context is None:
+        return SYSTEM_PROMPT
+    return (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"## Project instructions ({context.path.name})\n\n"
+        f"These come from the working directory and describe this project's "
+        f"own conventions. Follow them.\n\n"
+        f"{context.text}"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness", description="A lightweight agent harness.")
     parser.add_argument("-p", "--prompt", help="Run one prompt and exit.")
     parser.add_argument("--json", action="store_true", help="Emit the raw event stream as JSONL.")
-    parser.add_argument("--model", help="Model id. Defaults to config, then HARNESS_MODEL.")
-    parser.add_argument("--cwd", default=".", help="Working directory for tools.")
+    parser.add_argument(
+        "--model", help="Model id. Overrides $HARNESS_MODEL and the configured agent.model."
+    )
+    parser.add_argument(
+        "--provider",
+        help=(
+            "Provider serving the model: 'anthropic' or a configured "
+            "providers.openai profile. Normally inferred from the model id."
+        ),
+    )
+    parser.add_argument(
+        "--cwd", default=".", help="Working directory for tools, config, and project instructions."
+    )
+    parser.add_argument(
+        "--log-level",
+        # list(), not sorted(): LEVELS is in severity order, which is how the
+        # choices read in --help. Alphabetical puts "error" second.
+        choices=list(LEVELS),
+        help="Diagnostics on stderr. Overrides $HARNESS_LOG_LEVEL and logging.level.",
+    )
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -76,13 +112,23 @@ def _build_agent(
     *,
     tool_names: Sequence[str] | None = None,
     before_tool_call: Callable[..., Awaitable[object]] | None = None,
+    console: Console | None = None,
 ) -> Agent:
     registry = default_registry()
     tools = registry.select(list(tool_names)) if tool_names is not None else tuple(registry)
+    context = load_project_context(args.cwd, config.project)
+    if context is not None and console is not None:
+        # Project instructions change how the agent behaves; a silent feature
+        # cannot be told apart from a broken one.
+        note = f"Project instructions: {context.path.name}"
+        if context.truncated:
+            note += f" (truncated to {config.project.max_bytes} bytes)"
+        console.print(Text(note, style="dim"))
+    model, provider = route(args.model, config, args.provider)
     return Agent(
-        model=resolve_model(args.model),
-        provider=AnthropicProvider(config.providers.anthropic),
-        system_prompt=SYSTEM_PROMPT,
+        model=model,
+        provider=provider,
+        system_prompt=build_system_prompt(context),
         tools=tools,
         config=config,
         cwd=args.cwd,
@@ -160,6 +206,7 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
         config,
         tool_names=config.terminal.enabled_tools,
         before_tool_call=gate,
+        console=console,
     )
     terminal.attach(agent)
     recorder = _attach_session(agent, args, config, console)
@@ -224,9 +271,16 @@ def _brief(arguments: dict[str, object]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        # Twice, deliberately. The first call uses the flag, the environment and
+        # the schema defaults, so `--log-level debug` covers the loading of
+        # config itself — which is exactly what you want when a setting appears
+        # to do nothing. A level set *in* a config file cannot report its own
+        # file being read; the second call hands control to it from here on.
+        configure_logging(args.log_level)
         # Config is loaded relative to --cwd, so `harness --cwd ../other` picks
         # up that project's .harness/ rather than this directory's.
         config = load_config(args.cwd)
+        configure_logging(args.log_level, config.logging)
         if args.sessions:
             return list_saved_sessions(args, config)
         if args.prompt:

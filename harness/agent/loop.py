@@ -3,6 +3,23 @@
 A pure async function. It owns no state — the caller passes a context and gets
 back the messages the run produced. `Agent` wraps this with transcript state.
 
+One turn, in order:
+
+    prepare_request?  ->  stream from provider  ->  assistant message
+                                                          |
+        +-------------------+-----------------------------+
+        |                   |                             |
+    errored or           no calls                     tool calls
+    aborted                 |                             |
+        |              finish_turn?          before_tool_call? -> execute
+        |               |       |                           -> after_tool_call?
+        |         continue     END                           |
+       END            |                             results appended, loop again
+
+Four exits, and every one of them `break`s: abort, an errored turn, a clean
+turn the `finish_turn` hook declines to continue, and — via `for/else` — the
+`max_turns` budget running out.
+
 Error handling is concentrated at three boundaries, so the body stays linear:
 providers terminate with an error event rather than raising, tool failures
 become error results rather than propagating, and third-party code reached
@@ -23,6 +40,7 @@ from harness.agent.types import (
     AgentTool,
     BeforeToolCallContext,
     EventSink,
+    FinishTurnContext,
     LoopConfig,
     MessageEnd,
     MessageStart,
@@ -51,6 +69,7 @@ from harness.llm.types import (
     Model,
     ToolCallBlock,
     ToolResultMessage,
+    UserMessage,
     text,
 )
 
@@ -77,6 +96,11 @@ async def run_agent_loop(
     Returns the messages produced by this run — not including the ones that
     were already in `ctx.messages`.
     """
+    # Two lists, deliberately. `transcript` is everything the provider sees,
+    # seeded with the history it was handed; `produced` is only what this run
+    # added, which is what the caller gets back. Appending to one without the
+    # other is the bug to watch for: a message missing from `transcript` never
+    # reaches the model, and one missing from `produced` is never persisted.
     transcript: list[Message] = list(ctx.messages)
     produced: list[Message] = []
     tools_by_name = {t.name: t for t in ctx.tools}
@@ -84,17 +108,24 @@ async def run_agent_loop(
 
     await _safe_emit(emit, AgentStart())
 
+    # Messages the caller already holds but no subscriber has seen — normally
+    # the user turn that triggered this run. Announced, not appended: they are
+    # already in `transcript`, and `produced` must not re-report them.
     for message in ctx.unannounced:
         await _safe_emit(emit, MessageStart(message=message))
         await _safe_emit(emit, MessageEnd(message=message))
 
-    for _turn in range(cfg.config.agent.max_turns):
+    for turn in range(cfg.config.agent.max_turns):
         if _aborted(cfg):
             produced.append(await _emit_aborted(cfg, emit))
             break
 
+        _log.debug("Turn %d of at most %d", turn + 1, cfg.config.agent.max_turns)
         await _safe_emit(emit, TurnStart())
 
+        # `prepare_request` transforms the *view* sent to the provider, never
+        # the transcript. That is what makes compaction safe to add here: a
+        # summarized request cannot silently rewrite the history on disk.
         messages = tuple(transcript)
         model = cfg.model
         if cfg.prepare_request is not None:
@@ -117,8 +148,22 @@ async def run_agent_loop(
 
         calls = assistant.tool_calls
         if not calls:
+            # The model is done talking. Only here does `finish_turn` get a
+            # say, because only here would the run otherwise end.
             await _safe_emit(emit, TurnEnd(message=assistant, tool_results=()))
-            break
+            injected = await _finish_turn(assistant, cfg, tuple(transcript), turn)
+            if injected is None:
+                break
+            # Appended to the transcript *and* announced. The message queue
+            # this replaces got exactly that wrong — an injected message that
+            # survived one request and then vanished from the provider's view
+            # while staying in the agent's state. Here there is one transcript
+            # and one way into it.
+            await _safe_emit(emit, MessageStart(message=injected))
+            await _safe_emit(emit, MessageEnd(message=injected))
+            transcript.append(injected)
+            produced.append(injected)
+            continue
 
         results = await _execute_tool_calls(
             calls,
@@ -126,8 +171,12 @@ async def run_agent_loop(
             cfg,
             emit,
             transcript=tuple(transcript),
+            # A length-stopped turn may have had its tool arguments cut off
+            # mid-JSON, so none of its calls are executed. See the notice.
             truncated=assistant.stop_reason == "length",
         )
+        # Results go back in assistant-call order, which every provider
+        # requires: a result must be matched to the call that asked for it.
         for result in results:
             await _safe_emit(emit, MessageStart(message=result))
             await _safe_emit(emit, MessageEnd(message=result))
@@ -142,6 +191,14 @@ async def run_agent_loop(
         if _aborted(cfg):
             produced.append(await _emit_aborted(cfg, emit))
             break
+    else:
+        # `for/else` runs only when the range was exhausted without a break —
+        # the model was still calling tools when the budget ran out. Nothing in
+        # the returned messages says so, so without this the run just stops.
+        _log.warning(
+            "Stopped after agent.max_turns=%d with the model still working",
+            cfg.config.agent.max_turns,
+        )
 
     await _safe_emit(emit, AgentEnd(messages=tuple(produced)))
     return produced
@@ -228,12 +285,29 @@ async def _execute_tool_calls(
 ) -> list[ToolResultMessage]:
     """Run a batch of tool calls.
 
+    The model can ask for several tools in one message. This runs them, in
+    three phases:
+
+      1. **Prepare**, sequentially. Resolve each name and run the approval
+         hook. Sequential on purpose: approval prompts must appear in the
+         order the model asked, not in whatever order coroutines wake up.
+      2. **Execute**, in parallel unless anything opted out.
+      3. **Collect**, back into assistant-call order.
+
     Two orderings, deliberately different:
-      - tool_execution_end fires in completion order, for live feedback
-      - the returned result messages follow assistant source order, because
-        providers require results to match the calls that requested them
+      - `tool_execution_end` fires in *completion* order, for live feedback
+      - the returned result messages follow *assistant source* order, because
+        providers require each result to match the call that requested it
+
+    A call that was refused or whose tool does not exist never reaches phase 2;
+    it carries its error result through from phase 1, so the model still gets
+    one result per call. A provider rejects a turn where any call is unanswered.
     """
     if truncated:
+        # The response hit the output-token limit, so the JSON of these calls
+        # may be cut off mid-object. None of them run: arguments that parse but
+        # are missing a field would have the tool do the wrong thing silently,
+        # which is worse than asking the model to re-issue the call.
         truncated_results: list[ToolResultMessage] = []
         for call in calls:
             await _safe_emit(
@@ -260,6 +334,8 @@ async def _execute_tool_calls(
             )
         return truncated_results
 
+    # Phase 1. Each entry is (call, tool-to-run or None, result-already-known
+    # or None) — exactly one of the last two is set.
     prepared: list[tuple[ToolCallBlock, AgentTool | None, ToolResult | None]] = []
     for call in calls:
         await _safe_emit(
@@ -268,6 +344,7 @@ async def _execute_tool_calls(
         )
         tool = tools_by_name.get(call.name)
         if tool is None:
+            # Phrased for the model, which may be able to pick another tool.
             error_result = ToolResult(content=text(f"Tool {call.name!r} not found"), is_error=True)
             prepared.append((call, None, error_result))
             continue
@@ -277,6 +354,10 @@ async def _execute_tool_calls(
             continue
         prepared.append((call, tool, None))
 
+    # One sequential tool serializes the whole batch. Coarse on purpose: `write`
+    # and `edit` opt out because concurrent mutation of one file is not worth
+    # leaving to chance, and tracking which calls touch which paths would mean
+    # interpreting arguments the loop deliberately does not understand.
     run_serially = not cfg.config.agent.parallel_tools or any(
         tool is not None and tool.execution_mode == "sequential" for _, tool, _ in prepared
     )
@@ -313,6 +394,9 @@ async def _execute_tool_calls(
             update_tasks.add(task)
             task.add_done_callback(update_tasks.discard)
 
+        # Everything the tool is allowed to know, passed in. Tools never read
+        # the process working directory or a global config, which is what makes
+        # them testable against tmp_path and safe when two agents differ.
         tool_ctx = ToolContext(
             cwd=cfg.cwd,
             call_id=call.id,
@@ -324,7 +408,9 @@ async def _execute_tool_calls(
             result = await tool.execute(call.arguments, tool_ctx)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # a tool must never kill the loop
+        except Exception as exc:
+            # A tool must never kill the loop: the model can often recover from
+            # a failed call, and it cannot recover from a dead run.
             result = ToolResult(content=text(str(exc)), is_error=True)
 
         if pending:
@@ -332,6 +418,12 @@ async def _execute_tool_calls(
             await asyncio.gather(*pending)
 
         duration_ms = int((time.monotonic() - start) * 1000)
+        _log.debug(
+            "Tool %r finished in %dms%s",
+            call.name,
+            duration_ms,
+            " (error)" if result.is_error else "",
+        )
         final = await _finish(call, result, duration_ms, cfg, emit)
         return final, duration_ms
 
@@ -340,9 +432,9 @@ async def _execute_tool_calls(
     # collapse to a single entry and hand the same outcome to both messages.
     outcomes: dict[int, tuple[ToolResult, int]] = {}
 
-    # finally, not a trailing await: on cancellation the drain below would be
-    # skipped and an in-flight update task would outlive the loop, which is the
-    # abandonment `update_tasks` exists to prevent.
+    # Phase 2. `finally`, not a trailing await: on cancellation the drain below
+    # would be skipped and an in-flight update task would outlive the loop,
+    # which is the abandonment `update_tasks` exists to prevent.
     try:
         if run_serially:
             for index, (call, tool, _immediate) in enumerate(prepared):
@@ -390,6 +482,7 @@ async def _execute_tool_calls(
                     else:
                         outcomes[index] = outcome
 
+        # Phase 3. Back into assistant-call order, one result per call.
         results: list[ToolResultMessage] = []
         for index, (call, _tool, immediate) in enumerate(prepared):
             if immediate is not None:
@@ -440,6 +533,41 @@ async def _before_call(
             content=text(decision.reason or "Tool execution was blocked"), is_error=True
         )
     return None
+
+
+async def _finish_turn(
+    assistant: AssistantMessage,
+    cfg: LoopConfig,
+    transcript: tuple[Message, ...],
+    turn: int,
+) -> UserMessage | None:
+    """Ask the finish_turn hook whether to keep going. None means stop.
+
+    The run is bounded by `max_turns` whatever this returns, because the call
+    sits inside that loop — an auto-continue hook can waste a budget but it
+    cannot run forever.
+    """
+    if cfg.finish_turn is None:
+        return None
+    try:
+        decision = await cfg.finish_turn(
+            FinishTurnContext(message=assistant, messages=transcript, turn=turn)
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # Ending is the safe failure here, the mirror of the approval gate
+        # failing closed: a hook that errors on every turn and is treated as
+        # "continue" would burn the whole turn budget on broken code.
+        _log.exception("finish_turn hook failed; ending the run")
+        return None
+    if decision is None or decision.continue_with is None:
+        return None
+    if not decision.continue_with:
+        # Empty content would be an empty user message, which providers reject.
+        _log.warning("finish_turn returned empty content; ending the run")
+        return None
+    return UserMessage(content=decision.continue_with)
 
 
 async def _finish(

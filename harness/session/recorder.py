@@ -18,7 +18,7 @@ from harness.llm.types import AssistantMessage, Model
 from harness.session.store import new_session_id, session_path
 from harness.session.transcript import SessionHeader, TranscriptWriter, now_timestamp
 
-logger = logging.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def prompt_hash(system_prompt: str) -> str:
@@ -57,7 +57,7 @@ class SessionRecorder:
             # A full disk must not kill a run in progress. The loop isolates
             # subscriber failures anyway; this logs the cause rather than
             # leaving a silent gap in the transcript.
-            logger.exception("Could not write to session %s", self._writer.path)
+            _log.exception("Could not write to session %s", self._writer.path)
 
     def close(self) -> None:
         self._writer.close()
@@ -77,6 +77,7 @@ def start_recorder(
     Pass `path` to append to an existing session (resume); otherwise a new
     session file is created.
     """
+    appending = path is not None
     if path is not None:
         identifier = path.stem
     else:
@@ -93,4 +94,5 @@ def start_recorder(
     )
     writer = TranscriptWriter(path, header)
     writer.open()
+    _log.info("%s transcript %s", "Appending to" if appending else "Writing", path)
     return SessionRecorder(writer)

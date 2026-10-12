@@ -25,6 +25,8 @@ from harness.agent.types import (
     AgentTool,
     BeforeToolCallContext,
     BeforeToolCallResult,
+    FinishTurnContext,
+    FinishTurnResult,
     LoopConfig,
     MessageEnd,
     MessageStart,
@@ -35,7 +37,7 @@ from harness.config import Config, load_config
 from harness.llm.provider import Provider
 from harness.llm.types import AssistantMessage, Message, Model, UserMessage, text
 
-logger = logging.getLogger(__name__)
+_log = logging.getLogger(__name__)
 
 Listener = Callable[[AgentEvent], Awaitable[None]]
 
@@ -70,6 +72,9 @@ class Agent:
         prepare_request: (
             Callable[[PrepareRequestContext], Awaitable[RequestUpdate | None]] | None
         ) = None,
+        finish_turn: (
+            Callable[[FinishTurnContext], Awaitable[FinishTurnResult | None]] | None
+        ) = None,
     ) -> None:
         self.state = AgentState(system_prompt=system_prompt, model=model)
         self._provider = provider
@@ -79,6 +84,7 @@ class Agent:
         self._before_tool_call = before_tool_call
         self._after_tool_call = after_tool_call
         self._prepare_request = prepare_request
+        self._finish_turn = finish_turn
         self._listeners: list[Listener] = []
         self._signal: asyncio.Event | None = None
 
@@ -113,7 +119,7 @@ class Agent:
                 await listener(event)
             except Exception:
                 # A broken renderer must not take down the run.
-                logger.exception("Event listener raised; continuing")
+                _log.exception("Event listener raised; continuing")
 
     def _reduce(self, event: AgentEvent) -> None:
         """Fold an event into agent state before listeners see it.
@@ -168,6 +174,7 @@ class Agent:
                 before_tool_call=self._before_tool_call,
                 after_tool_call=self._after_tool_call,
                 prepare_request=self._prepare_request,
+                finish_turn=self._finish_turn,
                 signal=self._signal,
             )
             # The loop returns only what it produced; `_reduce` has already

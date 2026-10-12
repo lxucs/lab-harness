@@ -14,6 +14,8 @@ from harness.agent.types import (
     BeforeToolCallResult,
     EventSink,
     ExecutionMode,
+    FinishTurnContext,
+    FinishTurnResult,
     LoopConfig,
     MessageEnd,
     MessageStart,
@@ -385,6 +387,45 @@ async def test_max_turns_stops_a_runaway_loop() -> None:
     assert assistant_count == 3
 
 
+async def test_exhausting_max_turns_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    """Nothing in the returned messages says the budget ran out.
+
+    Without a log record the run just stops mid-task, which reads as the model
+    giving up rather than as a limit being hit.
+    """
+    from dataclasses import replace as dc_replace
+
+    from harness.config import AgentConfig
+
+    tool = RecordingTool()
+    call = ToolCallBlock(id="c1", name="echo", arguments={})
+    provider = FakeProvider([tool_call_response([call]) for _ in range(5)])
+    _, emit = _collector()
+    cfg = LoopConfig(
+        model=FAKE_MODEL,
+        provider=provider,
+        config=dc_replace(Config(), agent=AgentConfig(max_turns=2)),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="harness.agent.loop"):
+        await run_agent_loop(_ctx(tool), cfg, emit)
+
+    assert any("max_turns=2" in record.message for record in caplog.records)
+
+
+async def test_a_run_that_finishes_normally_does_not_report_the_limit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The `for/else` must not fire on the ordinary path."""
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    with caplog.at_level(logging.WARNING, logger="harness.agent.loop"):
+        await run_agent_loop(_ctx(), _cfg(provider), emit)
+
+    assert not [r for r in caplog.records if "max_turns" in r.message]
+
+
 async def test_abort_signal_stops_the_run() -> None:
     signal = asyncio.Event()
     signal.set()
@@ -702,3 +743,232 @@ async def test_message_start_reports_the_model_prepare_request_selected() -> Non
     opened = starts[0].message
     assert isinstance(opened, AssistantMessage)
     assert opened.model == "swapped-model"
+
+
+# --- finish_turn -----------------------------------------------------------
+
+
+def _continue_with(value: str) -> Any:
+    """A hook that asks for one more turn, then lets the run end."""
+    calls: list[FinishTurnContext] = []
+
+    async def hook(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        calls.append(ctx)
+        if len(calls) == 1:
+            return FinishTurnResult(continue_with=text(value))
+        return None
+
+    hook.calls = calls  # type: ignore[attr-defined]
+    return hook
+
+
+async def test_no_hook_means_the_run_ends_as_before() -> None:
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider), emit)
+
+    assert len(messages) == 1
+
+
+async def test_finish_turn_can_continue_the_run() -> None:
+    provider = FakeProvider([text_response("first"), text_response("second")])
+    _, emit = _collector()
+    hook = _continue_with("keep going")
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider, finish_turn=hook), emit)
+
+    texts = [
+        b.text
+        for m in messages
+        if isinstance(m, AssistantMessage)
+        for b in m.content
+        if isinstance(b, TextBlock)
+    ]
+    assert texts == ["first", "second"]
+
+
+async def test_the_injected_message_reaches_the_provider() -> None:
+    """Not merely appended to local state — the next request must carry it."""
+    provider = FakeProvider([text_response("first"), text_response("second")])
+    _, emit = _collector()
+
+    await run_agent_loop(_ctx(), _cfg(provider, finish_turn=_continue_with("keep going")), emit)
+
+    second_request = provider.requests[1].messages
+    assert any(
+        isinstance(m, UserMessage) and m.content == text("keep going") for m in second_request
+    ), "the injected message is missing from the second request"
+
+
+async def test_the_injected_message_is_announced() -> None:
+    """A subscriber and the session file must both see it.
+
+    The message queue this hook replaces got exactly this wrong.
+    """
+    provider = FakeProvider([text_response("first"), text_response("second")])
+    events, emit = _collector()
+
+    await run_agent_loop(_ctx(), _cfg(provider, finish_turn=_continue_with("keep going")), emit)
+
+    announced = [
+        e.message
+        for e in events
+        if isinstance(e, MessageEnd) and isinstance(e.message, UserMessage)
+    ]
+    assert text("keep going") in [m.content for m in announced]
+
+
+async def test_the_injected_message_is_returned_from_the_run() -> None:
+    provider = FakeProvider([text_response("first"), text_response("second")])
+    _, emit = _collector()
+
+    messages = await run_agent_loop(
+        _ctx(), _cfg(provider, finish_turn=_continue_with("keep going")), emit
+    )
+
+    assert any(isinstance(m, UserMessage) and m.content == text("keep going") for m in messages)
+
+
+async def test_returning_none_ends_the_run() -> None:
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    async def decline(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        return None
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider, finish_turn=decline), emit)
+
+    assert len(messages) == 1
+
+
+async def test_an_empty_result_ends_the_run() -> None:
+    """`FinishTurnResult()` with no content is a decline, not a continue."""
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    async def shrug(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        return FinishTurnResult()
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider, finish_turn=shrug), emit)
+
+    assert len(messages) == 1
+
+
+async def test_empty_content_ends_the_run_rather_than_sending_an_empty_message() -> None:
+    """Providers reject a user message with no content."""
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    async def blank(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        return FinishTurnResult(continue_with=())
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider, finish_turn=blank), emit)
+
+    assert len(messages) == 1
+
+
+async def test_a_raising_hook_ends_the_run() -> None:
+    """Fail-safe, like the approval gate failing closed.
+
+    Treating a crash as "continue" would burn the whole turn budget on code
+    that is already known to be broken.
+    """
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+
+    async def broken(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        raise RuntimeError("hook is broken")
+
+    messages = await run_agent_loop(_ctx(), _cfg(provider, finish_turn=broken), emit)
+
+    assert len(messages) == 1
+    assert isinstance(messages[0], AssistantMessage)
+
+
+async def test_auto_continue_is_bounded_by_max_turns() -> None:
+    """A hook that always continues must not loop forever."""
+    from dataclasses import replace as dc_replace
+
+    from harness.config import AgentConfig
+
+    provider = FakeProvider([text_response(f"turn {i}") for i in range(20)])
+    _, emit = _collector()
+
+    async def always(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        return FinishTurnResult(continue_with=text("again"))
+
+    cfg = LoopConfig(
+        model=FAKE_MODEL,
+        provider=provider,
+        config=dc_replace(Config(), agent=AgentConfig(max_turns=3)),
+        finish_turn=always,
+    )
+
+    messages = await run_agent_loop(_ctx(), cfg, emit)
+
+    assert sum(1 for m in messages if isinstance(m, AssistantMessage)) == 3
+
+
+async def test_an_errored_turn_is_never_auto_continued() -> None:
+    """ "Try again" is a decision for whoever handles the error."""
+    provider = FakeProvider([error_response("upstream exploded")])
+    _, emit = _collector()
+    hook = _continue_with("keep going")
+
+    await run_agent_loop(_ctx(), _cfg(provider, finish_turn=hook), emit)
+
+    assert hook.calls == [], "the hook must not see an errored turn"
+
+
+async def test_an_aborted_run_is_never_auto_continued() -> None:
+    signal = asyncio.Event()
+    signal.set()
+    provider = FakeProvider([text_response("never seen")])
+    _, emit = _collector()
+    hook = _continue_with("keep going")
+
+    await run_agent_loop(_ctx(), _cfg(provider, finish_turn=hook, signal=signal), emit)
+
+    assert hook.calls == []
+
+
+async def test_the_hook_is_not_called_while_tools_are_still_running() -> None:
+    """It fires when a turn would END the run, not at every turn boundary.
+
+    A turn that requested tools is going to continue regardless, so asking
+    whether to continue would be meaningless — and a hook that counted those
+    calls would see a different number of turns than actually ran.
+    """
+    tool = RecordingTool()
+    call = ToolCallBlock(id="c1", name="echo", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("done")])
+    _, emit = _collector()
+    seen: list[FinishTurnContext] = []
+
+    async def decline(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        seen.append(ctx)
+        return None
+
+    await run_agent_loop(_ctx(tool), _cfg(provider, finish_turn=decline), emit)
+
+    # Two turns ran; only the second — the one with no tool calls — could have
+    # ended the run, so only that one consults the hook.
+    assert len(seen) == 1
+    assert seen[0].turn == 1
+
+
+async def test_the_context_carries_the_turn_and_the_transcript() -> None:
+    provider = FakeProvider([text_response("done")])
+    _, emit = _collector()
+    seen: list[FinishTurnContext] = []
+
+    async def inspect(ctx: FinishTurnContext) -> FinishTurnResult | None:
+        seen.append(ctx)
+        return None
+
+    await run_agent_loop(_ctx(), _cfg(provider, finish_turn=inspect), emit)
+
+    assert seen[0].turn == 0
+    assert isinstance(seen[0].message, AssistantMessage)
+    assert any(isinstance(m, UserMessage) for m in seen[0].messages)

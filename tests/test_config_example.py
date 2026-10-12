@@ -25,6 +25,10 @@ INTENTIONALLY_ABSENT = {
     "tools.web.tavily.api_key",
     # A machine-specific endpoint, for the same reason.
     "tools.web.tavily.base_url",
+    # Same rule, once per shipped OpenAI-compatible profile.
+    "providers.openai.openai.api_key",
+    "providers.openai.deepseek.api_key",
+    "providers.openai.glm.api_key",
 }
 
 #: Substrings that would mean a real secret leaked into a committed file.
@@ -37,13 +41,22 @@ def example_data() -> dict[str, Any]:
 
 
 def leaf_paths(instance: object, trail: tuple[str, ...] = ()) -> set[str]:
-    """Every scalar setting in the schema, as dotted paths."""
+    """Every scalar setting in the schema, as dotted paths.
+
+    A dict field is a table of *named* sections (`providers.openai.deepseek`),
+    so it recurses one level deeper than a plain one — the names are data, but
+    the keys inside each section are schema and must be documented like any
+    other.
+    """
     found: set[str] = set()
     for field in fields(instance):  # type: ignore[arg-type]
         value = getattr(instance, field.name)
         where = (*trail, field.name)
         if is_dataclass(value):
             found |= leaf_paths(value, where)
+        elif isinstance(value, dict):
+            for name, section in value.items():
+                found |= leaf_paths(section, (*where, name))
         else:
             found.add(".".join(where))
     return found

@@ -202,3 +202,111 @@ def test_harness_home_follows_the_env_override(monkeypatch: pytest.MonkeyPatch) 
 def test_harness_home_expands_a_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HARNESS_HOME", raising=False)
     assert "~" not in str(harness_home())
+
+
+# --- named provider profiles ----------------------------------------------
+#
+# `providers.openai` is the one table where an unknown key is NOT an error:
+# a new key is a new vendor, which is how one is added without code. Keys
+# *inside* a profile are checked as strictly as anywhere else.
+
+
+def test_the_shipped_profiles_are_present_by_default(tmp_path: Path) -> None:
+    profiles = load_config(tmp_path).providers.openai
+
+    assert set(profiles) >= {"openai", "deepseek", "glm"}
+    assert profiles["deepseek"].api_key_env == "DEEPSEEK_API_KEY"
+
+
+def test_a_new_profile_can_be_added_in_config(tmp_path: Path) -> None:
+    """The whole point of the dict: a vendor with no code change."""
+    project(
+        tmp_path,
+        "[providers.openai.groq]\n"
+        'base_url = "https://api.groq.com/openai/v1"\n'
+        'api_key_env = "GROQ_API_KEY"\n'
+        'models = ["llama-3.3-70b"]\n',
+    )
+
+    groq = load_config(tmp_path).providers.openai["groq"]
+
+    assert groq.base_url == "https://api.groq.com/openai/v1"
+    assert groq.models == ("llama-3.3-70b",)
+
+
+def test_a_new_profile_keeps_the_shipped_ones(tmp_path: Path) -> None:
+    """Adding is not replacing — the same rule as every other config layer."""
+    project(tmp_path, '[providers.openai.groq]\nbase_url = "https://api.groq.com/openai/v1"\n')
+
+    profiles = load_config(tmp_path).providers.openai
+
+    assert set(profiles) >= {"openai", "deepseek", "glm", "groq"}
+
+
+def test_an_unset_key_in_a_new_profile_takes_the_schema_default(tmp_path: Path) -> None:
+    project(tmp_path, '[providers.openai.groq]\nbase_url = "https://api.groq.com/openai/v1"\n')
+
+    groq = load_config(tmp_path).providers.openai["groq"]
+
+    assert groq.timeout_seconds == 120.0
+    assert groq.include_usage is True
+
+
+def test_an_existing_profile_merges_rather_than_replaces(tmp_path: Path) -> None:
+    project(tmp_path, "[providers.openai.deepseek]\ntimeout_seconds = 30\n")
+
+    deepseek = load_config(tmp_path).providers.openai["deepseek"]
+
+    assert deepseek.timeout_seconds == 30.0
+    # Untouched keys survive.
+    assert deepseek.models == ("deepseek-chat", "deepseek-reasoner")
+    assert deepseek.api_key_env == "DEEPSEEK_API_KEY"
+
+
+def test_a_typo_inside_a_profile_is_still_an_error(tmp_path: Path) -> None:
+    """Permissiveness stops at the profile name."""
+    project(tmp_path, "[providers.openai.deepseek]\ntimeoutt_seconds = 30\n")
+
+    with pytest.raises(ConfigError) as caught:
+        load_config(tmp_path)
+
+    message = str(caught.value)
+    assert "providers.openai.deepseek.timeoutt_seconds" in message
+    assert "timeout_seconds" in message, "the message must list what was available"
+
+
+def test_a_wrong_type_inside_a_profile_is_still_an_error(tmp_path: Path) -> None:
+    project(tmp_path, '[providers.openai.deepseek]\ntimeout_seconds = "soon"\n')
+
+    with pytest.raises(ConfigError, match="timeout_seconds"):
+        load_config(tmp_path)
+
+
+def test_a_scalar_where_a_profile_belongs_is_an_error(tmp_path: Path) -> None:
+    """`[providers] openai = 3` names no profile, so it cannot mean anything."""
+    project(tmp_path, "[providers]\nopenai = 3\n")
+
+    with pytest.raises(ConfigError, match="named sections"):
+        load_config(tmp_path)
+
+
+def test_a_scalar_in_place_of_a_profile_body_is_an_error(tmp_path: Path) -> None:
+    project(tmp_path, "[providers.openai]\ndeepseek = 3\n")
+
+    with pytest.raises(ConfigError, match="expected a TOML table"):
+        load_config(tmp_path)
+
+
+def test_a_local_file_can_carry_a_profile_key(tmp_path: Path) -> None:
+    """The gitignored layer is where a credential belongs."""
+    project(tmp_path, "[providers.openai.deepseek]\ntimeout_seconds = 30\n")
+    project(
+        tmp_path,
+        '[providers.openai.deepseek]\napi_key = "placeholder-not-real"\n',
+        name=LOCAL_CONFIG_FILE,
+    )
+
+    deepseek = load_config(tmp_path).providers.openai["deepseek"]
+
+    assert deepseek.api_key == "placeholder-not-real"
+    assert deepseek.timeout_seconds == 30.0

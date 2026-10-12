@@ -1,8 +1,5 @@
 # Configuration
 
-> **Status:** Implemented. Layered TOML loading, the resolution order below,
-> and every environment variable marked "works" are live.
-
 ## Principles
 
 **Nothing tunable is hardcoded.** Models, timeouts, retry counts, truncation
@@ -62,8 +59,15 @@ the current default, so a key you do not set behaves exactly as written.
 
 ```toml
 [agent]
-max_turns = 50          # ceiling on provider requests in one run
-parallel_tools = true   # run independent tool calls concurrently
+max_turns = 50                  # ceiling on provider requests in one run
+parallel_tools = true           # run independent tool calls concurrently
+model = "claude-sonnet-5"       # used when --model and $HARNESS_MODEL are absent
+model_env = "HARNESS_MODEL"     # NAME of the variable that overrides `model`
+provider = "anthropic"          # for a model id nothing else routes
+
+[project]
+context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
+max_bytes = 32000                            # longer files are truncated
 
 [tools.read]
 default_limit = 2000    # lines returned when the model requests no limit
@@ -100,7 +104,10 @@ required = ["bash", "write", "edit"]  # prompt before these run
 allow_remember = true                 # whether "always" is honored
 
 [terminal]
-enabled_tools = ["read", "write", "edit", "ls", "bash", "grep", "glob"]
+enabled_tools = [
+    "read", "write", "edit", "ls", "bash", "grep", "glob",
+    "web_search", "web_fetch",
+]
 max_result_lines = 12   # tool output shown before collapsing
 markdown = true         # render assistant text as markdown
 
@@ -112,6 +119,24 @@ version = 1             # transcript schema version
 [providers.anthropic]
 default_max_tokens = 8192     # when the model declares none
 thinking_budget_tokens = 4096 # when reasoning is requested
+
+# Endpoints in the OpenAI family, keyed by profile name. openai, deepseek and
+# glm ship as defaults; see "Provider profiles" below.
+[providers.openai.deepseek]
+api = "chat_completions"      # or "responses" (OpenAI's current API)
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"   # NAME of the variable; never the value here
+models = ["deepseek-chat", "deepseek-reasoner"]  # ids that route here
+default_max_tokens = 8192
+timeout_seconds = 120.0
+include_usage = true          # chat_completions only
+reasoning_summary = "auto"    # responses only: "auto" | "concise" | "detailed"
+store = false                 # responses only; true disables encrypted replay
+
+[logging]
+level = "warning"             # debug | info | warning | error
+level_env = "HARNESS_LOG_LEVEL"  # NAME of the variable that overrides `level`
+format = "%(levelname)s %(name)s: %(message)s"
 ```
 
 The full list, with every default, is in
@@ -137,13 +162,18 @@ Environment wins over this file, so a key here can always be overridden.
 
 ### Providers
 
-| Variable | Purpose | Status |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | Anthropic key | works |
-| `ANTHROPIC_AUTH_TOKEN` | Bearer token; takes precedence over the key | works |
-| `ANTHROPIC_BASE_URL` | Override the endpoint | works |
-| `OPENAI_API_KEY` | OpenAI-compatible key | step 12 |
-| `OPENAI_BASE_URL` | Endpoint — point at DeepSeek, Groq, vLLM, Ollama, … | step 12 |
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic key |
+| `ANTHROPIC_AUTH_TOKEN` | Bearer token; takes precedence over the key |
+| `ANTHROPIC_BASE_URL` | Override the endpoint |
+| `OPENAI_API_KEY` | Key for the `openai` profile |
+| `OPENAI_BASE_URL` | Endpoint for the `openai` profile |
+| `DEEPSEEK_API_KEY` | Key for the `deepseek` profile |
+| `ZHIPUAI_API_KEY` | Key for the `glm` profile |
+
+Every OpenAI-compatible profile names its own variables, so a profile you add
+brings its own (`providers.openai.<name>.api_key_env`).
 
 The *names* of these variables are themselves config keys
 (`providers.anthropic.api_key_env` and friends), so a deployment that uses
@@ -152,9 +182,9 @@ a config file — see the hygiene rules below.
 
 ### Web search
 
-| Variable | Purpose | Status |
-|---|---|---|
-| `TAVILY_API_KEY` | Key for the default search backend | works |
+| Variable | Purpose |
+|---|---|
+| `TAVILY_API_KEY` | Key for the default search backend |
 
 The backend is chosen by `tools.web.backend` in config, not by an environment
 variable. Only Tavily needs a key; the `ddgs` backend needs none, and
@@ -162,11 +192,112 @@ variable. Only Tavily needs a key; the `ddgs` backend needs none, and
 
 ### Harness
 
-| Variable | Purpose | Status |
-|---|---|---|
-| `HARNESS_MODEL` | Override the configured model | works |
-| `HARNESS_HOME` | Override `~/.harness` | works |
-| `HARNESS_LOG_LEVEL` | `debug` \| `info` \| `warning` \| `error` | planned |
+| Variable | Purpose |
+|---|---|
+| `HARNESS_MODEL` | Override `agent.model`; `--model` still wins |
+| `HARNESS_HOME` | Override `session.home` |
+| `HARNESS_LOG_LEVEL` | Override `logging.level`; `--log-level` still wins |
+
+Model resolution is the general precedence rule in miniature: `--model`, then
+`$HARNESS_MODEL`, then `agent.model` from config, which defaults to
+`claude-sonnet-5`. An id the catalog has never heard of is **not** an error —
+it is given conservative limits rather than refused, because being unable to
+use a model released last week is worse than a slightly wrong `context_window`.
+Which provider serves it is decided separately; see
+[Provider profiles](#provider-profiles).
+
+## Provider profiles
+
+`providers.openai` is a table of **named** endpoints, and it is the one place
+in the schema where an unknown key is not an error — a new key is a new
+vendor. That is how OpenAI, DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama
+are all supported by one adapter.
+
+```toml
+[providers.openai.groq]
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+models = ["llama-3.3-70b-versatile"]
+
+[providers.openai.local]
+base_url = "http://localhost:11434/v1"   # Ollama
+api_key_env = "OLLAMA_API_KEY"
+models = ["qwen3:8b"]
+```
+
+**`api` picks the protocol.** `chat_completions` is the default because that is
+what a new vendor almost certainly speaks; `responses` is OpenAI's current API
+and the only one that can replay a reasoning model's chain of thought across a
+tool call. The shipped `openai` profile sets `responses`. An unusable value
+fails at startup, naming the profile at fault.
+
+```bash
+harness --model deepseek-chat            # routed by the models list, no flag
+harness --model their-new-model --provider groq
+```
+
+**Adding does not replace.** A profile named in a config file merges into the
+shipped one; `[providers.openai.deepseek] timeout_seconds = 30` leaves its
+`models` and `api_key_env` alone. Keys *inside* a profile are checked as
+strictly as anywhere else, so a typo there still fails at startup.
+
+Which profile serves a model, highest precedence first: `--provider`, then a
+profile whose `models` names the id, then the catalog, then `agent.provider`.
+Full rationale: [providers.md](providers.md#profiles).
+
+## Logging
+
+Diagnostics about the harness itself — not about the conversation, which is
+what the transcript and `--json` are for.
+
+```bash
+harness --log-level debug -p "…"     # this run
+HARNESS_LOG_LEVEL=debug harness      # this shell
+```
+
+```toml
+[logging]
+level = "warning"
+```
+
+**Everything goes to stderr.** stdout carries the answer in plain-text mode and
+the event stream under `--json`, so a log line on stdout would corrupt a
+pipeline rather than inform one. `harness -p "…" > answer.txt` still captures
+the answer alone with logging turned all the way up.
+
+| Level | What you get |
+|---|---|
+| `error` | Only failures the run could not absorb |
+| `warning` *(default)* | …plus a model id not in the catalog, project instructions truncated, `max_turns` exhausted, a provider request that failed |
+| `info` | …plus one line per significant decision: the model in use, the transcript being written |
+| `debug` | …plus a trace: every config file read or skipped, request shape per turn, tool durations, outbound web requests |
+
+The default is `warning` because a run that works should print nothing beyond
+its answer. The warnings are the ones with no other channel: interactive mode
+shows a truncation notice on screen, but `-p` has no screen, and a model id the
+catalog has never seen otherwise surfaces as an opaque API error later.
+
+**A level set in a config file cannot report that file being read.** Logging is
+configured twice — once from the flag, the environment and the schema defaults
+before `load_config` runs, and again from the loaded config. So to debug config
+resolution itself, use `--log-level` or `HARNESS_LOG_LEVEL`; `[logging] level`
+takes effect everywhere after loading.
+
+An unusable level name is a startup error, like any other bad config value:
+
+```
+error: Unknown log level 'loud'. Available: debug, info, warning, error.
+```
+
+Only `harness.*` loggers are configured. `--log-level debug` means this
+program, not httpx and the Anthropic SDK as well. Importing `harness` as a
+library installs no handler at all — only the CLI calls `configure_logging`.
+
+**Credential values are never logged.** The provider logs the *name* of the
+variable a credential came from, which is the useful fact when two are set, and
+the same applies to `ANTHROPIC_BASE_URL` — a private endpoint often enough to
+treat as sensitive. There is a test asserting a key set in the environment does
+not appear in debug output.
 
 ## Reading config in code
 
@@ -189,8 +320,41 @@ different behavior, and `tests/test_tools_fs.py` asserts exactly that.
 A literal is acceptable only for genuine protocol constants that would be wrong
 to change — an API version header, a schema version number.
 
-## Project context
+## Project instructions
 
-A `HARNESS.md` or `AGENTS.md` in the working directory is loaded into the system
-prompt as project instructions, following the convention pi and other harnesses
-use.
+A `HARNESS.md` or `AGENTS.md` in the working directory is appended to the
+system prompt, following the convention pi and other harnesses use. A project
+that already has one needs no setup; interactive mode prints a dim line naming
+the file it loaded, so a feature that changes the agent's behavior is never
+silent.
+
+```toml
+[project]
+context_files = ["HARNESS.md", "AGENTS.md"]
+max_bytes = 32000
+```
+
+**The first name that exists wins** — the rest are not read. Two files would
+be two sets of instructions with no stated precedence, and concatenating them
+would silently double any advice they share.
+
+"Exists" is the whole test, so a **blank `HARNESS.md` means no instructions**
+rather than "fall through to `AGENTS.md`". That is one rule with no special
+case, and it doubles as the way to opt a project out of an `AGENTS.md` written
+for some other tool.
+
+The file is read from `--cwd`, like config, so `harness --cwd ../other-project`
+picks up that project's conventions.
+
+**It is capped.** These instructions ride in the system prompt on *every*
+request, so an unbounded file is an unbounded bill. Past `max_bytes` the file
+is truncated and the terminal says so.
+
+A file that exists but cannot be *read* is a startup error rather than a
+silent skip — the same reasoning as a malformed config file. Instructions you
+meant to apply and that quietly did nothing are the one failure this feature
+must not have.
+
+Changing the file changes the system prompt, which changes its hash — so
+`--resume` on an older session will warn that the prompt has moved. That is
+the warning working, not a bug.

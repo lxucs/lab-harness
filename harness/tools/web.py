@@ -15,6 +15,7 @@ that raises kills the turn and a tool that explains lets the model recover.
 """
 
 import asyncio
+import logging
 import os
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -27,6 +28,8 @@ from pydantic import BaseModel, Field
 from harness.config import WebConfig
 from harness.tools.base import ToolContext, ToolResult, fail, ok, tool
 from harness.tools.html_text import html_to_text
+
+_log = logging.getLogger(__name__)
 
 #: Content types parsed as HTML. Anything else is treated as text and passed
 #: through, so fetching a JSON API or a raw .md file returns what it returned.
@@ -240,7 +243,9 @@ async def web_search(p: WebSearchParams, ctx: ToolContext) -> ToolResult:
         backend = build_backend(settings)
         hits = await backend.search(p.query, p.max_results or settings.max_results)
     except SearchError as exc:
+        _log.debug("Search via %r failed: %s", settings.backend, exc)
         return fail(str(exc))
+    _log.debug("Search via %r returned %d hit(s)", backend.name, len(hits))
     if not hits:
         return ok(f"No results for {p.query!r}.", query=p.query, count=0)
     return ok(
@@ -293,6 +298,8 @@ async def web_fetch(p: WebFetchParams, ctx: ToolContext) -> ToolResult:
     except httpx.HTTPError as exc:
         return fail(f"Could not fetch {p.url}: {exc}")
 
+    # After the request, so the URL reflects any redirects followed.
+    _log.debug("Fetched %s -> HTTP %d", response.url, response.status_code)
     if response.status_code >= 400:
         return fail(f"{p.url} returned HTTP {response.status_code}.")
 

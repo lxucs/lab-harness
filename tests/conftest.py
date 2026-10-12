@@ -5,12 +5,15 @@ convention: it cannot reach the network, and it cannot write to the real
 `~/.harness`.
 """
 
+import logging
 import socket
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from harness.config import SessionConfig
+from harness.logs import ROOT_LOGGER
 
 
 class NetworkBlockedError(AssertionError):
@@ -47,18 +50,50 @@ def _isolate_harness_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pa
     return isolated
 
 
-#: Credential env vars cleared before every test. A developer who exports a key
-#: locally must not get different results from CI, which exports none.
-_CREDENTIAL_VARS = (
+#: Env vars cleared before every test: credentials, plus the overrides that
+#: change behavior. A developer who exports either locally must not get
+#: different results from CI, which exports none.
+_CLEARED_VARS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_BASE_URL",
     "TAVILY_API_KEY",
+    # The shipped OpenAI-compatible profiles. A developer with any of these
+    # exported must get the same results as CI, which exports none.
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "ZHIPUAI_API_KEY",
+    "ZHIPUAI_BASE_URL",
+    # Not a credential, but it outranks `agent.model`, so leaving it set would
+    # make every default-model assertion depend on the developer's shell.
+    "HARNESS_MODEL",
+    # Same reasoning: it outranks `logging.level`.
+    "HARNESS_LOG_LEVEL",
 )
 
 
 @pytest.fixture(autouse=True)
-def _clear_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset real credentials so no test can accidentally depend on one."""
-    for name in _CREDENTIAL_VARS:
+def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset real credentials and overrides so no test can depend on one."""
+    for name in _CLEARED_VARS:
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _restore_logging() -> Iterator[None]:
+    """Undo any logging configuration a test installs.
+
+    `configure_logging` mutates a process-global logger, so a single test that
+    runs `main()` would otherwise leave its handler, level, and `propagate`
+    setting in place for every test that follows — including the ones that
+    assert on captured output.
+    """
+    logger = logging.getLogger(ROOT_LOGGER)
+    before = (list(logger.handlers), logger.level, logger.propagate)
+    yield
+    handlers, level, propagate = before
+    logger.handlers[:] = handlers
+    logger.setLevel(level)
+    logger.propagate = propagate

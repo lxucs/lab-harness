@@ -1,15 +1,12 @@
 # CLI
 
-> **Status:** All modes are implemented — one-shot, JSONL, interactive, and
-> resume.
-
 ## Modes
 
 ```bash
-harness                      # interactive                    ✅ implemented
-harness -p "fix the lints"   # one-shot, plain text           ✅ implemented
-harness -p "..." --json      # one-shot, JSONL event stream   ✅ implemented
-harness --resume             # continue the most recent session   ✅ implemented
+harness                      # interactive
+harness -p "fix the lints"   # one-shot, plain text
+harness -p "..." --json      # one-shot, JSONL event stream
+harness --resume             # continue the most recent session
 ```
 
 All of these are **subscribers to the same event stream**. The interactive
@@ -22,8 +19,10 @@ what the runtime does.
 |---|---|
 | `-p`, `--prompt` | Run one prompt and exit. Omit it to start the interactive terminal. |
 | `--json` | Emit the raw event stream as JSONL instead of rendered text. |
-| `--model` | Model id. Defaults to config, then `HARNESS_MODEL`. |
-| `--cwd` | Working directory for tools *and* config discovery. Defaults to the current directory. |
+| `--model` | Model id. Beats `$HARNESS_MODEL`, which beats `agent.model` in config. |
+| `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
+| `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
+| `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
 | `--resume [ID]` | Continue a session. With no id, the most recent one here. |
 | `--sessions` | List saved sessions for this directory and exit. |
@@ -35,7 +34,8 @@ piping this needs to tell a refusal from an outage.
 
 In plain-text mode, assistant text goes to **stdout** while tool-call notices
 and errors go to **stderr**, so `harness -p "…" > answer.txt` captures the
-answer alone.
+answer alone. Diagnostics follow the same rule — see
+[Diagnostics](#diagnostics) below.
 
 ## Interactive
 
@@ -115,6 +115,64 @@ directory — resuming in one project never surfaces another's history.
 
 Format, trimming of interrupted turns, and the reserved `compaction` entry:
 [sessions.md](sessions.md).
+
+## Project instructions
+
+A `HARNESS.md` or `AGENTS.md` in the working directory is appended to the
+system prompt, so a project's own conventions do not have to be rediscovered
+from the code every run. Interactive mode says which file it used:
+
+```
+Project instructions: AGENTS.md
+```
+
+The first name that exists wins, the file is read from `--cwd`, and it is
+capped at `project.max_bytes`. Full behavior:
+[configuration.md](configuration.md#project-instructions).
+
+## Choosing a model
+
+```bash
+harness --model claude-opus-5          # Anthropic, Messages API
+harness --model gpt-5                  # OpenAI, Responses API
+harness --model deepseek-chat          # DeepSeek, Chat Completions
+harness --model glm-4.6                # GLM, Chat Completions
+harness --model their-model --provider groq
+```
+
+The provider is inferred from the model id, so `--provider` is only needed for
+an id no profile claims. OpenAI, DeepSeek and GLM are configured out of the
+box; any other endpoint speaking either protocol is a few lines of config —
+[configuration.md](configuration.md#provider-profiles).
+
+Reasoning models differ in what they will show you and what has to be handed
+back; [providers.md](providers.md#how-thinking-is-handled-across-models) has
+the table.
+
+## Diagnostics
+
+```bash
+harness --log-level debug -p "…"     # trace this run
+HARNESS_LOG_LEVEL=debug harness      # trace this shell
+```
+
+Logs go to **stderr**, always, so they never mix into the answer on stdout or
+the JSONL stream. Nothing is printed by default beyond genuine problems: a
+model id missing from the catalog, project instructions truncated, `max_turns`
+exhausted with the model still working, a failed provider request.
+
+`debug` adds the trace you need when a setting appears to do nothing — every
+config file read or skipped, in precedence order:
+
+```
+DEBUG harness.config: No config file at /home/you/.harness/config.toml
+DEBUG harness.config: Applying config from /repo/.harness/config.toml
+DEBUG harness.config: No config file at /repo/.harness/config.local.toml
+```
+
+Levels, what each one adds, and why a level set in a config file cannot report
+that same file being read:
+[configuration.md](configuration.md#logging).
 
 ## Web tools
 

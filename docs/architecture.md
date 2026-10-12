@@ -14,9 +14,27 @@ Dependencies point strictly downward.
     ┌─────┼─────┬──────────┐
     ▼     ▼     ▼          ▼
   llm/  tools/  session/  (context/ — deferred)
+    └─────┴─────┴──→  config.py, project.py, logs.py   (leaf modules)
 ```
 
-`llm/` has no upward dependencies at all.
+`llm/` imports from no other *layer*. It does read `harness.config` — every
+layer does. The leaf modules import nothing from the package except each other
+and `config.py`, so depending on one cannot create a cycle and does not make a
+layer less replaceable. Treat "no upward dependencies" as being about the
+boxes, not about these three.
+
+`project.py` loads a project's `HARNESS.md` or `AGENTS.md`. It lives beside
+`config.py` rather than inside `agent/` because it is the same kind of thing —
+read a directory, return data — and because `agent/` is not supposed to know
+the filesystem layout.
+
+`logs.py` decides where diagnostics go and how loud they are. Every layer takes
+a logger the ordinary way (`logging.getLogger(__name__)`) and emits records
+unconditionally; only `cli/` calls `configure_logging`. That is the stdlib's
+library/application split, and it is why importing `harness` installs no
+handler on an embedding application's root logger — and why the module is
+`logs.py` rather than `logging.py`, which a reader would have to think about
+before trusting any `import logging` in the package.
 
 ### What each layer knows
 
@@ -64,14 +82,27 @@ This works only if events stay plain data — see [events.md](events.md).
 |---|---|---|
 | `before_tool_call` | after args validate, before execute | approval gate (`cli/approval.py`) |
 | `after_tool_call` | after execute, before events emit | truncation, redaction |
-| `prepare_request` | before every provider request | compaction (later) |
+| `prepare_request` | before every provider request | compaction (TODO) |
+| `finish_turn` | when a turn would cleanly end the run | auto-continue |
 
 Hooks are optional async callables. A feature that fits a hook does not belong
 in the loop.
 
-A fourth hook, `finish_turn` (for deciding to continue after a turn would
-otherwise end), was in the design but is not implemented — nothing needed it
-yet. It belongs here when an auto-continue feature does.
+**`finish_turn`** returns `FinishTurnResult(continue_with=…)` to append a user
+message and keep going, or `None` to let the run end. Three properties make it
+safe to hand to arbitrary code:
+
+- It sits inside the `max_turns` loop, so auto-continue is bounded by
+  construction — a hook that always continues wastes a budget, it does not hang.
+- The injected message is appended to the transcript *and* announced through
+  `MessageStart`/`MessageEnd`. The message queue this replaces (below) got
+  exactly that wrong.
+- A hook that raises ends the run rather than continuing — the mirror of the
+  approval gate failing closed. Treating a crash as "continue" would burn the
+  whole budget on code already known to be broken.
+
+It is not consulted for a turn that errored or was aborted: "try again" is a
+decision for whoever handles the error.
 
 ## Relationship to pi
 
@@ -105,9 +136,10 @@ per-request view transform.
 **Dropped entirely:** the provider catalog, codemode, durable/RPC/server,
 extensions-as-plugins, MCP, branch summarization.
 
-## Deferred, with a place to land
+## TODO, with a place to land
 
-**Context compaction** is not in v1. The seam it needs — `prepare_request` — is.
+**Context compaction** is the one piece of the original design still unbuilt.
+The seam it needs — `prepare_request` — is.
 Compaction reads the context, decides whether to summarize, and returns a
 replacement; nothing in the loop changes when it arrives. v1 also records
 `Usage` per assistant message, defines `Model.context_window`, and reserves a
@@ -115,22 +147,22 @@ replacement; nothing in the loop changes when it arrives. v1 also records
 
 See §7 of the design spec for the full plan.
 
-## Build order
+## Reading order
 
-Each step is independently verifiable. Status is tracked here as implementation
-proceeds.
+All of it is built. This is the order it was built in, which is also the least
+confusing order to read it in — each step only depends on the ones above.
 
-| # | Step | Status |
-|---|---|---|
-| 1 | `llm/types.py`, `events.py`, serialization tests | Complete |
-| 2 | `llm/fake.py`, `provider.py` | Complete |
-| 3 | `agent/loop.py` against `FakeProvider` | Complete |
-| 4 | `agent/agent.py` — state, subscribers, abort | Complete |
-| 5 | `tools/base.py`, `registry.py`, `fs.py` | Complete |
-| 6 | `cli/json_sink.py` → first end-to-end run | Complete |
-| 7 | `llm/providers/anthropic.py` → first real run | Complete |
-| 8 | `cli/terminal.py` — interactive | Complete |
-| 9 | `tools/shell.py`, `search.py`, approval gate | Complete |
-| 10 | `session/` | Complete |
-| 11 | `tools/web.py`, `html_text.py`, config loading | Complete |
-| 12 | `llm/providers/openai.py` | Not started |
+| # | Where |
+|---|---|
+| 1 | `llm/types.py`, `events.py` — the plain-data core |
+| 2 | `llm/fake.py`, `provider.py` — the seam every test uses |
+| 3 | `agent/loop.py` — the loop itself |
+| 4 | `agent/agent.py` — state, subscribers, abort |
+| 5 | `tools/base.py`, `registry.py`, `fs.py` |
+| 6 | `cli/json_sink.py` — first end-to-end run |
+| 7 | `llm/providers/anthropic.py` — first real run |
+| 8 | `cli/terminal.py` |
+| 9 | `tools/shell.py`, `search.py`, `cli/approval.py` |
+| 10 | `session/` |
+| 11 | `tools/web.py`, `html_text.py`, `config.py` loading |
+| 12 | `llm/providers/chat_completions.py`, `responses.py` |

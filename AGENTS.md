@@ -3,8 +3,9 @@
 Working agreements for AI coding agents in this repository.
 
 **Read [docs/contributing.md](docs/contributing.md) before writing code** — it
-holds the code conventions, the four architectural invariants, and the
-configuration rules. This file covers environment, testing, and git.
+holds the code conventions, the four architectural invariants, and the rules
+against hardcoded values and leaky log records. This file covers environment,
+configuration hygiene, testing, and git.
 
 ## What this project is
 
@@ -13,7 +14,7 @@ A lightweight agent harness. Python runtime, terminal frontend, modeled on
 
 - Design spec: [`docs/superpowers/specs/2026-10-09-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-harness-runtime-design.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
-- Current progress: the build-order checklist in [`README.md`](README.md)
+- What is built and what is not: [`README.md`](README.md#status)
 
 ## Environment
 
@@ -35,6 +36,33 @@ Optional extras exist so a user is not made to install a dependency they will
 never call. Code behind one must import it lazily and fail with the `uv sync`
 command in the message.
 
+## Configuration hygiene
+
+**Nothing sensitive goes in a committed file.** No API keys or tokens, no
+absolute paths (`/Users/...`, `/home/...`), no private URLs, hostnames, or org
+ids — in config, docs, tests, or examples.
+
+| File | Committed | Holds |
+|---|---|---|
+| `.harness/config.toml` | yes | Non-sensitive defaults |
+| `.harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
+| `.harness/config.toml.example` | yes | Template, placeholders only |
+
+Real runtime values belong in the `*.local.toml` layer, which `.gitignore`
+excludes; it merges over the committed file, so it only needs the keys that
+differ. Prefer environment variables for secrets outright — config then holds
+the variable's *name*, which is itself a config key, and never its value.
+If you add a config location, add its local variant to `.gitignore` in the
+same change.
+
+In anything committed, use placeholders that could not be real: `sk-...`,
+`https://api.example.com`, `/path/to/project`.
+
+The same list applies one step further to log records — a credential that
+reaches a log is a credential published. That rule, and the rest of the
+configuration conventions, are in
+[docs/contributing.md](docs/contributing.md).
+
 ## Testing is offline
 
 **The automated suite must never touch the network.** This is enforced:
@@ -44,10 +72,12 @@ credential variable — so a test reaching a real API fails loudly rather than
 going flaky, and a developer who exports a key locally gets the same results as
 CI, which exports none.
 
-- Model responses come from `harness.llm.fake.FakeProvider`, fed scripted stream
-  events. Never call a real provider.
-- HTTP-based tools are tested through `httpx.MockTransport`, which exercises the
-  real request-building and response-parsing code against canned bytes.
+- Loop and agent tests get their model responses from
+  `harness.llm.fake.FakeProvider`, fed scripted stream events. Never call a
+  real provider.
+- The HTTP provider adapters (`chat_completions.py`, `responses.py`) and the web
+  tools are tested through `httpx.MockTransport`, which exercises the real
+  request-building and SSE-parsing code against canned bytes.
 - `ddgs` is tested through an injected callable standing in for the package.
 - Search backends are tested at the tool layer by registering a fake in
   `BACKENDS` under a config name, so the real selection path runs.

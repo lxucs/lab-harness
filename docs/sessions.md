@@ -1,8 +1,5 @@
 # Sessions
 
-> **Status:** Implemented. Transcripts are written to disk and `--resume`
-> restores them.
-
 ## Format
 
 Append-only JSONL, one file per session:

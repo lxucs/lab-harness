@@ -162,6 +162,36 @@ class RequestUpdate:
     model: Model | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class FinishTurnContext:
+    """A turn that is about to end the run.
+
+    Reached only on a *clean* ending — the model asked for no tools and did
+    not error. An errored or aborted turn ends the run without consulting the
+    hook, because "try again" is a decision for whoever handles the error.
+    """
+
+    message: AssistantMessage
+    messages: tuple[Message, ...]
+    #: 0-based index of the turn that just finished, so a hook can decide
+    #: based on how much of the budget is already spent.
+    turn: int
+
+
+@dataclass(frozen=True, slots=True)
+class FinishTurnResult:
+    """Whether to keep going, and with what.
+
+    `None` — or a result whose `continue_with` is None — ends the run, which
+    makes having no hook and having one that declines indistinguishable.
+    """
+
+    #: Content for a user message appended to the transcript before the next
+    #: request. The loop announces it like any other message, so a subscriber
+    #: and the session file both see it.
+    continue_with: tuple[ContentBlock, ...] | None = None
+
+
 # --- loop configuration ---------------------------------------------------
 
 
@@ -194,6 +224,7 @@ class LoopConfig:
     prepare_request: Callable[[PrepareRequestContext], Awaitable[RequestUpdate | None]] | None = (
         None
     )
+    finish_turn: Callable[[FinishTurnContext], Awaitable[FinishTurnResult | None]] | None = None
     signal: asyncio.Event | None = None
 
 

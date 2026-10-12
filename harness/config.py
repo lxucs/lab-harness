@@ -19,12 +19,15 @@ This module is the bottom of the dependency graph and imports nothing from the
 rest of the package.
 """
 
+import logging
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import Field, dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +37,35 @@ class AgentConfig:
     max_turns: int = 50
     #: Run independent tool calls from one message concurrently.
     parallel_tools: bool = True
+    #: Model used when neither `--model` nor the env override names one. An
+    #: id absent from the catalog in llm/registry.py still works; it is
+    #: assumed current and given conservative limits.
+    model: str = "claude-sonnet-5"
+    #: Env var that overrides `model`, named here for the same reason
+    #: `session.home_env` is — so a deployment using a different variable
+    #: changes config rather than code.
+    model_env: str = "HARNESS_MODEL"
+    #: Provider used for a model id nothing else routes — not in any profile's
+    #: `models` list and not in the catalog. The last rung of the ladder in
+    #: llm/providers/select_provider; `--provider` is the first.
+    provider: str = "anthropic"
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectConfig:
+    """What a project tells the agent about itself.
+
+    A repository documents its own conventions in a file at its root; without
+    this the agent has to rediscover them from the code every run.
+    """
+
+    #: Searched in the working directory in order; the first that exists is
+    #: loaded. Both names are existing conventions rather than our invention,
+    #: so a project that already has one needs no setup.
+    context_files: tuple[str, ...] = ("HARNESS.md", "AGENTS.md")
+    #: A longer file is truncated. Project instructions ride in the system
+    #: prompt on *every* request, so an unbounded file is an unbounded bill.
+    max_bytes: int = 32_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,8 +212,86 @@ class AnthropicConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAIConfig:
+    """One endpoint in the OpenAI family, and which protocol it speaks.
+
+    Two protocols, because OpenAI moved and the rest of the world did not:
+    `responses` is OpenAI's current API and the only one that can replay a
+    reasoning model's chain of thought across a tool call; `chat_completions`
+    is what DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama speak.
+    """
+
+    #: "responses" or "chat_completions". Defaults to the latter because it is
+    #: what every non-OpenAI endpoint speaks; the shipped `openai` profile
+    #: overrides it.
+    api: str = "chat_completions"
+    base_url: str = "https://api.openai.com/v1"
+    #: Env var consulted first for the key.
+    api_key_env: str = "OPENAI_API_KEY"
+    #: Env var that overrides `base_url`. Useful for a gateway in front of a
+    #: vendor, and for pointing a profile at a local server.
+    base_url_env: str = "OPENAI_BASE_URL"
+    #: Empty means "not configured here"; look in the environment instead.
+    #: Only ever set this in config.local.toml, never a committed file.
+    api_key: str = ""
+    #: Model ids this profile serves. An id listed here routes to this profile,
+    #: which is how `--model deepseek-chat` finds DeepSeek with no flag and how
+    #: a new vendor needs no code — only config.
+    models: tuple[str, ...] = ()
+    #: Sampling ceiling when the model declares none.
+    default_max_tokens: int = 8_192
+    #: Wall-clock limit for one streamed request. Generous next to the web
+    #: tools': a long answer with reasoning legitimately takes minutes.
+    timeout_seconds: float = 120.0
+    #: Ask for token counts in the stream. Not every compatible server
+    #: implements `stream_options`; turn this off for one that rejects it.
+    #: `chat_completions` only — Responses always reports usage.
+    include_usage: bool = True
+    #: `responses` only. Detail of the reasoning summary: "auto", "concise" or
+    #: "detailed". Empty asks for none, which makes a reasoning model's
+    #: thinking invisible — the raw chain is never returned, so the summary is
+    #: the only readable form of it.
+    reasoning_summary: str = "auto"
+    #: `responses` only. Let the server keep the conversation and refer to it
+    #: by id. Off, because this harness owns its transcript: a thread living on
+    #: someone else's server is one `--resume` and the session files cannot
+    #: see. Turning it on disables encrypted-reasoning replay.
+    store: bool = False
+
+
+def _default_openai_profiles() -> dict[str, OpenAIConfig]:
+    """Endpoints shipped as defaults. All public, documented vendor URLs.
+
+    A profile here is a starting point, not a restriction — adding a key to
+    `[providers.openai]` in a config file creates a new one.
+    """
+    return {
+        "openai": OpenAIConfig(api="responses"),
+        "deepseek": OpenAIConfig(
+            base_url="https://api.deepseek.com/v1",
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url_env="DEEPSEEK_BASE_URL",
+            models=("deepseek-chat", "deepseek-reasoner"),
+        ),
+        "glm": OpenAIConfig(
+            # The mainland endpoint. The international one is
+            # https://api.z.ai/api/paas/v4 — override base_url to use it.
+            base_url="https://open.bigmodel.cn/api/paas/v4",
+            api_key_env="ZHIPUAI_API_KEY",
+            base_url_env="ZHIPUAI_BASE_URL",
+            models=("glm-4.6", "glm-4.5", "glm-4.5-air"),
+        ),
+    }
+
+
+@dataclass(frozen=True, slots=True)
 class ProvidersConfig:
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
+    #: OpenAI-compatible endpoints, keyed by profile name. Unlike every other
+    #: section, *new keys here are allowed* — that is the whole point, since it
+    #: is how a vendor is added without touching code. Keys *inside* a profile
+    #: are still checked.
+    openai: dict[str, OpenAIConfig] = field(default_factory=_default_openai_profiles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,12 +331,35 @@ class TerminalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class LoggingConfig:
+    """Diagnostics about the harness itself — not about the conversation.
+
+    Records go to stderr. stdout is reserved: plain-text mode writes the
+    answer there and `--json` writes the event stream there, so a log line on
+    stdout would corrupt a pipeline rather than inform one.
+    """
+
+    #: Lowest level printed; one of the names in `harness/logs.py`. Warning by
+    #: default, because a run that works should say nothing beyond its answer.
+    level: str = "warning"
+    #: Env var that overrides `level`, named here for the same reason
+    #: `agent.model_env` is — so a deployment using a different variable
+    #: changes config rather than code.
+    level_env: str = "HARNESS_LOG_LEVEL"
+    #: Format for one record. The logger name is included because the first
+    #: question about a stray line is which module emitted it.
+    format: str = "%(levelname)s %(name)s: %(message)s"
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
+    project: ProjectConfig = field(default_factory=ProjectConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
 class ConfigError(Exception):
@@ -272,8 +405,13 @@ def load_config(cwd: str | Path = ".") -> Config:
     config = Config()
     for path in config_paths(cwd):
         data = _read_toml(path)
-        if data is not None:
-            config = _apply(config, data, source=path, trail=())
+        if data is None:
+            _log.debug("No config file at %s", path)
+            continue
+        # Answers "which file is overriding my setting" without the user
+        # having to reconstruct the precedence rules by hand.
+        _log.debug("Applying config from %s", path)
+        config = _apply(config, data, source=path, trail=())
     return config
 
 
@@ -308,9 +446,60 @@ def _apply[T](instance: T, data: Mapping[str, Any], *, source: Path, trail: tupl
             if not isinstance(value, Mapping):
                 raise ConfigError(f"{source}: {where!r} is a section; expected a TOML table")
             updates[key] = _apply(current, value, source=source, trail=(*trail, key))
+        elif isinstance(current, dict):
+            updates[key] = _apply_named(
+                current, value, member=_member_type(known[key]), source=source, trail=(*trail, key)
+            )
         else:
             updates[key] = _coerce(current, value, where=where, source=source)
     return replace(instance, **updates)  # type: ignore[type-var]
+
+
+def _member_type(spec: Field[Any]) -> type:
+    """The value type of a `dict[str, X]` field, as X.
+
+    Read from the annotation rather than from an existing entry, so a profile
+    table someone emptied still validates its replacements.
+    """
+    args = get_args(spec.type)
+    # isinstance(..., type) as well as is_dataclass: the latter also accepts an
+    # *instance* of a dataclass, and we need the class to construct with.
+    if len(args) != 2 or not isinstance(args[1], type) or not is_dataclass(args[1]):
+        raise TypeError(f"{spec.name}: expected dict[str, <dataclass>], got {spec.type!r}")
+    return args[1]
+
+
+def _apply_named(
+    current: Mapping[str, Any],
+    data: object,
+    *,
+    member: type,
+    source: Path,
+    trail: tuple[str, ...],
+) -> dict[str, Any]:
+    """Merge a table of *named* sections, e.g. `[providers.openai.deepseek]`.
+
+    The one place an unknown key is not an error. Everywhere else a name the
+    schema does not know is a typo; here it is a new profile, which is how a
+    deployment adds a vendor without code. Keys *inside* a section are checked
+    as strictly as anywhere else.
+    """
+    where = ".".join(trail)
+    if not isinstance(data, Mapping):
+        raise ConfigError(f"{source}: {where!r} is a table of named sections; expected TOML tables")
+    merged = dict(current)
+    for name, section in data.items():
+        if not isinstance(section, Mapping):
+            raise ConfigError(
+                f"{source}: {where}.{name!r} is a section; expected a TOML table. "
+                f"A setting shared by every {trail[-1]} profile does not exist — "
+                f"name one explicitly."
+            )
+        base = merged.get(name)
+        if base is None:
+            base = member()
+        merged[name] = _apply(base, section, source=source, trail=(*trail, name))
+    return merged
 
 
 #: Readable names for the types a config value can have, so messages read as

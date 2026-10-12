@@ -1,0 +1,211 @@
+"""Which provider serves a model, and how one gets built.
+
+The ladder is the point: `--provider`, then a profile claiming the id, then
+the catalog, then `agent.provider`. Each rung is pinned separately, because a
+routing bug reads as "it used the wrong endpoint" long after the fact.
+"""
+
+from dataclasses import replace
+
+import pytest
+
+from harness.config import AgentConfig, Config, ConfigError, OpenAIConfig, ProvidersConfig
+from harness.llm.providers import (
+    PROTOCOLS,
+    build_protocol,
+    build_provider,
+    route,
+    select_provider,
+)
+from harness.llm.providers.anthropic import AnthropicProvider
+from harness.llm.providers.chat_completions import ChatCompletionsProvider
+from harness.llm.providers.responses import ResponsesProvider
+
+
+def with_profiles(**profiles: OpenAIConfig) -> Config:
+    return Config(providers=ProvidersConfig(openai=dict(profiles)))
+
+
+# --- the ladder -----------------------------------------------------------
+
+
+def test_the_flag_wins_over_everything() -> None:
+    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-chat",)))
+
+    assert select_provider("deepseek-chat", config, override="anthropic") == "anthropic"
+
+
+def test_a_profile_claiming_the_id_wins_over_the_catalog() -> None:
+    """How `--model deepseek-chat` reaches DeepSeek with no flag."""
+    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-chat",)))
+
+    assert select_provider("deepseek-chat", config) == "deepseek"
+
+
+def test_a_profile_can_repoint_a_catalogued_model() -> None:
+    """A gateway, or a local server with the same weights, without a code change."""
+    config = with_profiles(local=OpenAIConfig(models=("claude-sonnet-5",)))
+
+    assert select_provider("claude-sonnet-5", config) == "local"
+
+
+def test_the_catalog_decides_when_no_profile_claims_the_id() -> None:
+    config = with_profiles()
+
+    assert select_provider("claude-sonnet-5", config) == "anthropic"
+
+
+def test_an_unknown_id_falls_back_to_the_configured_default() -> None:
+    config = replace(with_profiles(), agent=AgentConfig(provider="my-gateway"))
+
+    assert select_provider("something-released-last-week", config) == "my-gateway"
+
+
+def test_the_default_default_is_anthropic() -> None:
+    assert select_provider("something-new", Config()) == "anthropic"
+
+
+def test_the_shipped_profiles_route_their_own_models() -> None:
+    """The defaults have to actually work, not merely exist."""
+    config = Config()
+
+    assert select_provider("deepseek-chat", config) == "deepseek"
+    assert select_provider("deepseek-reasoner", config) == "deepseek"
+    assert select_provider("glm-4.6", config) == "glm"
+
+
+# --- construction ---------------------------------------------------------
+
+
+def test_anthropic_builds_the_anthropic_adapter() -> None:
+    assert isinstance(build_provider("anthropic", Config()), AnthropicProvider)
+
+
+def test_a_profile_builds_the_openai_adapter_carrying_its_name() -> None:
+    provider = build_provider("deepseek", Config())
+
+    assert isinstance(provider, ChatCompletionsProvider)
+    # The profile name, not the dialect: it lands in AssistantMessage.provider.
+    assert provider.name == "deepseek"
+
+
+def test_a_profile_added_only_in_config_can_be_built() -> None:
+    config = with_profiles(groq=OpenAIConfig(base_url="https://api.groq.com/openai/v1"))
+
+    provider = build_provider("groq", config)
+
+    assert isinstance(provider, ChatCompletionsProvider)
+    assert provider.name == "groq"
+
+
+def test_an_unknown_provider_fails_at_startup() -> None:
+    """A typo in --provider should not become a confusing first-turn failure."""
+    with pytest.raises(ConfigError) as caught:
+        build_provider("deepsek", Config())
+
+    message = str(caught.value)
+    assert "deepsek" in message
+    # The message has to list the way out.
+    assert "anthropic" in message and "deepseek" in message
+
+
+# --- route(): the composition the CLI uses --------------------------------
+
+
+def test_route_returns_a_matched_model_and_provider() -> None:
+    model, provider = route("deepseek-chat", Config())
+
+    assert model.id == "deepseek-chat"
+    assert isinstance(provider, ChatCompletionsProvider)
+    assert provider.name == "deepseek"
+
+
+def test_route_rewrites_the_provider_of_an_unknown_model() -> None:
+    """An uncatalogued id is cloned from an Anthropic entry for its limits.
+
+    Without the rewrite it would claim `provider="anthropic"` while being
+    served by something else entirely.
+    """
+    config = with_profiles(groq=OpenAIConfig(models=("llama-3.3-70b",)))
+
+    model, provider = route("llama-3.3-70b", config)
+
+    assert model.provider == "groq"
+    assert isinstance(provider, ChatCompletionsProvider)
+
+
+def test_route_honors_the_flag() -> None:
+    model, provider = route("deepseek-chat", Config(), override="anthropic")
+
+    assert model.provider == "anthropic"
+    assert isinstance(provider, AnthropicProvider)
+
+
+def test_route_falls_back_to_the_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No --model: agent.model decides, and routing follows it."""
+    config = replace(Config(), agent=AgentConfig(model="deepseek-reasoner"))
+
+    model, provider = route(None, config)
+
+    assert model.id == "deepseek-reasoner"
+    assert provider.name == "deepseek"
+
+
+def test_route_defaults_to_anthropic_out_of_the_box() -> None:
+    model, provider = route(None, Config())
+
+    assert model.provider == "anthropic"
+    assert isinstance(provider, AnthropicProvider)
+
+
+# --- protocol dispatch -----------------------------------------------------
+#
+# OpenAI moved to the Responses API; everyone else still speaks the dialect
+# OpenAI invented. So the protocol is a per-profile setting, not a global one.
+
+
+def test_the_shipped_openai_profile_speaks_responses() -> None:
+    assert isinstance(build_provider("openai", Config()), ResponsesProvider)
+
+
+def test_the_other_shipped_profiles_speak_chat_completions() -> None:
+    for name in ("deepseek", "glm"):
+        provider = build_provider(name, Config())
+        assert isinstance(provider, ChatCompletionsProvider), name
+
+
+def test_chat_completions_is_the_default_for_a_new_profile() -> None:
+    """A vendor added in config is far more likely to speak the old dialect."""
+    config = with_profiles(groq=OpenAIConfig())
+
+    assert isinstance(build_provider("groq", config), ChatCompletionsProvider)
+
+
+def test_a_profile_can_opt_into_responses() -> None:
+    config = with_profiles(gateway=OpenAIConfig(api="responses"))
+
+    assert isinstance(build_provider("gateway", config), ResponsesProvider)
+
+
+def test_the_profile_name_survives_either_protocol() -> None:
+    """It lands in AssistantMessage.provider, so a transcript stays truthful."""
+    assert build_protocol(OpenAIConfig(api="responses"), "mine").name == "mine"
+    assert build_protocol(OpenAIConfig(api="chat_completions"), "mine").name == "mine"
+
+
+def test_an_unknown_protocol_fails_at_startup() -> None:
+    with pytest.raises(ConfigError) as caught:
+        build_protocol(OpenAIConfig(api="grpc"), "mine")
+
+    message = str(caught.value)
+    assert "grpc" in message
+    assert "mine" in message, "the message must name the profile at fault"
+    for known in PROTOCOLS:
+        assert known in message, "the message must list the way out"
+
+
+def test_an_unknown_protocol_in_config_fails_through_build_provider() -> None:
+    config = with_profiles(broken=OpenAIConfig(api="telepathy"))
+
+    with pytest.raises(ConfigError, match="telepathy"):
+        build_provider("broken", config)

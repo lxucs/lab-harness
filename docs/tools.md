@@ -1,9 +1,5 @@
 # Tools
 
-> **Status:** The contract, the registry, the filesystem tools, `bash`, `grep`,
-> and `glob` are implemented, along with the approval gate. The web tools arrive
-> in step 11 — see the build order in [architecture.md](architecture.md).
-
 ## The contract
 
 A tool returns `ToolResult(is_error=True)` or raises; the loop converts a raise
@@ -91,18 +87,6 @@ Duplicate names raise on registration, and `select()` raises on an unknown name
 — a typo in configured tool names should fail at wiring time, not silently
 disable a tool and leave the model unable to do its job.
 
-## `ToolKind`
-
-| Kind | Who executes it |
-|---|---|
-| `LOCAL` | The loop |
-| `SERVER` | The provider — the declaration is forwarded, results arrive as `ProviderBlock`s |
-
-This distinction is what will let `web_search` be either a provider-native
-server tool or a locally-executed one depending on the active model, without the
-loop needing to care. **Still not implemented** — the web tools shipped with
-local backends only. See [Web tools](#web-tools).
-
 ## bash
 
 Three things make it more than "run a subprocess":
@@ -189,6 +173,7 @@ Every threshold is a config key, never a literal:
 | `tools.web.timeout_seconds` | 30.0 | Wall-clock limit per search or fetch |
 | `tools.web.max_bytes` | 2000000 | Largest response `web_fetch` downloads |
 | `tools.web.max_content_chars` | 50000 | Extracted text handed to the model |
+| `tools.web.user_agent` | `harness/0.1 …` | Sent on every outbound request |
 
 `read`'s truncation note names the offset to resume from, so a follow-up call is
 mechanical rather than guesswork.
@@ -268,15 +253,25 @@ article off the end.
 Only absolute `http(s)` URLs are accepted. `read` is the tool for local files,
 and `web_fetch` must not quietly become a second one.
 
-### Not implemented: the provider-native path
+### Not planned: the provider-native path
 
-`ToolKind.SERVER` and `ProviderBlock` exist for forwarding `web_search` to
-Anthropic's server-side tool, which runs the whole search-read-cite loop inside
-one API request. That is still unbuilt — `tools.web.backend` selects a local
-backend only. Adding `"native"` is a `BACKENDS` entry plus declaration
-forwarding in the provider.
+Anthropic can run `web_search` server-side, doing the whole search-read-cite
+loop inside one API request with no key of ours. **We are not building that.**
+`tools.web.backend` selects a *local* backend, and that is the whole story: a
+tool is executed locally, full stop, with no tool-kind enum and no second
+execution path to reason about. A provider-specific capability that only one
+of three adapters could offer is not worth that split.
+
+Two pieces of groundwork survive because they are honest descriptions of
+things rather than scaffolding for this: `Model.supports_server_tools` records
+a real model capability, and `ProviderBlock` round-trips provider-native
+content the core does not model — which it does today for any block an adapter
+does not recognize.
 
 ## Testing
 
-Tools are tested against `tmp_path`; web tools will use fake backends injected
-through `ToolContext`. The suite is offline — see [`../AGENTS.md`](../AGENTS.md).
+Tools are tested against `tmp_path`. Web tools are tested through
+`httpx.MockTransport`, which runs the real request-building and
+response-parsing code against canned bytes; backend *selection* is tested by
+registering a fake in the `BACKENDS` dict under a config name, so the real
+lookup path runs. The suite is offline — see [`../AGENTS.md`](../AGENTS.md).

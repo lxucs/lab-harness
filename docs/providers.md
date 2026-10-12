@@ -1,10 +1,5 @@
 # Providers
 
-> **Status:** The `Provider` protocol, `StreamOptions`, `FakeProvider`, the
-> model registry, and the **Anthropic** adapter are implemented. The
-> OpenAI-compatible adapter arrives in step 12 — see the build order in
-> [architecture.md](architecture.md).
-
 ## The contract
 
 > A provider **must not raise** for request, model, or runtime failures.
@@ -52,14 +47,26 @@ though compaction does not — it is where token accounting will hang.
 
 ## Shipped providers
 
-| Provider | API | Status | Also reaches |
-|---|---|---|---|
-| `anthropic` | Messages | implemented | — |
-| `openai` | Chat Completions | step 12 | DeepSeek, Groq, OpenRouter, vLLM, Ollama via `base_url` |
+Modules are named for the **protocol**, not the vendor, because the mapping
+stopped being one-to-one: OpenAI moved to the Responses API while everyone
+else kept speaking the dialect OpenAI invented.
 
-Two adapters is the minimum that keeps provider-specific assumptions out of the
-core types. A single adapter would let Anthropic's shapes — thinking blocks,
-`cache_control`, server tools — quietly become the core's shapes.
+| Module | Protocol | Reaches |
+|---|---|---|
+| `anthropic.py` | Messages | Claude |
+| `responses.py` | OpenAI Responses | OpenAI |
+| `chat_completions.py` | Chat Completions | DeepSeek, GLM, Groq, OpenRouter, Together, vLLM, Ollama |
+
+Chat Completions is **not** the legacy path here — it is the lingua franca, and
+the only one most vendors offer.
+
+Three adapters, not one, is what keeps provider-specific assumptions out of the
+core types. A single adapter would let whichever API was written first — its
+thinking blocks, its `cache_control`, its item model — quietly become the
+core's shapes.
+
+A new vendor is still normally a *profile*, not a module. See
+[Profiles](#profiles).
 
 ## The Anthropic adapter
 
@@ -93,28 +100,194 @@ Four translation details that are not obvious:
   yields `{}`, and the loop already refuses to execute calls from a
   length-stopped turn.
 
+## How thinking is handled across models
+
+The hardest thing to make provider-neutral, because vendors disagree about
+whether reasoning is *visible* and whether it is *replayable* — and those are
+independent questions. So the core type asks both:
+
+```python
+class ThinkingBlock:
+    thinking: str  # can you read it?
+    signature: str | None = None  # must you hand it back?
+```
+
+That gives four regimes, and all four are reachable:
+
+| Provider | `thinking` | `signature` | Replayed? |
+|---|---|---|---|
+| Anthropic extended thinking | the text | the signed token | **Yes** — the API rejects it without the signature |
+| OpenAI via `responses` | a model-written **summary** | packed `{id, encrypted_content}` | **Yes** — verbatim, or the model loses its place |
+| DeepSeek, GLM | the real chain, in plaintext | `None` | **No** — they reject it coming back |
+| OpenAI via `chat_completions` | *no block at all* | — | nothing to replay |
+
+**Why OpenAI needs the replay.** A reasoning model thinks, calls a tool, and
+then has to resume from where it left off. OpenAI never returns the raw chain;
+it returns a summary you can show a user and an opaque `encrypted_content`
+blob that is the actual continuation. Drop the blob and nothing errors — the
+model just restarts its reasoning after every tool call, silently and worse.
+That is the whole reason `responses.py` exists.
+
+**Why the signature holds JSON there.** Replaying needs the item's `id` as
+well as the ciphertext. Rather than add an OpenAI-shaped field to
+`llm/types.py`, the adapter packs both into the one field the core already
+documents as *an opaque provider replay token* — and it is the only thing that
+ever looks inside.
+
+**The last row is not a bug.** On Chat Completions, OpenAI's reasoning models
+stream no reasoning content whatsoever, so no block is created. Absence is the
+honest representation; there is genuinely nothing to show. (The token count is
+still right: `output` includes reasoning tokens. What is lost is the ability to
+*break out* how many — the core `Usage` has no field for it.)
+
+**Mixing providers degrades, it does not break.** Each adapter drops reasoning
+it cannot legitimately replay: a signature-less block never reaches Anthropic
+or Responses, and a signed one never reaches Chat Completions. So `--resume`
+against a different provider costs the model some context and nothing else.
+Both directions are tested.
+
+## The Chat Completions adapter
+
+`harness/llm/providers/chat_completions.py`. Raw `httpx` rather than the
+`openai` SDK: httpx is already a dependency for the web tools, the SSE framing
+is forty lines, and `reasoning_content` sits outside the SDK's types anyway.
+
+Five translation details, each forced by the wire format rather than chosen:
+
+- **The system prompt is a message**, not a top-level field. The other two
+  adapters do the opposite.
+- **Tool results stay separate** `{"role": "tool"}` messages. Anthropic
+  requires every result for a turn to be merged into one user message; this
+  dialect requires exactly the opposite, and getting it backwards is a 400.
+- **Tool arguments go back as a JSON string**, which is how they arrived.
+- **Thinking is dropped on the way out**, per the table above.
+- **Block indices are assigned here.** The stream reports no block boundaries —
+  no start, no stop, and no index for text — so the adapter assigns a stable
+  `block_index` on first sight and closes every open block when the stream
+  ends. The event protocol holds even though the wire format does not supply it.
+
+Reasoning deltas are read from `reasoning_content` (DeepSeek's name) or
+`reasoning` (what several gateways relabel it to).
+
+## The Responses adapter
+
+`harness/llm/providers/responses.py`. Opt in with `api = "responses"`.
+
+Not a tweak of Chat Completions — a different shape:
+
+- **The conversation is a list of items** (`message`, `function_call`,
+  `function_call_output`, `reasoning`) rather than messages with roles. A tool
+  call and its result are siblings. One of our `AssistantMessage`es can become
+  three items, and reasoning must come first.
+- **The system prompt is top-level `instructions`**, as in the Messages API.
+- **Tool declarations are flat** — `{"type": "function", "name": …}` — where
+  Chat Completions nests everything under a `function` key.
+- **`max_output_tokens`**, not `max_tokens`.
+- **Reasoning is a first-class item** carrying the encrypted continuation.
+
+We send `store: false` and ask for `reasoning.encrypted_content`. The
+alternative is letting OpenAI keep the thread and referring to it by
+`previous_response_id` — which would put the authoritative history on someone
+else's server, where `--resume` and the session files cannot see it. The two
+are alternatives, not complements: `store = true` disables the encrypted
+replay.
+
+Errors can arrive *inside* a 200 stream (`error`, `response.failed`), so those
+events end the turn rather than being dropped.
+
+**Partial tool JSON is never salvaged** in any adapter — a truncated object can
+parse into arguments that validate while silently missing fields.
+
+## Profiles
+
+A vendor is config, not code. `providers.openai` is a table of named profiles,
+and it is the one place in the schema where an unknown key is *not* an error —
+a new key is a new vendor.
+
+```toml
+[providers.openai.groq]
+api = "chat_completions"      # the default
+base_url = "https://api.groq.com/openai/v1"
+api_key_env = "GROQ_API_KEY"
+models = ["llama-3.3-70b-versatile"]
+```
+
+`api` picks the protocol: `chat_completions` (default, since that is what a new
+vendor almost certainly speaks) or `responses`. The shipped `openai` profile
+sets `responses`; `deepseek` and `glm` use the default. An unusable value fails
+at startup naming the profile.
+
+Keys inside a profile are checked as strictly as anywhere else, so a typo there
+still fails at startup.
+
+**Which provider serves a model**, highest precedence first:
+
+1. `--provider`
+2. a profile whose `models` list names the id — so `--model deepseek-chat`
+   reaches DeepSeek with no flag
+3. the catalog's `Model.provider`
+4. `agent.provider` (default `anthropic`)
+
+Rung 2 sits above the catalog on purpose: it lets a config file re-point a
+model id at a different endpoint — a gateway, or a local server running the
+same weights — without the catalog having to agree.
+
+`select_provider`, `build_provider` and `route` live in
+`harness/llm/providers/__init__.py`. `route` is the one the CLI calls; it
+resolves the id, picks the provider, and rewrites `Model.provider` to match —
+which matters because an uncatalogued id is cloned from an Anthropic entry for
+its limits and would otherwise claim to be Anthropic's whatever served it.
+
+A profile's credential resolves from the environment first, then
+`config.local.toml` — never a committed file.
+
 ## Model registry
 
 `harness/llm/registry.py` holds the catalog and `resolve_model()`. Precedence:
 explicit argument, then `HARNESS_MODEL`, then the configured default.
 
 An **unknown model id is not an error**. Model names ship faster than this
-catalog does, so an unlisted id is assumed to be a current Anthropic model and
-given conservative limits. Being unable to use a model released last week is
-worse than a slightly wrong `context_window`.
+catalog does, so an unlisted id is given conservative limits rather than
+refused. Being unable to use a model released last week is worse than a
+slightly wrong `context_window`. Routing still works for it: list the id in a
+profile's `models`, or pass `--provider`.
+
+Catalogued `provider` values name the *profile* that serves the model, not the
+dialect it speaks — `deepseek-chat` says `deepseek`, not `openai`.
 
 Capability flags live with the model because the runtime acts on them:
 `supports_reasoning` gates the thinking request, `supports_server_tools` will
 decide whether `web_search` is forwarded or executed locally.
 
-## Adding a provider
+## Adding a vendor
 
-1. Add `llm/providers/<name>.py` implementing the `Provider` protocol.
-2. Translate core `Message` objects to the provider's wire format, and the
-   provider's stream back to `StreamEvent`s.
-3. Map failures to an `error` event. Never raise.
-4. Add its models to `llm/registry.py`.
-5. Update the table above.
+**If it speaks either protocol — which almost all do — write no code.** Add a
+profile:
+
+```toml
+[providers.openai.myvendor]
+base_url = "https://api.myvendor.example/v1"
+api_key_env = "MYVENDOR_API_KEY"
+models = ["their-model-v1"]
+```
+
+`harness --model their-model-v1` now routes there. Add a catalog entry in
+`llm/registry.py` only if you want its capability flags — `supports_reasoning`
+gates the thinking request.
+
+**A genuinely different API** needs an adapter:
+
+1. Add `llm/providers/<protocol>.py` implementing the `Provider` protocol.
+   Name it for the protocol, not the vendor — the mapping is not one-to-one.
+2. Translate core `Message` objects to the wire format, and the stream back to
+   `StreamEvent`s. Reuse `_http.py` for credentials, the client, SSE framing
+   and failures.
+3. Map failures to an `error` event through `_http.failure`. Never raise.
+4. Decide the reasoning regime from the table above, and say so in the module
+   docstring. Replaying something the server cannot decrypt is a 400; dropping
+   something it needed is a silent loss of context.
+5. Register it in `PROTOCOLS` so a profile can name it.
+6. Add its models to `llm/registry.py` and update the table above.
 
 ## Testing
 

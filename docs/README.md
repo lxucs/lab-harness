@@ -26,6 +26,8 @@ Working agreements for AI coding agents are in [`../AGENTS.md`](../AGENTS.md).
 
 ## Status
 
-Pre-implementation. The design is settled; these pages are filled in alongside
-the code they describe, per the build order in the design spec. Sections marked
-*Not yet implemented* are intentional placeholders, not oversights.
+Every numbered build step is complete, so these pages describe what the code
+does rather than what it will do. The one piece of the original design still
+unbuilt is context compaction, marked TODO in
+[architecture.md](architecture.md); provider-native `web_search` is listed
+there as not planned.

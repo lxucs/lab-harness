@@ -7,10 +7,10 @@ and searches the web — and it is small enough to read in an afternoon.
 Architecturally it follows [pi](https://github.com/earendil-works/pi): the same
 layering, trimmed to the parts that earn their keep.
 
-> **Status: usable.** The agentic loop, the full local tool set, web search and
-> fetch, the Anthropic provider, an interactive terminal, tool approval,
-> layered config, and session persistence are implemented and tested (431
-> tests, offline). A second provider is next — see [Progress](#progress).
+> **Status: usable, and feature-complete against its design.** Three provider
+> adapters, the full local tool set, an interactive terminal, layered config and
+> durable sessions — 709 tests, all offline. Details in
+> [Status](#status).
 
 ## Why
 
@@ -21,8 +21,9 @@ a frontend is a small, local change rather than a refactor.
 
 ## Architecture
 
-Three layers. Dependencies point strictly downward — `llm/` has no upward
-dependencies at all.
+Three layers. Dependencies point strictly downward — `llm/` imports from no
+other layer. (Every layer reads the leaf modules `config.py`, `project.py` and
+`logs.py`, which import nothing from the package themselves.)
 
 ```
          cli/          terminal, json sink  (subscribers)
@@ -50,10 +51,10 @@ run. The terminal is a subscriber; so is the JSONL writer. Every event is a
 frozen dataclass of JSON primitives, enforced by a round-trip test — which is
 what lets a frontend in another language be a third subscriber later.
 
-**The hooks.** `before_tool_call`, `after_tool_call`, and `prepare_request`. A
-feature that fits a hook does not belong in the loop — tool approval is one,
-which is why `-p` and interactive modes differ without the loop branching.
-Context compaction will be another.
+**The hooks.** `before_tool_call`, `after_tool_call`, `prepare_request`, and
+`finish_turn`. A feature that fits a hook does not belong in the loop — tool
+approval is one, which is why `-p` and interactive modes differ without the
+loop branching. Context compaction will be another.
 
 Details in [docs/architecture.md](docs/architecture.md).
 
@@ -73,6 +74,9 @@ uv run harness --resume                           # continue where you left off
 uv run harness --sessions                         # list saved sessions here
 uv run harness -p "..." --model claude-opus-5
 uv run harness --cwd ../other-project
+uv run harness --log-level debug             # diagnostics on stderr
+uv run harness --model deepseek-chat         # routed to DeepSeek by config
+uv run harness --model gpt-5                 # OpenAI, via the Responses API
 ```
 
 In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
@@ -80,6 +84,10 @@ session and `Ctrl-D` exits. Mutating tools (`bash`, `write`, `edit`) ask before
 running. Conversations are saved per project under `~/.harness/sessions/` and
 `--resume` picks the last one back up; `--no-save` skips persistence. Exit
 status is `0` on a clean run, `1` when the final turn errored or was aborted.
+
+A `HARNESS.md` or `AGENTS.md` in the working directory is appended to the
+system prompt, so a project's conventions do not have to be rediscovered every
+run. Nothing to configure — if the file is there, it is used.
 
 Configuration and every environment variable: [docs/configuration.md](docs/configuration.md).
 
@@ -89,7 +97,7 @@ Configuration and every environment variable: [docs/configuration.md](docs/confi
 |---|---|
 | [architecture.md](docs/architecture.md) | Layering, module boundaries, deviations from pi |
 | [events.md](docs/events.md) | The event protocol between runtime and frontend |
-| [providers.md](docs/providers.md) | Provider contract, adding a provider |
+| [providers.md](docs/providers.md) | Provider contract, profiles, adding a vendor |
 | [tools.md](docs/tools.md) | Tool contract, built-ins, adding a tool |
 | [sessions.md](docs/sessions.md) | Transcript format, resume |
 | [cli.md](docs/cli.md) | Terminal usage, flags, keybindings |
@@ -102,33 +110,15 @@ The full design rationale — including what was cut and why — is in
 Contributing: [docs/contributing.md](docs/contributing.md). AI coding agents
 should also read [AGENTS.md](AGENTS.md).
 
-## Progress
+## Status
 
-### In progress
-
-Steps 1–11 complete: a tested runtime core, the full local tool set
-(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch`
-with pluggable backends, the Anthropic adapter, an interactive terminal, a
-fail-closed approval gate, layered TOML config, and durable sessions.
-
-Next: the OpenAI-compatible provider (step 12).
-
-### Planned
-
-Build order. Each step is independently verifiable.
-
-- [x] 1 · `llm/` core types, event protocol, serialization tests
-- [x] 2 · `FakeProvider` and the `Provider` protocol
-- [x] 3 · `agent/loop.py` — the agentic loop
-- [x] 4 · `agent/agent.py` — state, subscribers, abort
-- [x] 5 · `tools/` base, registry, filesystem tools
-- [x] 6 · `cli/json_sink.py` — first end-to-end run
-- [x] 7 · Anthropic provider — first real run
-- [x] 8 · `cli/terminal.py` — interactive terminal
-- [x] 9 · `bash`, `grep`, `glob`, tool approval gate
-- [x] 10 · `session/` — persistence and resume
-- [x] 11 · Web search and fetch, layered TOML config
-- [ ] 12 · OpenAI-compatible provider
+**Everything planned is built:** a tested runtime core, the full local tool set
+(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch` with
+pluggable backends, three provider adapters (Messages, Responses, Chat
+Completions), an interactive terminal, a fail-closed approval gate, layered TOML
+config, project instructions from `HARNESS.md`/`AGENTS.md`, levelled diagnostics
+on stderr, and durable sessions. A step-by-step reading order is in
+[docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
 gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
@@ -139,17 +129,20 @@ an explicit yes.
 [Tavily](https://tavily.com) (free tier available); the keyless `ddgs`
 alternative is implemented but did not return results from the development
 machine — see [docs/tools.md](docs/tools.md#web-tools). `web_fetch` needs no
-key either way. Forwarding search to Anthropic's server-side tool, which would
-need no key at all, is designed but not built.
+key either way.
 
-### Deferred
+### TODO
 
-- **Context compaction.** Cut from v1 deliberately. `prepare_request` is called
-  before every provider request, `Model.context_window` and per-message `Usage`
-  exist, and the session schema reserves a `compaction` entry — so it lands
-  later without touching the loop.
-- **Not planned:** MCP, sub-agents, plan mode, RPC control channel,
-  extensions-as-plugins, sandboxing, a multi-provider catalog.
+- **Context compaction.** The one piece of the original design still unbuilt.
+  `prepare_request` is called before every provider request,
+  `Model.context_window` and per-message `Usage` exist, and the session schema
+  reserves a `compaction` entry — so it lands without touching the loop.
+
+### Not planned
+
+MCP, sub-agents, plan mode, RPC control channel, extensions-as-plugins,
+sandboxing, and provider-native `web_search` — that last one would add a second
+tool-execution path only one of the three adapters could ever use.
 
 ## License
 
