@@ -21,7 +21,6 @@ result. Deltas are never persisted.
 """
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -166,21 +165,6 @@ def _header_from(entry: dict[str, Any]) -> SessionHeader:
         return SessionHeader(**payload)
     except TypeError as exc:
         raise TranscriptError(f"Malformed session header: {exc}") from exc
-
-
-def iter_entries(path: Path) -> Iterator[dict[str, Any]]:
-    """Raw entries, for tooling that wants more than messages."""
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(entry, dict):
-                yield entry
 
 
 def now_timestamp() -> str:

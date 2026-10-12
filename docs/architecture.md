@@ -11,9 +11,9 @@ Dependencies point strictly downward.
           ▼
         agent/         the loop, Agent, events
           │
-    ┌─────┼─────┬──────────┐
-    ▼     ▼     ▼          ▼
-  llm/  tools/  session/  (context/ — deferred)
+    ┌─────┼─────┐
+    ▼     ▼     ▼
+  llm/  tools/  session/
     └─────┴─────┴──→  config.py, project.py, logs.py   (leaf modules)
 ```
 
@@ -139,11 +139,12 @@ extensions-as-plugins, MCP, branch summarization.
 ## TODO, with a place to land
 
 **Context compaction** is the one piece of the original design still unbuilt.
-The seam it needs — `prepare_request` — is.
-Compaction reads the context, decides whether to summarize, and returns a
-replacement; nothing in the loop changes when it arrives. v1 also records
-`Usage` per assistant message, defines `Model.context_window`, and reserves a
-`compaction` entry type in the session schema, so the groundwork is laid.
+The seam it needs — `prepare_request` — already exists and is already called
+before every provider request. Compaction reads the context, decides whether to
+summarize, and returns a replacement; nothing in the loop changes when it
+arrives. v1 also records `Usage` per assistant message, defines
+`Model.context_window`, and reserves a `compaction` entry type in the session
+schema, so the groundwork is laid.
 
 See §7 of the design spec for the full plan.
 

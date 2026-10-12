@@ -12,8 +12,9 @@ agreements for AI coding agents — environment, testing, git — are in
 - Full type annotations. `pyright` must be clean.
 - `ruff check` and `ruff format` before calling work done.
 - Match the comment density of surrounding code. Comment *why*, not *what*.
-- Prefer small, focused modules. A file past ~400 lines is usually doing two
-  things.
+- Prefer small, focused modules. Past ~400 lines *of code* a file is usually
+  doing two things. Comments and docstrings do not count against that — several
+  modules here run past 500 total lines and are still under the limit.
 
 ## The invariants
 
