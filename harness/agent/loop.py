@@ -154,11 +154,7 @@ async def run_agent_loop(
             injected = await _finish_turn(assistant, cfg, tuple(transcript), turn)
             if injected is None:
                 break
-            # Appended to the transcript *and* announced. The message queue
-            # this replaces got exactly that wrong — an injected message that
-            # survived one request and then vanished from the provider's view
-            # while staying in the agent's state. Here there is one transcript
-            # and one way into it.
+            # Appended to the transcript *and* announced.
             await _safe_emit(emit, MessageStart(message=injected))
             await _safe_emit(emit, MessageEnd(message=injected))
             transcript.append(injected)

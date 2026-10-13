@@ -67,6 +67,16 @@ So do not read `message_start.message.content` for an assistant message.
 Accumulate the `message_update` deltas, or read
 `agent.state.streaming_message`.
 
+So overall:
+
+- **Every message is announced as a start/end pair, even when both carry the
+  same content.** Non-streaming ones, e.g. the user turn, tool results, and a
+  `finish_turn`-injected message are still all emitted `message_start` then
+  `message_end`, with identical messages. Though, only `message_end.message` is 
+  consumed — the start's content is ignored. The pairing is kept uniform so 
+  every consumer implements one code path (`start → deltas? → end`) and never 
+  special-cases "this message has no deltas".
+
 ### The user message is on the stream too
 
 A run announces the user message that triggered it, right after `agent_start`.
@@ -112,6 +122,30 @@ Two that matter when tools run in parallel:
 
 These differ on purpose: the first is for live UI feedback, the second is a
 protocol requirement.
+
+## Abort
+
+Abort is a sticky signal, not an exception. `cfg.signal` is an `asyncio.Event`;
+an external party (the CLI, a Ctrl-C handler, `Agent.abort()`) calls `set()`,
+and from then on `is_set()` is true for the rest of the run.
+
+The loop does not raise on the signal. It polls `_aborted(cfg)` at checkpoints
+and, when tripped, emits an aborted assistant message and stops.
+
+Two checkpoints are load-bearing, and both must exist:
+
+- **Top of the turn loop.** The clean entry check before any work.
+- **After the tool batch, before the loop continues.** A batch can run a long
+  time; the signal may fire mid-flight. The next-iteration check would never
+  run on the *final* turn, so without this one an abort during the last batch
+  is missed entirely.
+
+A third, narrower check lives inside the **serial** tool loop.
+
+The design is polling at checkpoints rather than a try/except around the body.
+It relies on `asyncio.Event` being sticky (the abort is never accidentally
+missed between checks) and on the two loop-level checks covering every place a
+run could otherwise run past the user's intent.
 
 ## Subscribers
 
