@@ -9,7 +9,7 @@ layering, trimmed to the parts that earn their keep.
 
 > **Status: usable, and feature-complete against its design.** Three provider
 > adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions — 709 tests, all offline. Details in
+> durable sessions — 775 tests, all offline. Details in
 > [Status](#status).
 
 ## Why
@@ -75,7 +75,7 @@ uv run harness --sessions                         # list saved sessions here
 uv run harness -p "..." --model claude-opus-5
 uv run harness --cwd ../other-project
 uv run harness --log-level debug             # diagnostics on stderr
-uv run harness --model deepseek-chat         # routed to DeepSeek by config
+uv run harness --model deepseek-flash        # routed to DeepSeek by config
 uv run harness --model gpt-5                 # OpenAI, via the Responses API
 ```
 
@@ -100,8 +100,8 @@ Configuration and every environment variable: [docs/configuration.md](docs/confi
 | [providers.md](docs/providers.md) | Provider contract, profiles, adding a vendor |
 | [tools.md](docs/tools.md) | Tool contract, built-ins, adding a tool |
 | [sessions.md](docs/sessions.md) | Transcript format, resume |
-| [cli.md](docs/cli.md) | Terminal usage, flags, keybindings |
-| [configuration.md](docs/configuration.md) | Config files and environment variables |
+| [cli.md](docs/cli.md) | Terminal, flags, keybindings, the usage and cost readout |
+| [configuration.md](docs/configuration.md) | Config files, environment variables, pricing |
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
 
 The full design rationale — including what was cut and why — is in
@@ -115,9 +115,10 @@ should also read [AGENTS.md](AGENTS.md).
 **Everything planned is built:** a tested runtime core, the full local tool set
 (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch` with
 pluggable backends, three provider adapters (Messages, Responses, Chat
-Completions), an interactive terminal, a fail-closed approval gate, layered TOML
-config, project instructions from `HARNESS.md`/`AGENTS.md`, levelled diagnostics
-on stderr, and durable sessions. A step-by-step reading order is in
+Completions), an interactive terminal with a per-run token, cache and cost
+readout, a fail-closed approval gate, layered TOML config, project instructions
+from `HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable
+sessions. A step-by-step reading order is in
 [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
@@ -137,6 +138,14 @@ key either way.
   `prepare_request` is called before every provider request,
   `Model.context_window` and per-message `Usage` exist, and the session schema
   reserves a `compaction` entry — so it lands without touching the loop.
+- **Anthropic prompt caching.** The Messages adapter sends no `cache_control`
+  markers yet, so Anthropic caches nothing and its cache hit rate reads 0%.
+  Contained to one function in `anthropic.py`; the placement is planned in
+  [docs/providers.md](docs/providers.md#the-anthropic-adapter).
+- **Anthropic's thinking request.** Asking for reasoning sends `budget_tokens`,
+  which Claude Sonnet 5 and Opus 5 reject — they take adaptive thinking only.
+  Nothing asks for reasoning today (both think by default), so no current path
+  hits it. Details in the same section.
 
 ### Not planned
 

@@ -122,6 +122,12 @@ enabled_tools = [
 max_result_lines = 12
 # Render assistant text as markdown.
 markdown = true
+# Print one line of token, cache and cost figures after each run. Type :status
+# for the session's totals either way.
+show_usage = true
+# Label for amounts computed from [pricing]. Only a label -- nothing is
+# converted, so it must match the currency the rates are quoted in.
+currency_symbol = "$"
 
 [session]
 # Root for all harness state. Overridden by $HARNESS_HOME.
@@ -142,13 +148,14 @@ api_key_env = "ANTHROPIC_API_KEY"
 base_url_env = "ANTHROPIC_BASE_URL"
 # Sampling ceiling when the model declares none.
 default_max_tokens = 8192
-# Thinking budget when reasoning is requested, in tokens.
+# Thinking budget when reasoning is requested, in tokens. Sonnet 5 and Opus 5
+# reject a budget (adaptive thinking only) -- see the TODO in docs/providers.md.
 thinking_budget_tokens = 4096
 
-# Endpoints in the OpenAI family, keyed by profile name. Unlike every other
-# section, NEW KEYS HERE ARE ALLOWED: adding [providers.openai.<name>] creates
-# a profile, which is how a vendor is supported without touching code. Keys
-# *inside* a profile are still checked.
+# Endpoints in the OpenAI family, keyed by profile name. Like [pricing], and
+# unlike every other section, NEW KEYS HERE ARE ALLOWED: adding
+# [providers.openai.<name>] creates a profile, which is how a vendor is
+# supported without touching code. Keys *inside* a profile are still checked.
 #
 # `api` picks the protocol:
 #   "responses"         OpenAI's current API. Carries a reasoning model's
@@ -157,7 +164,7 @@ thinking_budget_tokens = 4096
 #                       OpenRouter, vLLM, Ollama.
 #
 # A model id listed in a profile's `models` routes to it, so
-# `harness --model deepseek-chat` needs no --provider flag.
+# `harness --model deepseek-flash` needs no --provider flag.
 #
 # Keys are never written here. Set the environment variable named by
 # api_key_env, or put api_key in gitignored config.local.toml.
@@ -177,6 +184,15 @@ timeout_seconds = 120.0
 # chat_completions only: ask for token counts in the stream. Turn off for a
 # server that rejects stream_options -- some implementations do.
 include_usage = true
+# chat_completions only: field each earlier turn's reasoning is sent back in;
+# empty sends none. DeepSeek returns a 400 for a tool loop without it, GLM asks
+# for it unmodified, and a server that never asked for it may reject it -- so
+# off unless the vendor documents it.
+replay_reasoning_field = ""
+# chat_completions only: ask the server to keep earlier reasoning in context.
+# GLM's Preserved Thinking -- sends GLM's own request shape, so leave it off
+# for any other vendor. Also switches thinking on for GLM-4.6, which is hybrid.
+preserve_thinking = false
 # responses only: detail of the reasoning summary ("auto", "concise",
 # "detailed"). Empty asks for none, which makes thinking invisible -- the raw
 # chain is never returned, so the summary is the only readable form.
@@ -191,10 +207,12 @@ api = "chat_completions"
 base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url_env = "DEEPSEEK_BASE_URL"
-models = ["deepseek-chat", "deepseek-reasoner"]
+models = ["deepseek-flash", "deepseek-v4-pro"]
 default_max_tokens = 8192
 timeout_seconds = 120.0
 include_usage = true
+replay_reasoning_field = "reasoning_content"
+preserve_thinking = false
 reasoning_summary = "auto"
 store = false
 
@@ -204,10 +222,16 @@ api = "chat_completions"
 base_url = "https://open.bigmodel.cn/api/paas/v4"
 api_key_env = "ZHIPUAI_API_KEY"
 base_url_env = "ZHIPUAI_BASE_URL"
-models = ["glm-4.6", "glm-4.5", "glm-4.5-air"]
+models = [
+    "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx", "glm-5.2", "glm-5.1", "glm-5",
+    "glm-4.7", "glm-4.6",
+]
 default_max_tokens = 8192
 timeout_seconds = 120.0
 include_usage = true
+replay_reasoning_field = "reasoning_content"
+# GLM's standard endpoint discards earlier reasoning unless asked not to.
+preserve_thinking = true
 reasoning_summary = "auto"
 store = false
 
@@ -222,6 +246,121 @@ store = false
 # base_url = "http://localhost:11434/v1"   # Ollama
 # api_key_env = "OLLAMA_API_KEY"
 # models = ["qwen3:8b"]
+
+# What each model costs, per million tokens, keyed by model id. Used only to
+# show a cost in the terminal; nothing is enforced. NEW KEYS ARE ALLOWED, as in
+# [providers.openai]: each one prices another model.
+#
+# A model with no entry shows no cost at all. An entry with every rate at zero
+# counts as no entry -- that is how to switch off one shipped below, since a
+# config file merges over these rather than replacing them. A rate left out of
+# an entry is zero.
+#
+# The shipped entries are USD list prices: the catalogued Claude models, and
+# every id a shipped profile lists. Prices change; override any of them.
+
+# Anthropic's first-party rates (mid-2026), with cache_write at the
+# 5-minute-TTL rate. Bedrock and Vertex bill separately.
+
+[pricing.claude-opus-5]
+input = 5.0
+output = 25.0
+# Prompt tokens served from the cache.
+cache_read = 0.5
+# Prompt tokens written to the cache. Providers that cache implicitly (OpenAI,
+# DeepSeek) report no writes, so this rate never applies to them.
+cache_write = 6.25
+
+[pricing.claude-sonnet-5]
+input = 2.0
+output = 10.0
+cache_read = 0.2
+cache_write = 2.5
+
+[pricing.claude-haiku-4-5-20251001]
+input = 1.0
+output = 5.0
+cache_read = 0.1
+cache_write = 1.25
+
+# DeepSeek's PEAK rates (2026-10): 01:00-04:00 and 06:00-10:00 UTC on weekdays,
+# Chinese public holidays excepted. Every other hour costs half, but one rate
+# cannot follow the clock -- so these take the higher one, and a shown cost may
+# run high, never low. `input` is the cache-miss rate.
+
+[pricing.deepseek-flash]
+input = 0.3
+output = 1.2
+cache_read = 0.006
+# DeepSeek charges nothing to fill its cache.
+cache_write = 0.0
+
+[pricing.deepseek-v4-pro]
+input = 1.32
+output = 3.96
+cache_read = 0.044
+cache_write = 0.0
+
+# Z.ai's international list rates (2026-10). The shipped glm profile points at
+# the MAINLAND endpoint, which bills in CNY at its own rates -- override these
+# if that is the one you use. Quoted: a bare TOML key cannot contain a dot.
+
+[pricing."glm-5.3"]
+input = 1.4
+output = 4.4
+cache_read = 0.26
+# Cache storage is "limited-time free" at Z.ai, so nothing to write.
+cache_write = 0.0
+
+[pricing."glm-5.3-flash"]
+input = 0.15
+output = 0.5
+cache_read = 0.03
+cache_write = 0.0
+
+[pricing."glm-5.3-flashx"]
+input = 0.37
+output = 1.25
+cache_read = 0.075
+cache_write = 0.0
+
+[pricing."glm-5.2"]
+input = 1.4
+output = 4.4
+cache_read = 0.26
+cache_write = 0.0
+
+[pricing."glm-5.1"]
+input = 1.4
+output = 4.4
+cache_read = 0.26
+cache_write = 0.0
+
+[pricing."glm-5"]
+input = 1.0
+output = 3.2
+cache_read = 0.2
+cache_write = 0.0
+
+[pricing."glm-4.7"]
+input = 0.6
+output = 2.2
+cache_read = 0.11
+cache_write = 0.0
+
+[pricing."glm-4.6"]
+input = 0.6
+output = 2.2
+cache_read = 0.11
+cache_write = 0.0
+
+# Any other model is one more section. The numbers below only show the shape;
+# take real ones from the vendor's price list:
+#
+# [pricing.my-model]
+# input = 1.0
+# output = 4.0
+# cache_read = 0.2
 
 [logging]
 # Diagnostics about the harness itself, written to stderr. One of:

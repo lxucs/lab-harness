@@ -399,15 +399,15 @@ def test_the_default_build_uses_anthropic() -> None:
 
 def test_a_deepseek_model_id_routes_without_a_flag() -> None:
     """The ergonomics the profiles exist for."""
-    agent = _build_agent(_args(model="deepseek-chat"), Config())
+    agent = _build_agent(_args(model="deepseek-flash"), Config())
 
     assert isinstance(agent._provider, ChatCompletionsProvider)
     assert agent._provider.name == "deepseek"
-    assert agent.state.model.id == "deepseek-chat"
+    assert agent.state.model.id == "deepseek-flash"
 
 
 def test_the_provider_flag_overrides_the_model_id() -> None:
-    agent = _build_agent(_args(model="deepseek-chat", provider="anthropic"), Config())
+    agent = _build_agent(_args(model="deepseek-flash", provider="anthropic"), Config())
 
     assert isinstance(agent._provider, AnthropicProvider)
 

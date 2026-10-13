@@ -392,7 +392,7 @@ async def test_a_signature_less_thinking_block_is_dropped() -> None:
     recorder = Recorder(sse(completed()))
     message = AssistantMessage(
         content=(ThinkingBlock(thinking="from deepseek", signature=None), TextBlock(text="hi")),
-        model="deepseek-reasoner",
+        model="deepseek-v4-pro",
         provider="deepseek",
     )
 

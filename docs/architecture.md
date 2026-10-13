@@ -95,8 +95,7 @@ safe to hand to arbitrary code:
 - It sits inside the `max_turns` loop, so auto-continue is bounded by
   construction — a hook that always continues wastes a budget, it does not hang.
 - The injected message is appended to the transcript *and* announced through
-  `MessageStart`/`MessageEnd`. The message queue this replaces (below) got
-  exactly that wrong.
+  `MessageStart`/`MessageEnd`.
 - A hook that raises ends the run rather than continuing — the mirror of the
   approval gate failing closed. Treating a crash as "continue" would burn the
   whole budget on code already known to be broken.
@@ -124,14 +123,6 @@ each with `all` and `one-at-a-time` drain modes, so a message can be injected
 into a run already in flight. We have none of it: `prompt()` refuses while a run
 is active. A frontend that wants to accept typing mid-run buffers the text
 itself and prompts again when the run returns.
-
-The first cut did have a queue, and review found it had quietly broken the
-transcript: an injected message survived one request and then vanished from the
-provider's view while remaining in `state.messages`, and a message queued on the
-final turn was stranded entirely. Deleting the queue made both impossible by
-construction rather than merely fixed — there is no second source of messages.
-`prepare_request` went back to being what its docstring always claimed, a
-per-request view transform.
 
 **Dropped entirely:** the provider catalog, codemode, durable/RPC/server,
 extensions-as-plugins, MCP, branch summarization.
@@ -162,7 +153,7 @@ confusing order to read it in — each step only depends on the ones above.
 | 5 | `tools/base.py`, `registry.py`, `fs.py` |
 | 6 | `cli/json_sink.py` — first end-to-end run |
 | 7 | `llm/providers/anthropic.py` — first real run |
-| 8 | `cli/terminal.py` |
+| 8 | `cli/terminal.py`, `usage.py` |
 | 9 | `tools/shell.py`, `search.py`, `cli/approval.py` |
 | 10 | `session/` |
 | 11 | `tools/web.py`, `html_text.py`, `config.py` loading |

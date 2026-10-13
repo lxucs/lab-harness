@@ -12,11 +12,15 @@ merges them, and getting this backwards is a 400 from every endpoint).
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
+import httpx
 import pytest
+from pydantic import BaseModel
 
-from harness.config import OpenAIConfig
+from harness.agent import Agent
+from harness.config import Config, OpenAIConfig
 from harness.llm.events import (
     StreamDone,
     StreamError,
@@ -34,6 +38,7 @@ from harness.llm.events import (
 )
 from harness.llm.provider import StreamOptions
 from harness.llm.providers.chat_completions import ChatCompletionsProvider
+from harness.llm.registry import MODELS
 from harness.llm.types import (
     AssistantMessage,
     Context,
@@ -48,6 +53,7 @@ from harness.llm.types import (
     UserMessage,
     text,
 )
+from harness.tools.base import ToolContext, ToolResult, ok, tool
 from tests.http_fakes import (
     TEST_KEY,
     Exploding,
@@ -56,17 +62,19 @@ from tests.http_fakes import (
     final,
 )
 
+#: Local fixtures, not catalog lookups: MODEL is the non-reasoning case on
+#: purpose, whatever the catalog says about the id.
 MODEL = Model(
-    id="deepseek-chat",
-    name="DeepSeek Chat",
+    id="deepseek-flash",
+    name="DeepSeek Flash",
     provider="deepseek",
     context_window=128_000,
     max_tokens=8_192,
 )
 
 REASONING_MODEL = Model(
-    id="deepseek-reasoner",
-    name="DeepSeek Reasoner",
+    id="deepseek-v4-pro",
+    name="DeepSeek V4 Pro",
     provider="deepseek",
     context_window=128_000,
     max_tokens=8_192,
@@ -182,7 +190,7 @@ async def test_the_request_streams() -> None:
     await collect(provider(recorder))
 
     assert recorder.payload["stream"] is True
-    assert recorder.payload["model"] == "deepseek-chat"
+    assert recorder.payload["model"] == "deepseek-flash"
 
 
 async def test_usage_is_requested_by_default() -> None:
@@ -200,6 +208,24 @@ async def test_usage_can_be_turned_off_for_servers_that_reject_it() -> None:
     await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, include_usage=False)))
 
     assert "stream_options" not in recorder.payload
+
+
+async def test_preserved_thinking_is_not_requested_by_default() -> None:
+    """The `thinking` object is GLM's shape; another vendor reads it differently."""
+    recorder = Recorder(sse(finish()))
+
+    await collect(provider(recorder))
+
+    assert "thinking" not in recorder.payload
+
+
+async def test_preserved_thinking_sends_glms_documented_object() -> None:
+    """Exactly Z.ai's example; `clear_thinking: false` is what keeps it."""
+    recorder = Recorder(sse(finish()))
+
+    await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, preserve_thinking=True)))
+
+    assert recorder.payload["thinking"] == {"type": "enabled", "clear_thinking": False}
 
 
 async def test_tools_are_declared_in_the_function_envelope() -> None:
@@ -315,7 +341,7 @@ async def test_assistant_tool_calls_serialize_arguments_as_a_json_string() -> No
     recorder = Recorder(sse(finish()))
     message = AssistantMessage(
         content=(ToolCallBlock(id="c1", name="read", arguments={"path": "a.py"}),),
-        model="deepseek-chat",
+        model="deepseek-flash",
         provider="deepseek",
     )
 
@@ -329,26 +355,140 @@ async def test_assistant_tool_calls_serialize_arguments_as_a_json_string() -> No
     }
 
 
-async def test_thinking_blocks_are_not_replayed() -> None:
-    """Vendors reject reasoning sent back; DeepSeek documents it explicitly."""
+async def test_thinking_is_not_replayed_by_default() -> None:
+    """A server never told to expect reasoning back may reject the unknown field."""
     recorder = Recorder(sse(finish()))
     message = AssistantMessage(
         content=(ThinkingBlock(thinking="secret reasoning"), TextBlock(text="the answer")),
-        model="deepseek-chat",
+        model="deepseek-flash",
         provider="deepseek",
     )
 
     await collect(provider(recorder), ctx(messages=(message,)))
 
-    assert recorder.payload["messages"][0]["content"] == "the answer"
+    assert recorder.payload["messages"][0] == {"role": "assistant", "content": "the answer"}
     assert "secret reasoning" not in json.dumps(recorder.payload)
+
+
+# --- reasoning replay -----------------------------------------------------
+#
+# DeepSeek returns a 400 for a request carrying `tools` unless every earlier
+# turn's `reasoning_content` comes back; GLM asks for it unmodified. Request
+# shapes follow the two vendors' published examples, not captured traffic.
+
+REPLAYING = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
+
+
+def thinking_turn(
+    thinking: str, *blocks: TextBlock | ToolCallBlock, signature: str | None = None
+) -> AssistantMessage:
+    return AssistantMessage(
+        content=(ThinkingBlock(thinking=thinking, signature=signature), *blocks),
+        model="deepseek-flash",
+        provider="deepseek",
+    )
+
+
+async def test_a_replaying_profile_sends_reasoning_back() -> None:
+    recorder = Recorder(sse(finish()))
+    message = thinking_turn("secret reasoning", TextBlock(text="the answer"))
+
+    await collect(provider(recorder, REPLAYING), ctx(messages=(message,)))
+
+    assert recorder.payload["messages"][0] == {
+        "role": "assistant",
+        "content": "the answer",
+        "reasoning_content": "secret reasoning",
+    }
+
+
+async def test_replayed_reasoning_rides_beside_tool_calls() -> None:
+    """The tool loop is where DeepSeek enforces it."""
+    recorder = Recorder(sse(finish()))
+    call = ToolCallBlock(id="c1", name="ls", arguments={})
+    message = thinking_turn("list first", call)
+
+    await collect(provider(recorder, REPLAYING), ctx(messages=(message,)))
+
+    entry = recorder.payload["messages"][0]
+    assert entry["content"] is None
+    assert entry["reasoning_content"] == "list first"
+    assert [c["id"] for c in entry["tool_calls"]] == ["c1"]
+
+
+async def test_every_earlier_turn_carries_its_reasoning() -> None:
+    """DeepSeek wants all previous turns, not only the latest tool call's."""
+    recorder = Recorder(sse(finish()))
+    messages = (
+        UserMessage(content=text("q1")),
+        thinking_turn("first thought", TextBlock(text="a1")),
+        UserMessage(content=text("q2")),
+        thinking_turn("second thought", TextBlock(text="a2")),
+    )
+
+    await collect(provider(recorder, REPLAYING), ctx(messages=messages))
+
+    replayed = [m.get("reasoning_content") for m in recorder.payload["messages"]]
+    assert replayed == [None, "first thought", None, "second thought"]
+
+
+@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
+async def test_the_replay_field_is_the_configured_one(field: str) -> None:
+    recorder = Recorder(sse(finish()))
+    config = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field=field)
+
+    await collect(
+        provider(recorder, config), ctx(messages=(thinking_turn("t", TextBlock(text="a")),))
+    )
+
+    assert recorder.payload["messages"][0][field] == "t"
+
+
+async def test_signed_reasoning_from_another_provider_is_not_replayed() -> None:
+    """A signature means Anthropic or Responses produced it, for their own replay."""
+    recorder = Recorder(sse(finish()))
+    message = thinking_turn("anthropic thinking", TextBlock(text="a"), signature="sig")
+
+    await collect(provider(recorder, REPLAYING), ctx(messages=(message,)))
+
+    assert "reasoning_content" not in recorder.payload["messages"][0]
+
+
+async def test_a_turn_with_only_reasoning_is_still_dropped() -> None:
+    """No text and no calls is an interrupted turn; an empty reply is rejected."""
+    recorder = Recorder(sse(finish()))
+    messages = (thinking_turn("cut off mid-thought"), UserMessage(content=text("retry")))
+
+    await collect(provider(recorder, REPLAYING), ctx(messages=messages))
+
+    assert [m["role"] for m in recorder.payload["messages"]] == ["user"]
+
+
+async def test_streamed_reasoning_goes_back_byte_for_byte() -> None:
+    """The server cached the reasoning as it generated it; any edit is a cache miss."""
+    pieces = ["Step 1:\n", "  check → ", "a.py", " ", "été\n"]
+    first = Recorder(
+        sse(
+            *(delta(reasoning_content=piece) for piece in pieces),
+            delta(
+                tool_calls=[{"index": 0, "id": "c1", "function": {"name": "ls", "arguments": "{}"}}]
+            ),
+            finish("tool_calls"),
+        )
+    )
+    reply = final(await collect(provider(first, REPLAYING)))
+
+    second = Recorder(sse(finish()))
+    await collect(provider(second, REPLAYING), ctx(messages=(reply,)))
+
+    assert second.payload["messages"][0]["reasoning_content"] == "".join(pieces)
 
 
 async def test_an_empty_assistant_turn_is_dropped() -> None:
     """An errored turn has no content; an empty message is rejected upstream."""
     recorder = Recorder(sse(finish()))
     message = AssistantMessage(
-        content=(), model="deepseek-chat", provider="deepseek", stop_reason="error"
+        content=(), model="deepseek-flash", provider="deepseek", stop_reason="error"
     )
 
     await collect(provider(recorder), ctx(messages=(message, UserMessage(content=text("retry")))))
@@ -554,6 +694,35 @@ async def test_cached_tokens_are_not_counted_twice() -> None:
     assert usage.total == 105
 
 
+async def test_deepseek_usage_reads_its_cache_hits() -> None:
+    """DeepSeek reports hits twice: its own field, and the OpenAI-style one.
+
+    The shape is the final chunk from DeepSeek's API reference, not captured
+    traffic, with the counts changed so a hit is actually exercised.
+    """
+    recorder = Recorder(
+        sse(
+            finish(),
+            {
+                "choices": [],
+                "usage": {
+                    "completion_tokens": 9,
+                    "prompt_tokens": 17,
+                    "total_tokens": 26,
+                    "prompt_tokens_details": {"cached_tokens": 12},
+                    "prompt_cache_hit_tokens": 12,
+                    "prompt_cache_miss_tokens": 5,
+                },
+            },
+        )
+    )
+
+    events = await collect(provider(recorder))
+
+    usage = final(events).usage
+    assert (usage.input, usage.cache_read, usage.output) == (5, 12, 9)
+
+
 async def test_the_message_records_model_and_provider_profile() -> None:
     """The profile name, so a transcript says which endpoint answered."""
     recorder = Recorder(sse(delta(content="hi"), finish()))
@@ -561,7 +730,7 @@ async def test_the_message_records_model_and_provider_profile() -> None:
     events = await collect(provider(recorder, name="my-gateway"))
 
     assert final(events).provider == "my-gateway"
-    assert final(events).model == "deepseek-chat"
+    assert final(events).model == "deepseek-flash"
 
 
 async def test_a_stream_that_ends_without_done_still_closes_its_blocks() -> None:
@@ -703,7 +872,7 @@ async def test_a_request_building_failure_is_reported_not_raised() -> None:
     recorder = Recorder(sse(finish()))
     message = AssistantMessage(
         content=(ToolCallBlock(id="c1", name="x", arguments={"bad": Unserializable()}),),
-        model="deepseek-chat",
+        model="deepseek-flash",
         provider="deepseek",
     )
 
@@ -734,3 +903,61 @@ async def test_every_block_is_opened_before_its_deltas() -> None:
     events = await collect(provider(recorder))
 
     assert_blocks_open_before_deltas(events)
+
+
+# --- through the loop -----------------------------------------------------
+
+
+class _Scripted:
+    """Serves one canned SSE body per request, recording every payload."""
+
+    def __init__(self, *bodies: str) -> None:
+        self._bodies = list(bodies)
+        self.payloads: list[dict[str, Any]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.payloads.append(json.loads(request.content))
+        return httpx.Response(200, text=self._bodies.pop(0))
+
+    def client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self))
+
+
+class _NoParams(BaseModel):
+    pass
+
+
+@tool(name="ls", description="List nothing.")
+async def _ls(p: _NoParams, ctx: ToolContext) -> ToolResult:
+    return ok("a.py")
+
+
+async def test_the_shipped_deepseek_profile_survives_a_tool_loop() -> None:
+    """The case DeepSeek refuses: request two of a loop, reasoning missing.
+
+    Real agent, real loop, the shipped profile — only the socket is canned.
+    """
+    transport = _Scripted(
+        sse(
+            delta(reasoning_content="I should look first."),
+            delta(
+                tool_calls=[{"index": 0, "id": "c1", "function": {"name": "ls", "arguments": "{}"}}]
+            ),
+            finish("tool_calls"),
+        ),
+        sse(delta(content="There is one file."), finish()),
+    )
+    profile = replace(Config().providers.openai["deepseek"], api_key=TEST_KEY)
+    agent = Agent(
+        model=MODELS["deepseek-flash"],
+        provider=ChatCompletionsProvider(profile, "deepseek", client=transport.client()),
+        tools=(_ls,),
+    )
+
+    await agent.prompt("what is here?")
+
+    assert len(transport.payloads) == 2
+    assert "tools" in transport.payloads[1]
+    turn = next(m for m in transport.payloads[1]["messages"] if m["role"] == "assistant")
+    assert turn["reasoning_content"] == "I should look first."
+    assert turn["tool_calls"][0]["id"] == "c1"

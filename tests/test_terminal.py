@@ -7,15 +7,16 @@ approval prompt, exit conditions — is the production code path.
 
 import asyncio
 import io
+import re
 
 import pytest
 from rich.console import Console
 
 from harness.agent import Agent
 from harness.cli.terminal import Terminal, build_approval_gate
-from harness.config import Config
+from harness.config import Config, PricingConfig, TerminalConfig
 from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import TextBlock, ToolCallBlock
+from harness.llm.types import AssistantMessage, TextBlock, ToolCallBlock, Usage, UserMessage, text
 
 
 class ScriptedSession:
@@ -180,6 +181,97 @@ async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> N
     last = agent.state.messages[-1]
     assert last.role == "assistant"
     assert "".join(b.text for b in last.content if isinstance(b, TextBlock))
+
+
+# --- usage ----------------------------------------------------------------
+#
+# FakeProvider reports 10 input and 5 output tokens for every request.
+
+
+async def test_a_run_ends_with_a_usage_footer() -> None:
+    terminal, buffer = _terminal(["hello"])
+    _attach(terminal, FakeProvider([text_response("Hi")]))
+
+    await terminal.run()
+
+    assert "10 in · 5 out" in buffer.getvalue()
+
+
+async def test_the_footer_covers_every_request_in_the_run() -> None:
+    """A tool call makes two requests for one prompt; the footer is per run."""
+    call = ToolCallBlock(id="c1", name="nothing", arguments={})
+    terminal, buffer = _terminal(["go"])
+    _attach(terminal, FakeProvider([tool_call_response([call]), text_response("done")]))
+
+    await terminal.run()
+
+    assert "20 in · 10 out" in buffer.getvalue()
+
+
+async def test_the_footer_can_be_turned_off() -> None:
+    config = Config(terminal=TerminalConfig(show_usage=False))
+    terminal, buffer = _terminal(["hello"], config)
+    _attach(terminal, FakeProvider([text_response("Hi")]))
+
+    await terminal.run()
+
+    assert "10 in" not in buffer.getvalue()
+
+
+async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
+    config = Config(pricing={FAKE_MODEL.id: PricingConfig(input=1_000.0, output=1_000.0)})
+    terminal, buffer = _terminal(["hello"], config)
+    _attach(terminal, FakeProvider([text_response("Hi")]))
+
+    await terminal.run()
+
+    # (10 + 5) tokens x $1,000 per million.
+    assert "$0.0150" in buffer.getvalue()
+
+
+async def test_an_unpriced_model_shows_no_cost() -> None:
+    terminal, buffer = _terminal(["hello"])
+    _attach(terminal, FakeProvider([text_response("Hi")]))
+
+    await terminal.run()
+
+    assert "$" not in buffer.getvalue()
+
+
+async def test_status_shows_session_totals_without_a_request() -> None:
+    terminal, buffer = _terminal(["first", "second", ":status"])
+    provider = FakeProvider([text_response("one"), text_response("two")])
+    _attach(terminal, provider)
+
+    assert await terminal.run() == 0
+
+    assert len(provider.requests) == 2, ":status must not reach the provider"
+    status = buffer.getvalue().split("two")[-1]
+    assert re.search(r"requests\s+2\b", status)
+    assert re.search(r"output\s+10\b", status)
+
+
+async def test_status_includes_resumed_history() -> None:
+    """Restored messages never pass a subscriber, so totals come from the transcript."""
+    terminal, buffer = _terminal([":status"])
+    agent = _attach(terminal, FakeProvider([]))
+    agent.restore(
+        [
+            UserMessage(content=text("earlier")),
+            AssistantMessage(
+                content=text("old answer"),
+                model=FAKE_MODEL.id,
+                provider="fake",
+                usage=Usage(input=4_000, output=100),
+            ),
+        ]
+    )
+
+    await terminal.run()
+
+    output = buffer.getvalue()
+    assert re.search(r"requests\s+1\b", output)
+    assert re.search(r"output\s+100\b", output)
 
 
 # --- approval prompt ------------------------------------------------------

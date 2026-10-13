@@ -16,6 +16,7 @@ from harness.config import (
     PROJECT_DIRECTORY,
     Config,
     ConfigError,
+    OpenAIConfig,
     config_paths,
     harness_home,
     load_config,
@@ -218,6 +219,28 @@ def test_the_shipped_profiles_are_present_by_default(tmp_path: Path) -> None:
     assert profiles["deepseek"].api_key_env == "DEEPSEEK_API_KEY"
 
 
+def test_the_vendors_that_want_reasoning_back_get_it() -> None:
+    """DeepSeek 400s a tool loop without it; GLM asks for it unmodified."""
+    profiles = Config().providers.openai
+
+    assert profiles["deepseek"].replay_reasoning_field == "reasoning_content"
+    assert profiles["glm"].replay_reasoning_field == "reasoning_content"
+
+
+def test_a_new_profile_does_not_replay_reasoning() -> None:
+    """An unknown server may reject a field it never asked for."""
+    assert OpenAIConfig().replay_reasoning_field == ""
+
+
+def test_only_glm_asks_the_server_to_preserve_thinking() -> None:
+    """Replaying reasoning GLM then discards server-side would buy nothing."""
+    profiles = Config().providers.openai
+
+    assert profiles["glm"].preserve_thinking is True
+    assert profiles["deepseek"].preserve_thinking is False
+    assert OpenAIConfig().preserve_thinking is False
+
+
 def test_a_new_profile_can_be_added_in_config(tmp_path: Path) -> None:
     """The whole point of the dict: a vendor with no code change."""
     project(
@@ -259,7 +282,7 @@ def test_an_existing_profile_merges_rather_than_replaces(tmp_path: Path) -> None
 
     assert deepseek.timeout_seconds == 30.0
     # Untouched keys survive.
-    assert deepseek.models == ("deepseek-chat", "deepseek-reasoner")
+    assert deepseek.models == ("deepseek-flash", "deepseek-v4-pro")
     assert deepseek.api_key_env == "DEEPSEEK_API_KEY"
 
 
@@ -310,3 +333,49 @@ def test_a_local_file_can_carry_a_profile_key(tmp_path: Path) -> None:
 
     assert deepseek.api_key == "placeholder-not-real"
     assert deepseek.timeout_seconds == 30.0
+
+
+# --- pricing --------------------------------------------------------------
+#
+# The other table of named sections. A key is a model id, and a model with no
+# entry is unpriced — which the terminal shows as no cost at all.
+
+
+def test_a_model_can_be_priced_in_config(tmp_path: Path) -> None:
+    # Quoted: a bare TOML key cannot contain the dot in "my-model-1.5".
+    project(tmp_path, '[pricing."my-model-1.5"]\ninput = 0.6\noutput = 2.2\n')
+
+    price = load_config(tmp_path).pricing["my-model-1.5"]
+
+    assert (price.input, price.output) == (0.6, 2.2)
+    assert (price.cache_read, price.cache_write) == (0.0, 0.0), "an unset rate is zero"
+
+
+def test_pricing_a_model_keeps_the_shipped_prices(tmp_path: Path) -> None:
+    project(tmp_path, '[pricing."my-model-1.5"]\ninput = 0.6\n')
+
+    assert set(load_config(tmp_path).pricing) >= {"claude-sonnet-5", "glm-5.3", "my-model-1.5"}
+
+
+def test_a_shipped_price_merges_rather_than_replaces(tmp_path: Path) -> None:
+    project(tmp_path, "[pricing.claude-sonnet-5]\ninput = 2.5\n")
+
+    price = load_config(tmp_path).pricing["claude-sonnet-5"]
+
+    assert price.input == 2.5
+    assert price.output == Config().pricing["claude-sonnet-5"].output
+
+
+def test_a_typo_inside_a_price_is_an_error(tmp_path: Path) -> None:
+    project(tmp_path, "[pricing.claude-sonnet-5]\ninptu = 2.5\n")
+
+    with pytest.raises(ConfigError, match=r"pricing\.claude-sonnet-5\.inptu"):
+        load_config(tmp_path)
+
+
+def test_a_rate_where_a_model_belongs_is_an_error(tmp_path: Path) -> None:
+    """`[pricing] input = 2` prices nothing: every rate belongs to a model."""
+    project(tmp_path, "[pricing]\ninput = 2\n")
+
+    with pytest.raises(ConfigError, match="name one explicitly"):
+        load_config(tmp_path)

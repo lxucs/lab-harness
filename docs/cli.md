@@ -72,9 +72,62 @@ written to a scrollback terminal cannot be taken back.
 | `Enter` | Submit |
 | `Alt-Enter` | Newline without submitting |
 
+| Command | Action |
+|---|---|
+| `:status` | Token, cache and cost totals for the session |
+| `:q`, `:quit`, `exit` | Exit |
+
 The agent runs one turn sequence at a time. Typing while it works is buffered by
 the terminal and submitted when the run finishes — the runtime itself refuses a
 second concurrent `prompt()` rather than coordinating with the one in flight.
+
+### Usage and cost
+
+Each run ends with one dim line covering every request it made:
+
+```
+45.2k in · 1.3k out · 82% cached · context 15.1k of 1M (2%) · $0.0421
+```
+
+| Part | Meaning |
+|---|---|
+| `in` | Prompt tokens read across the run's requests, cached or not |
+| `out` | Tokens generated |
+| `cached` | Share of `in` served from the provider's prompt cache |
+| `context` | Size of the latest request — prompt plus output — against the model's window |
+| cost | From [`pricing`](configuration.md#pricing); left out for an unpriced model |
+
+`context` is the latest request, not a sum: every request resends the history,
+so adding them up would count it again on each turn. `in` *is* a sum, because
+that is what is billed.
+
+`:status` shows the same figures for the whole session, with the prompt split
+into uncached, cache-read and cache-write tokens:
+
+```
+model      claude-sonnet-5 via anthropic
+requests   12
+input      450.4k (38.1k uncached · 392k cache read · 20.3k cache write)
+output     5.2k
+cache hit  87%
+context    48k of 1M (5%)
+cost       $0.3120
+```
+
+Both are computed from the transcript rather than counted as events arrive —
+every assistant message carries its request's `Usage` — so after `--resume`
+the totals include the restored history.
+
+Set `terminal.show_usage = false` to drop the per-run line; `:status` still
+works. The line is interactive-only: in `-p` mode stdout is the answer, and
+`--json` already carries `usage` on every assistant `message_end`.
+
+**Anthropic cache hits read 0% for now.** Anthropic only caches a prompt that
+marks where to, and the adapter does not send those markers yet — see the
+[TODO in providers.md](providers.md#the-anthropic-adapter). OpenAI and
+DeepSeek cache repeated prefixes on their own and report the hits, so their
+figures are real. Another Chat Completions vendor counts only if it reports
+`prompt_tokens_details.cached_tokens`, the field the adapter reads.
 
 ## JSON mode
 
@@ -135,8 +188,8 @@ capped at `project.max_bytes`. Full behavior:
 ```bash
 harness --model claude-opus-5          # Anthropic, Messages API
 harness --model gpt-5                  # OpenAI, Responses API
-harness --model deepseek-chat          # DeepSeek, Chat Completions
-harness --model glm-4.6                # GLM, Chat Completions
+harness --model deepseek-flash         # DeepSeek, Chat Completions
+harness --model glm-5.3                # GLM, Chat Completions
 harness --model their-model --provider groq
 ```
 

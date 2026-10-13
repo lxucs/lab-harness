@@ -110,6 +110,8 @@ enabled_tools = [
 ]
 max_result_lines = 12   # tool output shown before collapsing
 markdown = true         # render assistant text as markdown
+show_usage = true       # token, cache and cost line after each run
+currency_symbol = "$"   # label for costs computed from [pricing]
 
 [session]
 home = "~/.harness"     # root for state; $HARNESS_HOME overrides
@@ -126,12 +128,22 @@ thinking_budget_tokens = 4096 # when reasoning is requested
 api = "chat_completions"      # or "responses" (OpenAI's current API)
 base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"   # NAME of the variable; never the value here
-models = ["deepseek-chat", "deepseek-reasoner"]  # ids that route here
+models = ["deepseek-flash", "deepseek-v4-pro"]  # ids that route here
 default_max_tokens = 8192
 timeout_seconds = 120.0
 include_usage = true          # chat_completions only
+replay_reasoning_field = "reasoning_content"  # chat_completions only; "" sends none
+preserve_thinking = false     # chat_completions only; GLM's Preserved Thinking
 reasoning_summary = "auto"    # responses only: "auto" | "concise" | "detailed"
 store = false                 # responses only; true disables encrypted replay
+
+# Per-million-token rates, keyed by model id. Optional: an unpriced model just
+# shows no cost. See "Pricing" below.
+[pricing.claude-sonnet-5]
+input = 2.0
+output = 10.0
+cache_read = 0.2
+cache_write = 2.5
 
 [logging]
 level = "warning"             # debug | info | warning | error
@@ -208,10 +220,11 @@ Which provider serves it is decided separately; see
 
 ## Provider profiles
 
-`providers.openai` is a table of **named** endpoints, and it is the one place
-in the schema where an unknown key is not an error — a new key is a new
-vendor. That is how OpenAI, DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama
-are all supported by one adapter.
+`providers.openai` is a table of **named** endpoints. It is one of the two
+places in the schema where an unknown key is not an error — a new key is a new
+vendor (the other is [`pricing`](#pricing), where it is a new model). That is
+how OpenAI, DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama are all supported
+by one adapter.
 
 ```toml
 [providers.openai.groq]
@@ -227,12 +240,25 @@ models = ["qwen3:8b"]
 
 **`api` picks the protocol.** `chat_completions` is the default because that is
 what a new vendor almost certainly speaks; `responses` is OpenAI's current API
-and the only one that can replay a reasoning model's chain of thought across a
+and the only way to carry an OpenAI reasoning model's chain of thought across a
 tool call. The shipped `openai` profile sets `responses`. An unusable value
 fails at startup, naming the profile at fault.
 
+**`replay_reasoning_field` sends reasoning back** on Chat Completions, in the
+named field of each earlier assistant message. DeepSeek returns a 400 for a
+tool loop without it and GLM asks for it, so both shipped profiles set
+`"reasoning_content"`. A profile you add starts at `""` — none sent — because a
+server that never asked for the field may reject it. Set it only when the
+vendor's docs ask; [providers.md](providers.md#how-thinking-is-handled-across-models)
+has the per-vendor rules.
+
+**`preserve_thinking` asks GLM to keep it.** GLM's standard endpoint discards
+earlier reasoning unless the request says `thinking.clear_thinking: false`, so
+replaying it there would buy nothing. The shipped `glm` profile turns this on;
+it sends GLM's own request shape, so leave it off for any other vendor.
+
 ```bash
-harness --model deepseek-chat            # routed by the models list, no flag
+harness --model deepseek-flash           # routed by the models list, no flag
 harness --model their-new-model --provider groq
 ```
 
@@ -244,6 +270,62 @@ strictly as anywhere else, so a typo there still fails at startup.
 Which profile serves a model, highest precedence first: `--provider`, then a
 profile whose `models` names the id, then the catalog, then `agent.provider`.
 Full rationale: [providers.md](providers.md#profiles).
+
+## Pricing
+
+`pricing` maps a model id to what it costs **per million tokens**. It exists
+only so the terminal can show a cost — nothing is enforced or budgeted.
+
+```toml
+[pricing.claude-sonnet-5]
+input = 2.0
+output = 10.0
+cache_read = 0.2       # prompt tokens served from the cache
+cache_write = 2.5      # prompt tokens written to it
+
+[pricing."my-model-1.5"]  # quoted: a bare TOML key cannot contain a dot
+input = 1.0               # illustrative; take real rates from the vendor
+output = 4.0
+```
+
+**No entry means no cost.** A model without an entry is unpriced, and the
+footer and `:status` simply leave the cost out. The same goes for a session
+where *any* request that used tokens ran on an unpriced model: a total that
+silently skipped some requests would look like the whole bill.
+
+**The four rates mirror `Usage`.** Every adapter reports `input` as the
+uncached remainder, with cache reads and writes counted separately, so one
+formula prices every provider. A rate left out of an entry is zero — for
+OpenAI, DeepSeek or GLM, which cache implicitly and report no writes,
+`cache_write` is irrelevant anyway; leaving out `cache_read` would make cached
+tokens free.
+
+**Shipped prices**, all in USD:
+
+- The three catalogued Claude models, at Anthropic's first-party list rates
+  (mid-2026), with `cache_write` at the 5-minute-TTL premium. Bedrock and
+  Vertex bill differently.
+- `deepseek-flash` and `deepseek-v4-pro`, at DeepSeek's **peak** rates.
+  DeepSeek halves its prices outside 01:00–04:00 and 06:00–10:00 UTC on
+  weekdays, and one rate cannot follow the clock, so the higher one is shipped:
+  a cost shown for DeepSeek may run high, never low. `input` is its cache-miss
+  rate, and `cache_write` is zero — it charges nothing to fill the cache.
+- Every id the `glm` profile lists, at **Z.ai's international** rates. The
+  shipped profile points at the *mainland* endpoint, which bills in CNY at its
+  own rates — override the entries if that is the one you use. `cache_write`
+  is zero: Z.ai lists cache storage as "limited-time free".
+
+OpenAI models are unpriced: the shipped `openai` profile lists no ids, since
+they change too often to keep up with.
+
+Like profiles, a config file merges over them —
+`[pricing.claude-sonnet-5] input = 2.5` keeps the other three rates — so to
+switch one off, set all four rates to zero; an all-zero entry counts as no
+entry.
+
+Amounts are labelled with `terminal.currency_symbol` (default `$`). It is only a
+label: write every rate in the same currency, because a session that switches
+models adds the costs together.
 
 ## Logging
 

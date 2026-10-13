@@ -14,6 +14,10 @@ clears the input line. Ctrl-D exits.
 refuses a second concurrent `prompt()` by design (see `agent.py`), so the
 terminal holds the text and submits it when the run returns. That keeps the
 "one run at a time" rule in one place rather than spread across layers.
+
+**Usage is read from the transcript, not tracked.** The footer after a run
+and `:status` both fold over messages that already carry their `Usage` — see
+`usage.py` — so there is no counter here to fall out of step with history.
 """
 
 import asyncio
@@ -28,11 +32,14 @@ from rich.text import Text
 from harness.agent import Agent
 from harness.cli.approval import ApprovalGate
 from harness.cli.renderers import EventRenderer
+from harness.cli.usage import format_footer, format_status, summarize
 from harness.config import Config
+from harness.llm.types import Message
 
-_BANNER = "harness — Ctrl-C cancels a turn, Ctrl-D exits"
+_BANNER = "harness — Ctrl-C cancels a turn, :status shows usage, Ctrl-D exits"
 _PROMPT = "› "  # noqa: RUF001 — a deliberate prompt glyph, not a stray quote
 _CANCELLED_NOTICE = "^C  turn cancelled"
+_STATUS_COMMAND = ":status"
 #: Answers accepted at the approval prompt, by first letter. Deliberately no
 #: empty-string entry: a bare Enter is not consent, it is a reflex. Anything
 #: unlisted falls through to "no".
@@ -85,14 +92,18 @@ class Terminal:
                 continue
             if text in (":q", ":quit", "exit"):
                 return 0
+            if text == _STATUS_COMMAND:
+                self._print_status()
+                continue
 
             await self._run_turn(text)
 
     async def _run_turn(self, message: str) -> None:
         task = asyncio.create_task(self.agent.prompt(message))
+        produced: list[Message] = []
         while True:
             try:
-                await asyncio.shield(task)
+                produced = await asyncio.shield(task)
                 break
             except KeyboardInterrupt:
                 # Ask the run to stop, then keep waiting: abort is cooperative,
@@ -107,6 +118,23 @@ class Terminal:
                 # A crash in the runtime ends the turn, not the session.
                 self.console.print(Text(f"error: {exc}", style="bold red"))
                 break
+        if self.config.terminal.show_usage:
+            self._print_footer(produced)
+        self.console.print()
+
+    def _print_footer(self, produced: list[Message]) -> None:
+        summary = summarize(produced, self.config.pricing)
+        footer = format_footer(
+            summary, self.agent.state.model, self.config.terminal.currency_symbol
+        )
+        if footer is not None:
+            self.console.print(Text(footer, style="dim"))
+
+    def _print_status(self) -> None:
+        # The whole transcript, so a resumed session counts its history too.
+        summary = summarize(self.agent.state.messages, self.config.pricing)
+        lines = format_status(summary, self.agent.state.model, self.config.terminal.currency_symbol)
+        self.console.print(Text("\n".join(lines)))
         self.console.print()
 
     async def ask_approval(self, tool_name: str, arguments: dict[str, object]) -> str:

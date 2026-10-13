@@ -20,6 +20,7 @@ from harness.llm.providers import (
 from harness.llm.providers.anthropic import AnthropicProvider
 from harness.llm.providers.chat_completions import ChatCompletionsProvider
 from harness.llm.providers.responses import ResponsesProvider
+from harness.llm.registry import MODELS
 
 
 def with_profiles(**profiles: OpenAIConfig) -> Config:
@@ -30,16 +31,16 @@ def with_profiles(**profiles: OpenAIConfig) -> Config:
 
 
 def test_the_flag_wins_over_everything() -> None:
-    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-chat",)))
+    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-flash",)))
 
-    assert select_provider("deepseek-chat", config, override="anthropic") == "anthropic"
+    assert select_provider("deepseek-flash", config, override="anthropic") == "anthropic"
 
 
 def test_a_profile_claiming_the_id_wins_over_the_catalog() -> None:
-    """How `--model deepseek-chat` reaches DeepSeek with no flag."""
-    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-chat",)))
+    """How `--model deepseek-flash` reaches DeepSeek with no flag."""
+    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-flash",)))
 
-    assert select_provider("deepseek-chat", config) == "deepseek"
+    assert select_provider("deepseek-flash", config) == "deepseek"
 
 
 def test_a_profile_can_repoint_a_catalogued_model() -> None:
@@ -69,9 +70,22 @@ def test_the_shipped_profiles_route_their_own_models() -> None:
     """The defaults have to actually work, not merely exist."""
     config = Config()
 
-    assert select_provider("deepseek-chat", config) == "deepseek"
-    assert select_provider("deepseek-reasoner", config) == "deepseek"
+    assert select_provider("deepseek-flash", config) == "deepseek"
+    assert select_provider("deepseek-v4-pro", config) == "deepseek"
+    assert select_provider("glm-5.3", config) == "glm"
     assert select_provider("glm-4.6", config) == "glm"
+
+
+def test_every_catalogued_profile_model_is_routed_by_that_profile() -> None:
+    """The catalog and the shipped profiles name the same ids.
+
+    If they drift — a model renamed in one and not the other — a catalogued
+    id with a vendor's limits silently routes to the default provider instead.
+    """
+    profiles = Config().providers.openai
+    for model in MODELS.values():
+        if model.provider in profiles:
+            assert model.id in profiles[model.provider].models, model.id
 
 
 # --- construction ---------------------------------------------------------
@@ -113,9 +127,9 @@ def test_an_unknown_provider_fails_at_startup() -> None:
 
 
 def test_route_returns_a_matched_model_and_provider() -> None:
-    model, provider = route("deepseek-chat", Config())
+    model, provider = route("deepseek-flash", Config())
 
-    assert model.id == "deepseek-chat"
+    assert model.id == "deepseek-flash"
     assert isinstance(provider, ChatCompletionsProvider)
     assert provider.name == "deepseek"
 
@@ -135,7 +149,7 @@ def test_route_rewrites_the_provider_of_an_unknown_model() -> None:
 
 
 def test_route_honors_the_flag() -> None:
-    model, provider = route("deepseek-chat", Config(), override="anthropic")
+    model, provider = route("deepseek-flash", Config(), override="anthropic")
 
     assert model.provider == "anthropic"
     assert isinstance(provider, AnthropicProvider)
@@ -143,11 +157,11 @@ def test_route_honors_the_flag() -> None:
 
 def test_route_falls_back_to_the_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """No --model: agent.model decides, and routing follows it."""
-    config = replace(Config(), agent=AgentConfig(model="deepseek-reasoner"))
+    config = replace(Config(), agent=AgentConfig(model="deepseek-v4-pro"))
 
     model, provider = route(None, config)
 
-    assert model.id == "deepseek-reasoner"
+    assert model.id == "deepseek-v4-pro"
     assert provider.name == "deepseek"
 
 

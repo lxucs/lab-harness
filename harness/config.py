@@ -207,7 +207,9 @@ class AnthropicConfig:
     base_url_env: str = "ANTHROPIC_BASE_URL"
     #: Sampling ceiling when the model declares none.
     default_max_tokens: int = 8_192
-    #: Thinking budget when reasoning is requested, in tokens.
+    #: Thinking budget when reasoning is requested, in tokens. Haiku 4.5 needs
+    #: one; Sonnet 5 and Opus 5 reject it — see the TODO in docs/providers.md.
+    #: Nothing requests reasoning yet.
     thinking_budget_tokens: int = 4_096
 
 
@@ -216,7 +218,7 @@ class OpenAIConfig:
     """One endpoint in the OpenAI family, and which protocol it speaks.
 
     Two protocols, because OpenAI moved and the rest of the world did not:
-    `responses` is OpenAI's current API and the only one that can replay a
+    `responses` is OpenAI's current API, and the only way to carry an OpenAI
     reasoning model's chain of thought across a tool call; `chat_completions`
     is what DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama speak.
     """
@@ -235,7 +237,7 @@ class OpenAIConfig:
     #: Only ever set this in config.local.toml, never a committed file.
     api_key: str = ""
     #: Model ids this profile serves. An id listed here routes to this profile,
-    #: which is how `--model deepseek-chat` finds DeepSeek with no flag and how
+    #: which is how `--model deepseek-flash` finds DeepSeek with no flag and how
     #: a new vendor needs no code — only config.
     models: tuple[str, ...] = ()
     #: Sampling ceiling when the model declares none.
@@ -247,6 +249,21 @@ class OpenAIConfig:
     #: implements `stream_options`; turn this off for one that rejects it.
     #: `chat_completions` only — Responses always reports usage.
     include_usage: bool = True
+    #: `chat_completions` only. Field each earlier assistant turn's reasoning
+    #: is sent back in; empty sends none. DeepSeek returns a 400 for a request
+    #: with tools unless every earlier turn's `reasoning_content` comes back,
+    #: and GLM asks for it unmodified. Off for a new profile, because a server
+    #: that never asked for the field may reject it. Responses replays its own
+    #: encrypted reasoning regardless of this.
+    replay_reasoning_field: str = ""
+    #: `chat_completions` only. Ask the server to keep earlier turns' reasoning
+    #: in context rather than discarding it — GLM's Preserved Thinking, which
+    #: is off on its standard endpoint. Replaying reasoning the server then
+    #: throws away buys nothing, so the shipped `glm` profile turns this on.
+    #: It sends GLM's own request shape, which another vendor would read
+    #: differently or reject; and its `type: "enabled"` switches thinking on
+    #: for GLM-4.6, the one hybrid model left in the lineup.
+    preserve_thinking: bool = False
     #: `responses` only. Detail of the reasoning summary: "auto", "concise" or
     #: "detailed". Empty asks for none, which makes a reasoning model's
     #: thinking invisible — the raw chain is never returned, so the summary is
@@ -271,7 +288,8 @@ def _default_openai_profiles() -> dict[str, OpenAIConfig]:
             base_url="https://api.deepseek.com/v1",
             api_key_env="DEEPSEEK_API_KEY",
             base_url_env="DEEPSEEK_BASE_URL",
-            models=("deepseek-chat", "deepseek-reasoner"),
+            models=("deepseek-flash", "deepseek-v4-pro"),
+            replay_reasoning_field="reasoning_content",
         ),
         "glm": OpenAIConfig(
             # The mainland endpoint. The international one is
@@ -279,7 +297,19 @@ def _default_openai_profiles() -> dict[str, OpenAIConfig]:
             base_url="https://open.bigmodel.cn/api/paas/v4",
             api_key_env="ZHIPUAI_API_KEY",
             base_url_env="ZHIPUAI_BASE_URL",
-            models=("glm-4.6", "glm-4.5", "glm-4.5-air"),
+            # Z.ai's current lineup (2026-10), flagship first.
+            models=(
+                "glm-5.3",
+                "glm-5.3-flash",
+                "glm-5.3-flashx",
+                "glm-5.2",
+                "glm-5.1",
+                "glm-5",
+                "glm-4.7",
+                "glm-4.6",
+            ),
+            replay_reasoning_field="reasoning_content",
+            preserve_thinking=True,
         ),
     }
 
@@ -287,11 +317,71 @@ def _default_openai_profiles() -> dict[str, OpenAIConfig]:
 @dataclass(frozen=True, slots=True)
 class ProvidersConfig:
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
-    #: OpenAI-compatible endpoints, keyed by profile name. Unlike every other
-    #: section, *new keys here are allowed* — that is the whole point, since it
-    #: is how a vendor is added without touching code. Keys *inside* a profile
-    #: are still checked.
+    #: OpenAI-compatible endpoints, keyed by profile name. Like `pricing`, and
+    #: unlike every other section, *new keys here are allowed* — that is the
+    #: whole point, since it is how a vendor is added without touching code.
+    #: Keys *inside* a profile are still checked.
     openai: dict[str, OpenAIConfig] = field(default_factory=_default_openai_profiles)
+
+
+@dataclass(frozen=True, slots=True)
+class PricingConfig:
+    """What one model costs, per million tokens.
+
+    The four rates mirror the four counts in `Usage`, so a request's cost is
+    each count times its rate. A rate left unset is zero. Rates are in whatever
+    currency you quote them in — `terminal.currency_symbol` is only a label —
+    but it has to be one currency for every model, since a session that
+    switches models adds the costs together.
+    """
+
+    input: float = 0.0
+    output: float = 0.0
+    #: Prompt tokens served from the cache — typically a tenth of `input`.
+    cache_read: float = 0.0
+    #: Prompt tokens written to the cache. Anthropic charges a premium for
+    #: these; providers that cache implicitly report no writes, so this rate
+    #: never applies to them.
+    cache_write: float = 0.0
+
+
+def _default_pricing() -> dict[str, PricingConfig]:
+    """USD list prices: the catalogued Claude models, and every id a shipped
+    profile lists in its `models`.
+
+    Prices change — override an entry in config rather than trusting these.
+    Every other model starts unpriced and shows no cost.
+    """
+    return {
+        # Anthropic's first-party API rates as published mid-2026, with
+        # `cache_write` at the 5-minute-TTL premium (1.25x input). Bedrock and
+        # Vertex bill separately.
+        "claude-opus-5": PricingConfig(input=5.0, output=25.0, cache_read=0.5, cache_write=6.25),
+        "claude-sonnet-5": PricingConfig(input=2.0, output=10.0, cache_read=0.2, cache_write=2.5),
+        "claude-haiku-4-5-20251001": PricingConfig(
+            input=1.0, output=5.0, cache_read=0.1, cache_write=1.25
+        ),
+        # DeepSeek's PEAK rates (2026-10), which apply 01:00-04:00 and
+        # 06:00-10:00 UTC on weekdays other than Chinese public holidays.
+        # Every other hour costs half. One rate
+        # per model cannot follow the clock, so this takes the higher one: a
+        # shown cost may run high, never low. `input` is the cache-miss rate,
+        # and there is no cache_write — DeepSeek charges nothing to fill it.
+        "deepseek-flash": PricingConfig(input=0.3, output=1.2, cache_read=0.006),
+        "deepseek-v4-pro": PricingConfig(input=1.32, output=3.96, cache_read=0.044),
+        # Z.ai's international list rates (2026-10). The shipped `glm` profile
+        # points at the mainland endpoint, which bills in CNY at its own rates
+        # — override these if that is the one you use. Z.ai's cache storage is
+        # "limited-time free", so there is no cache_write.
+        "glm-5.3": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
+        "glm-5.3-flash": PricingConfig(input=0.15, output=0.5, cache_read=0.03),
+        "glm-5.3-flashx": PricingConfig(input=0.37, output=1.25, cache_read=0.075),
+        "glm-5.2": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
+        "glm-5.1": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
+        "glm-5": PricingConfig(input=1.0, output=3.2, cache_read=0.2),
+        "glm-4.7": PricingConfig(input=0.6, output=2.2, cache_read=0.11),
+        "glm-4.6": PricingConfig(input=0.6, output=2.2, cache_read=0.11),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,6 +418,12 @@ class TerminalConfig:
     max_result_lines: int = 12
     #: Render assistant text as markdown rather than plain text.
     markdown: bool = True
+    #: Print one line of token, cache and cost figures after each run.
+    #: `:status` shows the session's totals either way.
+    show_usage: bool = True
+    #: Label for amounts computed from `pricing`. Only a label — nothing is
+    #: converted, so it has to match the currency the rates are quoted in.
+    currency_symbol: str = "$"
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,6 +453,11 @@ class Config:
     project: ProjectConfig = field(default_factory=ProjectConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
+    #: Per-million-token rates, keyed by model id. Like `providers.openai`, a
+    #: new key is allowed — it prices one more model. A model with no entry
+    #: shows no cost; an entry with every rate at zero counts as no entry,
+    #: which is how a config file switches off a shipped one.
+    pricing: dict[str, PricingConfig] = field(default_factory=_default_pricing)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -479,10 +580,10 @@ def _apply_named(
 ) -> dict[str, Any]:
     """Merge a table of *named* sections, e.g. `[providers.openai.deepseek]`.
 
-    The one place an unknown key is not an error. Everywhere else a name the
-    schema does not know is a typo; here it is a new profile, which is how a
-    deployment adds a vendor without code. Keys *inside* a section are checked
-    as strictly as anywhere else.
+    The only tables where an unknown key is not an error. Everywhere else a
+    name the schema does not know is a typo; here it is a new entry — a vendor
+    profile, or a model's price — which is how a deployment adds one without
+    code. Keys *inside* a section are checked as strictly as anywhere else.
     """
     where = ".".join(trail)
     if not isinstance(data, Mapping):
@@ -492,7 +593,7 @@ def _apply_named(
         if not isinstance(section, Mapping):
             raise ConfigError(
                 f"{source}: {where}.{name!r} is a section; expected a TOML table. "
-                f"A setting shared by every {trail[-1]} profile does not exist — "
+                f"A setting shared by every entry in {where!r} does not exist — "
                 f"name one explicitly."
             )
         base = merged.get(name)

@@ -43,7 +43,7 @@ def select_provider(model_id: str, config: Config, override: str | None = None) 
     3. the catalog's `Model.provider`
     4. `agent.provider`
 
-    Rung 2 is what makes `--model deepseek-chat` reach DeepSeek with no flag,
+    Rung 2 is what makes `--model deepseek-flash` reach DeepSeek with no flag,
     and it is checked before the catalog so that a config file can re-point a
     model id at a different endpoint — a gateway, or a local server serving the
     same weights — without the catalog having to agree.

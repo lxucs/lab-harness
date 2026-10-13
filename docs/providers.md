@@ -41,9 +41,12 @@ type to `llm/types.py`, use `ProviderBlock` instead.
 `ToolResultMessage`. `AssistantMessage` carries `usage`, `stop_reason`,
 `error_message`, and the model and provider that produced it.
 
-**`Model`** carries `context_window`, `max_tokens`, cost rates, and capability
-flags (reasoning, image input, server tools). `context_window` exists in v1 even
-though compaction does not — it is where token accounting will hang.
+**`Model`** carries `context_window`, `max_tokens`, and capability flags
+(reasoning, image input, server tools). `context_window` exists in v1 even
+though compaction does not — it is where token accounting will hang, and the
+terminal already measures context against it. Prices are deliberately *not*
+on `Model`: they vary by vendor, platform and contract, so they live in
+config — see [`pricing`](configuration.md#pricing).
 
 ## Shipped providers
 
@@ -100,6 +103,25 @@ Four translation details that are not obvious:
   yields `{}`, and the loop already refuses to execute calls from a
   length-stopped turn.
 
+**TODO: prompt caching.** The adapter sends no `cache_control` markers, and
+Anthropic caches nothing without them, so every request pays full price for
+its prompt and the terminal's cache figure reads 0%. The plan: one marker on
+the system prompt, which caches the tools rendered ahead of it too, and one on
+the last block of each of the last two user messages. The second of those sits
+exactly where the previous request wrote its entry, so a turn that adds more
+than the API's 20-block lookback — many parallel tool calls — still hits.
+Three markers, under the limit of four. `Usage` already reports cache reads
+and writes, and the shipped [prices](configuration.md#pricing) already include
+both rates, so nothing downstream changes when it lands.
+
+**TODO: the thinking request.** Asking for reasoning sends
+`{"type": "enabled", "budget_tokens": …}`, which Claude Sonnet 5 and Opus 5
+reject with a 400 — they take adaptive thinking only, while Haiku 4.5 still
+needs the budget. No current path reaches it, because nothing asks for
+reasoning and both 5-series models think by default; a caller that sets
+`StreamOptions.reasoning` would. The fix needs a per-model choice of the two
+shapes.
+
 ## How thinking is handled across models
 
 The hardest thing to make provider-neutral, because vendors disagree about
@@ -118,7 +140,7 @@ That gives four regimes, and all four are reachable:
 |---|---|---|---|
 | Anthropic extended thinking | the text | the signed token | **Yes** — the API rejects it without the signature |
 | OpenAI via `responses` | a model-written **summary** | packed `{id, encrypted_content}` | **Yes** — verbatim, or the model loses its place |
-| DeepSeek, GLM | the real chain, in plaintext | `None` | **No** — they reject it coming back |
+| DeepSeek, GLM | the real chain, in plaintext | `None` | **Yes** — as plain `reasoning_content`; DeepSeek returns a 400 for a tool loop without it |
 | OpenAI via `chat_completions` | *no block at all* | — | nothing to replay |
 
 **Why OpenAI needs the replay.** A reasoning model thinks, calls a tool, and
@@ -140,11 +162,30 @@ honest representation; there is genuinely nothing to show. (The token count is
 still right: `output` includes reasoning tokens. What is lost is the ability to
 *break out* how many — the core `Usage` has no field for it.)
 
-**Mixing providers degrades, it does not break.** Each adapter drops reasoning
-it cannot legitimately replay: a signature-less block never reaches Anthropic
-or Responses, and a signed one never reaches Chat Completions. So `--resume`
-against a different provider costs the model some context and nothing else.
-Both directions are tested.
+**Why DeepSeek and GLM need it too.** No token to hand back, but the text
+itself. DeepSeek's rule depends on the request: with `tools`, every earlier
+turn's `reasoning_content` must come back — including turns that called no
+tool — or the API returns a 400; without `tools` it is ignored. GLM asks for it
+complete and unmodified, and says dropping it costs quality and cache hits —
+but its standard endpoint discards it anyway unless the request opts into
+*Preserved Thinking*, so the shipped `glm` profile also sets
+`preserve_thinking`. Both cache by prefix, so the text goes back byte for byte
+as it streamed.
+
+This used to be the other way round: DeepSeek once rejected reasoning sent
+back. Replay is therefore a per-profile setting, `replay_reasoning_field`, on
+for the shipped `deepseek` and `glm` profiles and off for any profile you add —
+a server that never asked for the field may reject it. See
+[Profiles](#profiles).
+
+**Mixing providers mostly degrades.** Each adapter drops reasoning it cannot
+legitimately replay: a signature-less block never reaches Anthropic or
+Responses, and a signed one never reaches Chat Completions. So `--resume`
+against a different provider usually costs the model some context and nothing
+else; both directions are tested. The exception is untested: DeepSeek's rule
+covers *all* earlier turns, so a session started elsewhere and resumed on
+DeepSeek with tools may be refused for the turns that carry no DeepSeek
+reasoning.
 
 ## The Chat Completions adapter
 
@@ -160,7 +201,9 @@ Five translation details, each forced by the wire format rather than chosen:
   requires every result for a turn to be merged into one user message; this
   dialect requires exactly the opposite, and getting it backwards is a 400.
 - **Tool arguments go back as a JSON string**, which is how they arrived.
-- **Thinking is dropped on the way out**, per the table above.
+- **Reasoning goes back as a sibling field**, not a content block — on an
+  assistant message beside `content` and `tool_calls`, and only for a profile
+  that sets `replay_reasoning_field`. See the table above.
 - **Block indices are assigned here.** The stream reports no block boundaries —
   no start, no stop, and no index for text — so the adapter assigns a stable
   `block_index` on first sight and closes every open block when the stream
@@ -201,8 +244,8 @@ parse into arguments that validate while silently missing fields.
 ## Profiles
 
 A vendor is config, not code. `providers.openai` is a table of named profiles,
-and it is the one place in the schema where an unknown key is *not* an error —
-a new key is a new vendor.
+and one of only two places in the schema where an unknown key is *not* an
+error — a new key is a new vendor.
 
 ```toml
 [providers.openai.groq]
@@ -217,13 +260,27 @@ vendor almost certainly speaks) or `responses`. The shipped `openai` profile
 sets `responses`; `deepseek` and `glm` use the default. An unusable value fails
 at startup naming the profile.
 
+`replay_reasoning_field` names the assistant-message field earlier reasoning
+goes back in. The shipped `deepseek` and `glm` profiles set
+`"reasoning_content"`; every other profile starts at `""`, sending none. Set it
+for a reasoning vendor only when its docs ask for reasoning back, and to the
+field they name — a vendor that wants it and does not get it may refuse the
+request, and one that does not want it may refuse the unknown field.
+
+`preserve_thinking` adds `"thinking": {"type": "enabled", "clear_thinking":
+false}` — GLM's Preserved Thinking, exactly as Z.ai documents it. Only the
+`glm` profile sets it: the shape is GLM's, and `type: "enabled"` also switches
+thinking on for GLM-4.6, the one model in the lineup that otherwise decides for
+itself. Z.ai documents it for GLM-4.7 and recommends it for GLM-5.3-Flash; it
+does not say whether GLM-4.6 accepts it.
+
 Keys inside a profile are checked as strictly as anywhere else, so a typo there
 still fails at startup.
 
 **Which provider serves a model**, highest precedence first:
 
 1. `--provider`
-2. a profile whose `models` list names the id — so `--model deepseek-chat`
+2. a profile whose `models` list names the id — so `--model deepseek-flash`
    reaches DeepSeek with no flag
 3. the catalog's `Model.provider`
 4. `agent.provider` (default `anthropic`)
@@ -253,11 +310,14 @@ slightly wrong `context_window`. Routing still works for it: list the id in a
 profile's `models`, or pass `--provider`.
 
 Catalogued `provider` values name the *profile* that serves the model, not the
-dialect it speaks — `deepseek-chat` says `deepseek`, not `openai`.
+dialect it speaks — `deepseek-flash` says `deepseek`, not `openai`.
 
-Capability flags live with the model because the runtime acts on them:
-`supports_reasoning` gates the thinking request, `supports_server_tools` will
-decide whether `web_search` is forwarded or executed locally.
+Capability flags live with the model, not at the call site.
+`supports_reasoning` gates the thinking request — though nothing in the harness
+asks for reasoning yet: the loop sets no `StreamOptions.reasoning`, and the
+current Claude 5, DeepSeek and GLM models think by default anyway.
+`supports_server_tools` only records a capability; provider-native
+`web_search` is not planned (see [tools.md](tools.md)).
 
 ## Adding a vendor
 
@@ -272,8 +332,10 @@ models = ["their-model-v1"]
 ```
 
 `harness --model their-model-v1` now routes there. Add a catalog entry in
-`llm/registry.py` only if you want its capability flags — `supports_reasoning`
-gates the thinking request.
+`llm/registry.py` only if you want its real limits and capability flags, and a
+[`[pricing]`](configuration.md#pricing) entry if you want a cost shown. For a
+reasoning model, check the vendor's docs on sending reasoning back before
+setting `replay_reasoning_field` — see [Profiles](#profiles).
 
 **A genuinely different API** needs an adapter:
 

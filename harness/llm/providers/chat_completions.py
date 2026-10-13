@@ -11,10 +11,15 @@ A profile picks its protocol with `api = "chat_completions"` — the default.
 `harness/llm/provider.py`. Every failure path ends in a `StreamError`, built by
 the shared `_http.failure`.
 
-Reasoning here is *plaintext and not replayable*: DeepSeek and GLM stream
-`reasoning_content` you can read, and reject it if you send it back. So
-`ThinkingBlock.signature` stays None and `_flatten` drops thinking on the way
-out. The Responses API is the opposite case; see docs/providers.md.
+Reasoning here is *plaintext*, and whether it goes back is the vendor's rule,
+not ours. DeepSeek returns a 400 for a request carrying tools unless every
+earlier turn's `reasoning_content` is sent back; GLM asks for it unmodified,
+and keeps it only when asked to (`preserve_thinking`); a server that never
+asked for it may reject the field. So it is a per-profile setting,
+`replay_reasoning_field`, on for the shipped DeepSeek and GLM profiles and off
+otherwise. `ThinkingBlock.signature` stays None either way — there is
+no replay token, only the text. The Responses API is the opposite case; see
+docs/providers.md.
 """
 
 import json
@@ -73,6 +78,11 @@ _FINISH_REASONS: dict[str, StopReason] = {
 #: `reasoning_content` is DeepSeek's; `reasoning` is what several gateways
 #: (OpenRouter among them) relabel it to.
 _REASONING_FIELDS = ("reasoning_content", "reasoning")
+
+#: GLM's request for Preserved Thinking, exactly as Z.ai documents it.
+#: `clear_thinking: false` is the part that matters; `type: "enabled"` is part
+#: of the documented shape, and also switches thinking on for a hybrid model.
+_PRESERVED_THINKING = {"type": "enabled", "clear_thinking": False}
 
 _log = logging.getLogger(__name__)
 
@@ -169,7 +179,9 @@ class ChatCompletionsProvider:
     def _build_request(self, model: Model, ctx: Context, opts: StreamOptions) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": model.id,
-            "messages": _to_wire_messages(ctx.system_prompt, ctx.messages),
+            "messages": _to_wire_messages(
+                ctx.system_prompt, ctx.messages, self._config.replay_reasoning_field
+            ),
             "stream": True,
             "max_tokens": opts.max_tokens or model.max_tokens or self._config.default_max_tokens,
         }
@@ -177,6 +189,8 @@ class ChatCompletionsProvider:
             # Without this the final chunk carries no usage at all, and token
             # accounting silently reads zero for every turn.
             request["stream_options"] = {"include_usage": True}
+        if self._config.preserve_thinking:
+            request["thinking"] = dict(_PRESERVED_THINKING)
         if ctx.tools:
             request["tools"] = [
                 {
@@ -199,12 +213,17 @@ class ChatCompletionsProvider:
 # --- request translation --------------------------------------------------
 
 
-def _to_wire_messages(system_prompt: str, messages: tuple[Message, ...]) -> list[dict[str, Any]]:
+def _to_wire_messages(
+    system_prompt: str, messages: tuple[Message, ...], reasoning_field: str
+) -> list[dict[str, Any]]:
     """Core messages -> Chat Completions `messages`.
 
     Two differences from the Anthropic adapter, both forced by the wire format:
     the system prompt is a *message* here rather than a top-level field, and
     tool results stay separate rather than merging into one user turn.
+
+    `reasoning_field` names where an assistant turn's reasoning goes back, or
+    is empty to send none — see the module docstring.
     """
     wire: list[dict[str, Any]] = []
     if system_prompt:
@@ -227,23 +246,27 @@ def _to_wire_messages(system_prompt: str, messages: tuple[Message, ...]) -> list
             wire.append({"role": "user", "content": _user_content(message.content)})
             continue
         if isinstance(message, AssistantMessage):
-            entry = _assistant_entry(message)
+            entry = _assistant_entry(message, reasoning_field)
             if entry is not None:
                 wire.append(entry)
     return wire
 
 
-def _assistant_entry(message: AssistantMessage) -> dict[str, Any] | None:
+def _assistant_entry(message: AssistantMessage, reasoning_field: str) -> dict[str, Any] | None:
     """An assistant turn, or None when there is nothing to replay.
 
     An errored or aborted turn has no content and no calls; sending it would
-    be an empty assistant message, which some endpoints reject outright.
+    be an empty assistant message, which some endpoints reject outright. That
+    holds even when it has reasoning: a thought cut off before any answer is
+    not a turn the server can take back.
     """
     text_parts = _flatten(message.content)
     calls = [b for b in message.content if isinstance(b, ToolCallBlock)]
     if not text_parts and not calls:
         return None
     entry: dict[str, Any] = {"role": "assistant", "content": text_parts or None}
+    if reasoning_field and (reasoning := _plaintext_reasoning(message.content)):
+        entry[reasoning_field] = reasoning
     if calls:
         entry["tool_calls"] = [
             {
@@ -284,11 +307,24 @@ def _user_content(content: tuple[ContentBlock, ...]) -> Any:
 def _flatten(content: tuple[ContentBlock, ...]) -> str:
     """Text blocks joined; everything else dropped.
 
-    ThinkingBlocks are deliberately not replayed — vendors reject reasoning
-    sent back to them, and DeepSeek documents that explicitly. ProviderBlocks
-    belong to whichever provider produced them and have no meaning here.
+    Reasoning is not text and goes back separately, if at all — see
+    `_plaintext_reasoning`. ProviderBlocks belong to whichever provider
+    produced them and have no meaning here.
     """
     return "".join(b.text for b in content if isinstance(b, TextBlock))
+
+
+def _plaintext_reasoning(content: tuple[ContentBlock, ...]) -> str:
+    """The reasoning this dialect produced, exactly as it streamed.
+
+    Exactly, because the server cached it as generated: an edited replay is a
+    cache miss at best. Signed blocks are skipped — a signature means Anthropic
+    or Responses produced the block for their own replay, and its text is
+    another model's thinking (or only a summary of it).
+    """
+    return "".join(
+        b.thinking for b in content if isinstance(b, ThinkingBlock) and b.signature is None
+    )
 
 
 # --- response translation -------------------------------------------------
@@ -470,8 +506,8 @@ class _Accumulator:
                 if state.text:
                     content.append(TextBlock(text=state.text))
             elif isinstance(state, _PartialThinking):
-                # No signature: this dialect has no replay token, and
-                # `_flatten` drops thinking on the way back out anyway.
+                # No signature: this dialect has no replay token. Whether the
+                # text goes back is the profile's `replay_reasoning_field`.
                 content.append(ThinkingBlock(thinking=state.thinking))
             else:
                 content.append(state.finish())

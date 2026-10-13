@@ -3,10 +3,10 @@
 Deliberately small. pi ships a provider catalog with pricing and capability
 matrices; this is a dict of the models we actually use. Adding one is a line.
 
-Capability flags matter to the runtime — `supports_reasoning` gates the thinking
-request, `supports_server_tools` decides whether `web_search` is forwarded to
-the provider or executed locally — so they live with the model, not at the call
-site.
+Capability flags describe the model, so they live with it rather than at a
+call site: `supports_reasoning` gates the thinking request an adapter sends
+when a caller asks for reasoning, and `supports_server_tools` records a
+capability nothing acts on, since provider-native `web_search` is not planned.
 """
 
 import logging
@@ -20,14 +20,17 @@ _log = logging.getLogger(__name__)
 
 _CONTEXT_1M = 1_000_000
 _CONTEXT_200K = 200_000
-_CONTEXT_128K = 128_000
+#: DeepSeek's documented default output ceiling in thinking mode ("64K").
+_DEEPSEEK_THINKING_MAX_TOKENS = 64_000
+#: The maximum output Z.ai documents for every catalogued GLM model ("128K").
+_GLM_MAX_TOKENS = 128_000
 
 MODELS: dict[str, Model] = {
     "claude-opus-5": Model(
         id="claude-opus-5",
         name="Claude Opus 5",
         provider="anthropic",
-        context_window=_CONTEXT_200K,
+        context_window=_CONTEXT_1M,
         max_tokens=32_000,
         supports_reasoning=True,
         supports_images=True,
@@ -60,29 +63,70 @@ MODELS: dict[str, Model] = {
     # capability flags, which the runtime acts on; an id whose window is
     # understated costs a little context, while one that is overstated fails
     # the request.
-    "deepseek-chat": Model(
-        id="deepseek-chat",
-        name="DeepSeek Chat",
+    #
+    # DeepSeek: the two ids its API accepts as of 2026-09. Both think by
+    # default, and reasoning counts against max_tokens — so the ceiling is
+    # DeepSeek's own default for thinking mode, not the 8K non-thinking one,
+    # which a long chain of thought would exhaust before the answer began.
+    "deepseek-flash": Model(
+        id="deepseek-flash",
+        name="DeepSeek Flash",
         provider="deepseek",
-        context_window=_CONTEXT_128K,
-        max_tokens=8_192,
+        context_window=_CONTEXT_1M,
+        max_tokens=_DEEPSEEK_THINKING_MAX_TOKENS,
+        # Gates `reasoning_effort` in the request. Reasoning *deltas* are read
+        # whatever this says, since a model that streams them means them.
+        supports_reasoning=True,
     ),
-    "deepseek-reasoner": Model(
-        id="deepseek-reasoner",
-        name="DeepSeek Reasoner",
+    "deepseek-v4-pro": Model(
+        id="deepseek-v4-pro",
+        name="DeepSeek V4 Pro",
         provider="deepseek",
-        context_window=_CONTEXT_128K,
-        max_tokens=8_192,
-        # Drives the thinking request, and makes the adapter read the
-        # `reasoning_content` deltas this model streams.
+        context_window=_CONTEXT_1M,
+        max_tokens=_DEEPSEEK_THINKING_MAX_TOKENS,
+        supports_reasoning=True,
+    ),
+    # GLM: the catalogued ids are the ones whose limits Z.ai documents on a
+    # model page (2026-10). The rest of the lineup routes by the profile's
+    # `models` list and gets the conservative unknown-model limits.
+    "glm-5.3": Model(
+        id="glm-5.3",
+        name="GLM-5.3",
+        provider="glm",
+        context_window=_CONTEXT_1M,
+        max_tokens=_GLM_MAX_TOKENS,
+        supports_reasoning=True,
+    ),
+    "glm-5.3-flash": Model(
+        id="glm-5.3-flash",
+        name="GLM-5.3-Flash",
+        provider="glm",
+        context_window=_CONTEXT_1M,
+        max_tokens=_GLM_MAX_TOKENS,
+        supports_reasoning=True,
+    ),
+    "glm-5.3-flashx": Model(
+        id="glm-5.3-flashx",
+        name="GLM-5.3-FlashX",
+        provider="glm",
+        context_window=_CONTEXT_1M,
+        max_tokens=_GLM_MAX_TOKENS,
+        supports_reasoning=True,
+    ),
+    "glm-4.7": Model(
+        id="glm-4.7",
+        name="GLM-4.7",
+        provider="glm",
+        context_window=_CONTEXT_200K,
+        max_tokens=_GLM_MAX_TOKENS,
         supports_reasoning=True,
     ),
     "glm-4.6": Model(
         id="glm-4.6",
         name="GLM-4.6",
         provider="glm",
-        context_window=_CONTEXT_128K,
-        max_tokens=8_192,
+        context_window=_CONTEXT_200K,
+        max_tokens=_GLM_MAX_TOKENS,
         supports_reasoning=True,
     ),
 }
