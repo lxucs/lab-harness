@@ -6,9 +6,11 @@ scrollback instead of a full-screen app you cannot scroll back through.
 
 Two behaviors worth knowing:
 
-**Ctrl-C cancels the turn, not the session.** The first Ctrl-C during a run
-aborts it and leaves the transcript valid to continue from. At an idle prompt it
-clears the input line. Ctrl-D exits.
+**Ctrl-C cancels the turn, not the session.** During a run it aborts the run
+and leaves the transcript valid to continue from. At an idle prompt it clears
+the input line. Ctrl-D exits. The two arrive differently: at a prompt,
+prompt_toolkit has the terminal in raw mode and Ctrl-C is a keypress; during a
+run it is a SIGINT, which the turn takes over from asyncio.run's handler.
 
 **Typing during a run is buffered here, not queued in the runtime.** The agent
 refuses a second concurrent `prompt()` by design (see `agent.py`), so the
@@ -21,6 +23,10 @@ and `:status` both fold over messages that already carry their `Usage` — see
 """
 
 import asyncio
+import signal
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from prompt_toolkit import PromptSession
@@ -99,28 +105,29 @@ class Terminal:
             await self._run_turn(text)
 
     async def _run_turn(self, message: str) -> None:
+        # The task exists before Ctrl-C is rerouted, so a callback queued by an
+        # early Ctrl-C runs after the run has claimed its abort signal, not
+        # before it, where `abort()` would find nothing to set.
         task = asyncio.create_task(self.agent.prompt(message))
         produced: list[Message] = []
-        while True:
+        with _ctrl_c_calls(self._cancel_turn):
             try:
                 produced = await asyncio.shield(task)
-                break
-            except KeyboardInterrupt:
-                # Ask the run to stop, then keep waiting: abort is cooperative,
-                # and the loop still has to emit its aborted message and return.
-                self.agent.abort()
-                self.console.print(Text(_CANCELLED_NOTICE, style="yellow"))
-                continue
             except asyncio.CancelledError:
                 self.agent.abort()
                 raise
             except Exception as exc:
                 # A crash in the runtime ends the turn, not the session.
                 self.console.print(Text(f"error: {exc}", style="bold red"))
-                break
         if self.config.terminal.show_usage:
             self._print_footer(produced)
         self.console.print()
+
+    def _cancel_turn(self) -> None:
+        # Ask the run to stop and let `_run_turn` keep waiting: abort is
+        # cooperative, and the loop still has to emit its aborted message.
+        self.agent.abort()
+        self.console.print(Text(_CANCELLED_NOTICE, style="yellow"))
 
     def _print_footer(self, produced: list[Message]) -> None:
         summary = summarize(produced, self.config.pricing)
@@ -158,6 +165,39 @@ def _bindings() -> KeyBindings:
         event.current_buffer.insert_text("\n")  # type: ignore[attr-defined]
 
     return bindings
+
+
+@contextmanager
+def _ctrl_c_calls(callback: Callable[[], object]) -> Iterator[None]:
+    """Route Ctrl-C to `callback` for the duration, then restore the old handler.
+
+    Needed because asyncio.run installs a handler of its own that cancels the
+    main task, which would end the session from inside any turn.
+
+    The handler only queues `callback` on the loop. A signal handler runs
+    between any two bytecodes, and the loop may be asleep in select();
+    `call_soon_threadsafe` both defers to a safe point and wakes it, which is
+    how asyncio.run's own handler works.
+
+    It is a Python-level handler rather than `loop.add_signal_handler`, because
+    prompt_toolkit replaces and then removes the loop's SIGINT handler around
+    every prompt, so one installed that way would be gone after the first
+    approval question. What prompt_toolkit saves and restores is the
+    Python-level handler, which is what this sets.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        # Only the main thread may handle signals. Run elsewhere, Ctrl-C keeps
+        # whatever meaning it already had.
+        yield
+        return
+    loop = asyncio.get_running_loop()
+    previous = signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(callback))
+    try:
+        yield
+    finally:
+        # None means the old handler was not set from Python, so there is
+        # nothing to hand back; Python's default is the nearest equivalent.
+        signal.signal(signal.SIGINT, signal.default_int_handler if previous is None else previous)
 
 
 def build_approval_gate(terminal: Terminal, config: Config) -> ApprovalGate:

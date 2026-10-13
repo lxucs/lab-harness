@@ -9,7 +9,7 @@ layering, trimmed to the parts that earn their keep.
 
 > **Status: usable, and feature-complete against its design.** Three provider
 > adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions — 786 tests, all offline. Details in
+> durable sessions — 788 tests, all offline. Details in
 > [Status](#status).
 
 ## Why

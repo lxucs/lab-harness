@@ -8,12 +8,17 @@ approval prompt, exit conditions — is the production code path.
 import asyncio
 import io
 import re
+import signal
+import threading
 
 import pytest
+from prompt_toolkit import PromptSession
+from prompt_toolkit.input import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from harness.agent import Agent
-from harness.cli.terminal import Terminal, build_approval_gate
+from harness.cli.terminal import Terminal, _ctrl_c_calls, build_approval_gate
 from harness.config import Config, PricingConfig, TerminalConfig
 from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from harness.llm.types import AssistantMessage, TextBlock, ToolCallBlock, Usage, UserMessage, text
@@ -134,7 +139,12 @@ async def test_a_runtime_error_ends_the_turn_not_the_session() -> None:
 
 
 async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> None:
-    """The core promise: cancel the turn, survive to the next prompt."""
+    """The core promise: cancel the turn, survive to the next prompt.
+
+    A real SIGINT, because that is what Ctrl-C is during a run: prompt_toolkit
+    is not reading, so the terminal is not in raw mode. Under asyncio.run, an
+    unhandled one cancels the main task and ends the session.
+    """
     from pydantic import BaseModel
 
     from harness.tools.base import ToolContext, ToolResult, ok, tool
@@ -144,6 +154,7 @@ async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> N
 
     @tool(name="slow", description="slow", execution_mode="sequential")
     async def slow(p: _P, ctx: ToolContext) -> ToolResult:
+        signal.raise_signal(signal.SIGINT)
         for _ in range(200):
             if ctx.signal is not None and ctx.signal.is_set():
                 return ok("stopped early")
@@ -151,25 +162,29 @@ async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> N
         return ok("ran to completion")
 
     call = ToolCallBlock(id="c1", name="slow", arguments={})
-    terminal, _ = _terminal(["slow thing", "next turn"])
+    terminal, buffer = _terminal(["slow thing", "next turn"])
     provider = FakeProvider(
         [tool_call_response([call]), text_response("after abort"), text_response("next answer")]
     )
     agent = _attach(terminal, provider, tools=(slow,))
 
-    original = terminal._run_turn
+    # Stands in for asyncio.run's handler. Catching the signal here, rather
+    # than letting it raise KeyboardInterrupt, keeps a regression a failed
+    # assertion instead of an interrupted test session.
+    reached_previous: list[int] = []
 
-    async def interrupting_run_turn(message: str) -> None:
-        task = asyncio.create_task(original(message))
-        if message == "slow thing":
-            await asyncio.sleep(0.05)
-            agent.abort()  # what a KeyboardInterrupt triggers
-        await task
+    def previous(signum: int, frame: object) -> None:
+        reached_previous.append(signum)
 
-    terminal._run_turn = interrupting_run_turn  # type: ignore[method-assign]
+    original = signal.signal(signal.SIGINT, previous)
+    try:
+        assert await terminal.run() == 0
+        assert signal.getsignal(signal.SIGINT) is previous, "the turn must restore the handler"
+    finally:
+        signal.signal(signal.SIGINT, original)
 
-    assert await terminal.run() == 0
-
+    assert reached_previous == [], "Ctrl-C during a turn must not reach the outer handler"
+    assert "turn cancelled" in buffer.getvalue()
     assert any(getattr(m, "stop_reason", None) == "aborted" for m in agent.state.messages), (
         "the cancelled turn must be recorded as aborted"
     )
@@ -181,6 +196,40 @@ async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> N
     last = agent.state.messages[-1]
     assert last.role == "assistant"
     assert "".join(b.text for b in last.content if isinstance(b, TextBlock))
+
+
+def test_a_terminal_off_the_main_thread_leaves_ctrl_c_alone() -> None:
+    """Only the main thread may handle signals; an embedder elsewhere must still run."""
+    terminal, buffer = _terminal(["hello"])
+    _attach(terminal, FakeProvider([text_response("Hi there")]))
+    before = signal.getsignal(signal.SIGINT)
+    exit_codes: list[int] = []
+
+    thread = threading.Thread(target=lambda: exit_codes.append(asyncio.run(terminal.run())))
+    thread.start()
+    thread.join(timeout=10)
+
+    assert exit_codes == [0]
+    assert "Hi there" in buffer.getvalue()
+    assert signal.getsignal(signal.SIGINT) is before
+
+
+async def test_ctrl_c_still_cancels_after_an_approval_question() -> None:
+    """A real prompt_toolkit prompt mid-turn must not take the handler with it.
+
+    prompt_toolkit swaps SIGINT handling around every prompt; a handler it does
+    not restore would leave Ctrl-C doing nothing for the rest of the turn.
+    """
+    calls: list[str] = []
+    with create_pipe_input() as pipe, _ctrl_c_calls(lambda: calls.append("cancel")):
+        pipe.send_text("y\n")
+        session: PromptSession[str] = PromptSession(input=pipe, output=DummyOutput())
+        assert await session.prompt_async("Allow bash? ") == "y"
+
+        signal.raise_signal(signal.SIGINT)
+        await asyncio.sleep(0.05)
+
+    assert calls == ["cancel"]
 
 
 # --- usage ----------------------------------------------------------------
