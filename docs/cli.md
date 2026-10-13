@@ -40,34 +40,93 @@ answer alone. Diagnostics follow the same rule — see
 ## Interactive
 
 prompt_toolkit handles input: history, multi-line entry, and key bindings. rich
-handles output: streaming text, markdown, and syntax-highlighted diffs.
+handles output: streaming text, markdown with highlighted code, and diffs.
 
 Output is **inline** — it lands in real terminal scrollback rather than being
 trapped inside a full-screen app, so scrolling back through a long session works
 the way it does with any other command.
 
 ```
-› read the config and summarize
+› why does the retry test fail?
 
-● read(harness/config.py)
-  └ 1   """Configuration schema and defaults.
-    2
-    3   This module is the single list of every tunable…
-    … 38 more line(s)
+⏺ I'll read the test first.
 
-The config defines three groups of settings…
+⏺ read(tests/test_http.py)
+  ⎿  1  """Retries against a fake transport."""
+     2
+     3  import httpx
+     … 38 more line(s)
 
-› ▊
+✻ Thought for 4s · Ctrl-O to expand
+
+⏺ The backoff cap is applied after the jitter. Moving it.
+
+⏺ edit(harness/llm/providers/_http.py)
+  ⎿  Replaced 1 occurrence(s) in harness/llm/providers/_http.py  +2 -1
+    41       for attempt in range(retries):
+    42 -         delay = jitter(base * 2**attempt)
+    42 +         delay = min(base * 2**attempt, cap)
+    43 +         delay = jitter(delay)
+    44           await asyncio.sleep(delay)
+
+✶ Working… (12s · Ctrl-C to cancel)       ← only while the run is in flight
 ```
 
-Streaming text renders through `rich.Live`, which redraws one region in place
-and leaves the finished answer in scrollback. Printing deltas and then
-re-rendering the final message would show the answer twice — output already
-written to a scrollback terminal cannot be taken back.
+The layout follows Claude Code's. A `⏺` opens each message and each tool call;
+a call's bullet turns green when it succeeds and red when it fails, and its
+output hangs under `⎿`, collapsed past `terminal.max_result_lines`. Colors
+come from [`[terminal.theme]`](configuration.md#the-terminal).
+
+**Edits show their diff**, as Claude Code's do: a line number, `-` or `+`, and
+the line, removed lines on a red bar and added lines on a green one that runs
+to the edge of the terminal, `⋮` between separate hunks. Collapsed past
+`terminal.max_diff_lines` (40). `edit` and `write` compute the diff and hand
+it over in their result's `details` — a standard unified diff, never sent to
+the model — with `tools.diff.context_lines` (3) unchanged lines around each
+change. A write that creates a file shows it as all additions.
+
+**Two kinds of output.** What is finished is printed once and stays in
+scrollback. What is still in flight — the message streaming in, running tools
+with their latest line of output, the spinner — is drawn in one region below
+it, redrawn in place and erased when the run ends. Erased, because text
+already written to a scrollback terminal cannot be taken back: a region that
+stayed behind would leave a second copy of every answer. Approval questions
+take the region down while they wait, so the question is never drawn over.
+
+### Thinking
+
+A model's reasoning streams as it arrives, in dim italics under
+`✻ Thinking…`. When the message ends, `terminal.thinking` decides what stays:
+
+| Mode | In scrollback | While streaming |
+|---|---|---|
+| `collapse` (default) | One line: `✻ Thought for 4s · Ctrl-O to expand` | The last `thinking_preview_lines` lines |
+| `full` | The whole thought, above its answer | All of it that fits |
+| `hidden` | Nothing | Only the spinner |
+
+**Ctrl-O** switches between `full` and the configured mode for the rest of the
+session. Switching to `full` also prints what the last run collapsed, once.
+Collapse is the default because raw reasoning — DeepSeek's and GLM's — often
+runs to pages and buries the answer; summaries are short enough that `full`
+suits them.
+
+What there is to show depends on the provider: DeepSeek and GLM stream their
+real chain of thought; OpenAI's Responses API and Claude send a summary; OpenAI
+via Chat Completions sends nothing. Claude Opus 5 and Sonnet 5 return empty
+thinking unless asked for a summary, which the adapter does by default —
+`providers.anthropic.thinking_display`, see
+[providers.md](providers.md#the-thinking-request).
+
+Ctrl-O is a prompt key binding. Pressed mid-run it waits in the input queue and
+takes effect when the prompt returns; nothing reads keys during a run, which is
+also what keeps text typed ahead safe. (A cooked-mode terminal on macOS and the
+BSDs would otherwise treat Ctrl-O as DISCARD and silently drop the run's
+output, so the terminal turns that one character off for the run's length.)
 
 | Key | Action |
 |---|---|
 | `Ctrl-C` | Cancel the in-flight turn; the session survives |
+| `Ctrl-O` | Toggle thinking between shown in full and the configured mode |
 | `Ctrl-D` | Exit |
 | `Enter` | Submit |
 | `Alt-Enter` | Newline without submitting |
@@ -139,7 +198,7 @@ $ harness -p "what files are here?" --json
 {"type": "turn_start"}
 {"message": {"content": [], "model": "...", "stop_reason": "stop", ...}, "type": "message_start"}
 {"tool_call_id": "c1", "tool_name": "ls", "arguments": {}, "type": "tool_execution_start"}
-{"tool_call_id": "c1", "tool_name": "ls", "content": [...], "is_error": false, "duration_ms": 1, "type": "tool_execution_end"}
+{"tool_call_id": "c1", "tool_name": "ls", "content": [...], "is_error": false, "duration_ms": 1, "details": {"path": ".", "entries": 4, "total_entries": 4}, "type": "tool_execution_end"}
 {"type": "turn_end", ...}
 {"type": "agent_end", "messages": [...]}
 ```
@@ -249,9 +308,26 @@ set one, and the model carries on without it.
 Mutating tools (`bash`, `write`, `edit`) prompt before executing:
 
 ```
-● bash(rm -rf build/)
+⏺ bash(rm -rf build/)
 Allow bash? [y]es / [n]o / [a]lways
 ```
+
+The call line is cut to one short line, so a longer command is printed in
+full beneath it — approving a command shown cut off is approving something
+unseen. For the same reason an `edit` shows the change it will make, and a
+`write` the content it will write:
+
+```
+⏺ edit(harness/config.py)
+          max_turns: int = 50
+    -     parallel_tools: bool = False
+    +     parallel_tools: bool = True
+Allow edit? [y]es / [n]o / [a]lways
+```
+
+The edit preview has no line numbers: it is built from the call's arguments,
+and where the text sits in the file is not known until the tool runs. The
+result that follows has them.
 
 This is a `before_tool_call` hook, not loop logic — see
 [tools.md](tools.md#approval) for the full contract.

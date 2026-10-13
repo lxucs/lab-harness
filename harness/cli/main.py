@@ -125,7 +125,7 @@ def _build_agent(
         note = f"Project instructions: {context.path.name}"
         if context.truncated:
             note += f" (truncated to {config.project.max_bytes} bytes)"
-        console.print(Text(note, style="dim"))
+        console.print(Text(note, style=config.terminal.theme.muted))
     model, provider = route(args.model, config, args.provider)
     return Agent(
         model=model,
@@ -157,9 +157,9 @@ def _attach_session(
         agent.restore(resumed.messages)
         note = f"Resumed {resumed.path.stem} — {len(resumed.messages)} message(s)"
         if console is not None:
-            console.print(Text(note, style="dim"))
+            console.print(Text(note, style=config.terminal.theme.muted))
             for warning in resumed.warnings:
-                console.print(Text(f"  {warning}", style="yellow"))
+                console.print(Text(f"  {warning}", style=config.terminal.theme.warning))
         else:
             # One-shot mode has no terminal to show these in. Logging puts them
             # on stderr, clear of the answer on stdout and of the JSONL stream.
@@ -230,13 +230,15 @@ def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
     console = Console()
     paths = list_sessions(args.cwd, config.session)
     if not paths:
-        console.print(Text("No saved sessions for this directory.", style="dim"))
+        console.print(
+            Text("No saved sessions for this directory.", style=config.terminal.theme.muted)
+        )
         return 0
     for path in paths:
         try:
             transcript = read_transcript(path)
         except (OSError, TranscriptError):
-            console.print(Text(f"{path.stem}  (unreadable)", style="red"))
+            console.print(Text(f"{path.stem}  (unreadable)", style=config.terminal.theme.error))
             continue
         console.print(
             f"{path.stem}  {len(transcript.messages):>4} msg  "
@@ -260,7 +262,7 @@ def _text_sink() -> Callable[[AgentEvent], Awaitable[None]]:
             if event.message.error_message:
                 print(f"error: {event.message.error_message}", file=sys.stderr, flush=True)
         elif event.type == "tool_execution_start":
-            print(f"● {event.tool_name}({_brief(event.arguments)})", file=sys.stderr, flush=True)
+            print(f"⏺ {event.tool_name}({_brief(event.arguments)})", file=sys.stderr, flush=True)
 
     return emit
 

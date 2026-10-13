@@ -114,13 +114,35 @@ Three markers, under the limit of four. `Usage` already reports cache reads
 and writes, and the shipped [prices](configuration.md#pricing) already include
 both rates, so nothing downstream changes when it lands.
 
-**TODO: the thinking request.** Asking for reasoning sends
-`{"type": "enabled", "budget_tokens": …}`, which Claude Sonnet 5 and Opus 5
-reject with a 400 — they take adaptive thinking only, while Haiku 4.5 still
-needs the budget. No current path reaches it, because nothing asks for
-reasoning and both 5-series models think by default; a caller that sets
-`StreamOptions.reasoning` would. The fix needs a per-model choice of the two
-shapes.
+### The thinking request
+
+Two request shapes, chosen per model:
+
+| Models | Sent | Thinks |
+|---|---|---|
+| Opus 5, Sonnet 5, and any Claude id not listed below | `thinking: {type: "adaptive", display: "summarized"}`, on every request | Always — they think by default |
+| Everything before 4.6 — `budget_thinking_models`, by id prefix | `thinking: {type: "enabled", budget_tokens: …}`, only when reasoning is requested | Only when asked |
+
+**Adaptive is sent even though the models think unasked**, because the
+request is the only place to ask for `display`. Opus 5 and Sonnet 5 default it
+to `"omitted"`: thinking blocks arrive with empty text, which to a terminal
+looks like a long silent pause. `"summarized"` gets a readable summary; the
+raw chain is never returned either way, and billing is the same.
+`providers.anthropic.thinking_display` sets it, and `""` sends no preference.
+
+**A budget never reaches an adaptive model** — the 5-series rejects one with a
+400. Effort is the dial there instead: a requested `StreamOptions.reasoning`
+goes out as `output_config.effort`. Nothing in the harness requests a level
+yet, so they run at the API's default.
+
+**An unlisted id is assumed current**, the catalog's rule everywhere else, so
+it gets adaptive. That is why the budget list names the old models rather
+than the new ones: a model released next month should show its thinking
+without a config change, and an old one sent adaptive would fail. Either
+kind drops `temperature`, which the API rejects alongside thinking.
+
+Thinking blocks come back signed, and are replayed with their signature
+exactly as received — empty text included.
 
 ## How thinking is handled across models
 
@@ -138,7 +160,7 @@ That gives four regimes, and all four are reachable:
 
 | Provider | `thinking` | `signature` | Replayed? |
 |---|---|---|---|
-| Anthropic extended thinking | the text | the signed token | **Yes** — the API rejects it without the signature |
+| Anthropic | a **summary** on the 5-series ([asked for](#the-thinking-request)); the text before | the signed token | **Yes** — the API rejects it without the signature |
 | OpenAI via `responses` | a model-written **summary** | packed `{id, encrypted_content}` | **Yes** — verbatim, or the model loses its place |
 | DeepSeek, GLM | the real chain, in plaintext | `None` | **Yes** — as plain `reasoning_content`; DeepSeek returns a 400 for a tool loop without it |
 | OpenAI via `chat_completions` | *no block at all* | — | nothing to replay |
@@ -313,9 +335,11 @@ Catalogued `provider` values name the *profile* that serves the model, not the
 dialect it speaks — `deepseek-flash` says `deepseek`, not `openai`.
 
 Capability flags live with the model, not at the call site.
-`supports_reasoning` gates the thinking request — though nothing in the harness
-asks for reasoning yet: the loop sets no `StreamOptions.reasoning`, and the
-current Claude 5, DeepSeek and GLM models think by default anyway.
+`supports_reasoning` gates the thinking request; for Claude it decides whether
+one is sent at all ([The thinking request](#the-thinking-request)). Nothing in
+the harness asks for a reasoning *level* yet — the loop sets no
+`StreamOptions.reasoning` — and the current Claude 5, DeepSeek and GLM models
+think by default anyway.
 `supports_server_tools` only records a capability; provider-native
 `web_search` is not planned (see [tools.md](tools.md)).
 

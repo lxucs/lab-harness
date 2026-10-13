@@ -169,6 +169,107 @@ def test_write_and_edit_are_sequential() -> None:
     assert edit.execution_mode == "sequential"
 
 
+# --- the diff a change reports --------------------------------------------
+#
+# `details["diff"]` is a unified diff, for a renderer. A standard format rather
+# than an invented one, so a consumer of the event stream in another language
+# can parse it with whatever it already has.
+
+
+def _diff_lines(result: ToolResult) -> list[str]:
+    diff = result.details["diff"]
+    assert isinstance(diff, str)
+    return diff.splitlines()
+
+
+async def test_edit_reports_its_change_as_a_unified_diff(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("".join(f"line{i}\n" for i in range(1, 11)))
+
+    result = await edit.execute(
+        {"path": "a.py", "old": "line5\n", "new": "five\nand a half\n"}, _ctx(tmp_path)
+    )
+
+    assert _diff_lines(result) == [
+        "--- a/a.py",
+        "+++ b/a.py",
+        "@@ -2,7 +2,8 @@",
+        " line2",
+        " line3",
+        " line4",
+        "-line5",
+        "+five",
+        "+and a half",
+        " line6",
+        " line7",
+        " line8",
+    ]
+
+
+async def test_the_diff_context_comes_from_config(tmp_path: Path) -> None:
+    from harness.config import DiffConfig
+
+    (tmp_path / "a.py").write_text("a\nb\nc\n")
+    config = Config(tools=ToolsConfig(diff=DiffConfig(context_lines=0)))
+
+    result = await edit.execute({"path": "a.py", "old": "b", "new": "B"}, _ctx(tmp_path, config))
+
+    assert _diff_lines(result)[2:] == ["@@ -2 +2 @@", "-b", "+B"]
+
+
+async def test_writing_a_new_file_is_all_additions(tmp_path: Path) -> None:
+    result = await write.execute({"path": "new.py", "content": "one\ntwo\n"}, _ctx(tmp_path))
+
+    assert _diff_lines(result) == [
+        "--- /dev/null",
+        "+++ b/new.py",
+        "@@ -0,0 +1,2 @@",
+        "+one",
+        "+two",
+    ]
+
+
+async def test_overwriting_a_file_diffs_against_what_was_there(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("keep\nold\n")
+
+    result = await write.execute({"path": "a.py", "content": "keep\nnew\n"}, _ctx(tmp_path))
+
+    assert _diff_lines(result)[3:] == [" keep", "-old", "+new"]
+
+
+async def test_an_unchanged_write_has_an_empty_diff(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("same\n")
+
+    result = await write.execute({"path": "a.py", "content": "same\n"}, _ctx(tmp_path))
+
+    assert result.details["diff"] == ""
+
+
+async def test_overwriting_a_non_text_file_still_writes_without_a_diff(tmp_path: Path) -> None:
+    (tmp_path / "blob").write_bytes(b"\xff\xfe\x00")
+
+    result = await write.execute({"path": "blob", "content": "text\n"}, _ctx(tmp_path))
+
+    assert not result.is_error
+    assert (tmp_path / "blob").read_text() == "text\n"
+    assert "diff" not in result.details
+
+
+async def test_details_name_paths_as_the_model_sees_them(tmp_path: Path) -> None:
+    """Details reach the event stream, and with it every --json log; an
+    absolute path there leaks the machine's layout like it would in output."""
+    (tmp_path / "a.py").write_text("x\n")
+
+    results = [
+        await read.execute({"path": "a.py"}, _ctx(tmp_path)),
+        await write.execute({"path": "b.py", "content": "y\n"}, _ctx(tmp_path)),
+        await edit.execute({"path": "a.py", "old": "x", "new": "z"}, _ctx(tmp_path)),
+        await ls.execute({}, _ctx(tmp_path)),
+    ]
+
+    assert [r.details["path"] for r in results] == ["a.py", "b.py", "a.py", "."]
+    assert all(str(tmp_path) not in str(r.details) for r in results)
+
+
 # --- edit -----------------------------------------------------------------
 
 

@@ -4,13 +4,19 @@ prompt_toolkit reads input (history, multi-line, key bindings); rich writes
 output. Both operate on ordinary stdout, so the session lands in real terminal
 scrollback instead of a full-screen app you cannot scroll back through.
 
-Two behaviors worth knowing:
+Behaviors worth knowing:
 
 **Ctrl-C cancels the turn, not the session.** During a run it aborts the run
 and leaves the transcript valid to continue from. At an idle prompt it clears
 the input line. Ctrl-D exits. The two arrive differently: at a prompt,
 prompt_toolkit has the terminal in raw mode and Ctrl-C is a keypress; during a
 run it is a SIGINT, which the turn takes over from asyncio.run's handler.
+
+**Ctrl-O toggles thinking** between shown in full and `terminal.thinking`, and
+prints what the last run collapsed. It is a prompt key binding, so pressed
+mid-run it waits in the input queue and takes effect when the prompt returns —
+nothing reads keys during a run, which is also what keeps typed-ahead text
+safe.
 
 **Typing during a run is buffered here, not queued in the runtime.** The agent
 refuses a second concurrent `prompt()` by design (see `agent.py`), so the
@@ -23,15 +29,22 @@ and `:status` both fold over messages that already carry their `Usage` — see
 """
 
 import asyncio
+import io
+import os
 import signal
+import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.text import Text
 
@@ -39,11 +52,15 @@ from harness.agent import Agent
 from harness.cli.approval import ApprovalGate
 from harness.cli.renderers import EventRenderer
 from harness.cli.usage import format_footer, format_status, summarize
-from harness.config import Config
+from harness.config import Config, ConfigError
 from harness.llm.types import Message
 
-_BANNER = "harness — Ctrl-C cancels a turn, :status shows usage, Ctrl-D exits"
+_BANNER = "harness — Ctrl-C cancels · Ctrl-O toggles thinking · :status · Ctrl-D exits"
 _PROMPT = "› "  # noqa: RUF001 — a deliberate prompt glyph, not a stray quote
+#: Style class for the glyph alone. Not `prompt`: prompt_toolkit applies that
+#: class to every prompt message, the approval question included.
+_GLYPH_CLASS = "glyph"
+_PROMPT_MESSAGE = FormattedText([(f"class:{_GLYPH_CLASS}", _PROMPT)])
 _CANCELLED_NOTICE = "^C  turn cancelled"
 _STATUS_COMMAND = ":status"
 #: Answers accepted at the approval prompt, by first letter. Deliberately no
@@ -65,13 +82,22 @@ class Terminal:
     config: Config
 
     def __post_init__(self) -> None:
-        self._session: PromptSession[str] = PromptSession(key_bindings=_bindings())
+        theme = self.config.terminal.theme
+        try:
+            style = Style.from_dict({_GLYPH_CLASS: theme.prompt})
+        except ValueError as exc:
+            raise ConfigError(f"terminal.theme.prompt: {exc}") from exc
+        self._session: PromptSession[str] = PromptSession(
+            key_bindings=_bindings(self._toggle_thinking), style=style
+        )
         self._agent: Agent | None = None
+        self._renderer: EventRenderer | None = None
 
     def attach(self, agent: Agent) -> None:
         """Bind the agent and start rendering its events."""
         self._agent = agent
-        agent.subscribe(EventRenderer(self.console, self.config.terminal))
+        self._renderer = EventRenderer(self.console, self.config.terminal)
+        agent.subscribe(self._renderer)
 
     @property
     def agent(self) -> Agent:
@@ -79,14 +105,20 @@ class Terminal:
             raise RuntimeError("Terminal.attach(agent) must be called before run()")
         return self._agent
 
+    @property
+    def renderer(self) -> EventRenderer:
+        if self._renderer is None:
+            raise RuntimeError("Terminal.attach(agent) must be called before run()")
+        return self._renderer
+
     async def run(self) -> int:
-        self.console.print(Text(_BANNER, style="dim"))
+        self.console.print(Text(_BANNER, style=self.config.terminal.theme.muted))
         while True:
             try:
                 # patch_stdout keeps rich's output from colliding with the
                 # prompt redraw while a run is streaming.
                 with patch_stdout(raw=True):
-                    line = await self._session.prompt_async(_PROMPT)
+                    line = await self._session.prompt_async(_PROMPT_MESSAGE)
             except KeyboardInterrupt:
                 # Ctrl-C at an idle prompt clears the line rather than exiting.
                 continue
@@ -110,7 +142,7 @@ class Terminal:
         # before it, where `abort()` would find nothing to set.
         task = asyncio.create_task(self.agent.prompt(message))
         produced: list[Message] = []
-        with _ctrl_c_calls(self._cancel_turn):
+        with _ctrl_c_calls(self._cancel_turn), _ctrl_o_passes_through(_stdin_fd()):
             try:
                 produced = await asyncio.shield(task)
             except asyncio.CancelledError:
@@ -118,7 +150,11 @@ class Terminal:
                 raise
             except Exception as exc:
                 # A crash in the runtime ends the turn, not the session.
-                self.console.print(Text(f"error: {exc}", style="bold red"))
+                self.console.print(Text(f"error: {exc}", style=self.config.terminal.theme.error))
+            finally:
+                # A run that ended normally has already closed it. One that
+                # crashed has not, and its region must not outlive it.
+                self.renderer.close()
         if self.config.terminal.show_usage:
             self._print_footer(produced)
         self.console.print()
@@ -127,7 +163,11 @@ class Terminal:
         # Ask the run to stop and let `_run_turn` keep waiting: abort is
         # cooperative, and the loop still has to emit its aborted message.
         self.agent.abort()
-        self.console.print(Text(_CANCELLED_NOTICE, style="yellow"))
+        self.console.print(Text(_CANCELLED_NOTICE, style=self.config.terminal.theme.warning))
+
+    def _toggle_thinking(self) -> None:
+        if self._renderer is not None:
+            self._renderer.toggle_thinking()
 
     def _print_footer(self, produced: list[Message]) -> None:
         summary = summarize(produced, self.config.pricing)
@@ -135,7 +175,7 @@ class Terminal:
             summary, self.agent.state.model, self.config.terminal.currency_symbol
         )
         if footer is not None:
-            self.console.print(Text(footer, style="dim"))
+            self.console.print(Text(footer, style=self.config.terminal.theme.muted))
 
     def _print_status(self) -> None:
         # The whole transcript, so a resumed session counts its history too.
@@ -147,22 +187,32 @@ class Terminal:
     async def ask_approval(self, tool_name: str, arguments: dict[str, object]) -> str:
         """Prompt for tool approval. Anything but an explicit yes denies."""
         question = f"Allow {tool_name}? [y]es / [n]o / [a]lways "
-        try:
-            with patch_stdout(raw=True):
-                answer = await self._session.prompt_async(question)
-        except (KeyboardInterrupt, EOFError):
-            # Interrupting the question is a refusal, not an approval.
-            return "no"
+        with self._renderer.suspended() if self._renderer is not None else _nothing():
+            if self._renderer is not None:
+                self._renderer.show_call(tool_name, arguments)
+            try:
+                with patch_stdout(raw=True):
+                    answer = await self._session.prompt_async(question)
+            except (KeyboardInterrupt, EOFError):
+                # Interrupting the question is a refusal, not an approval.
+                return "no"
         return _ANSWERS.get(answer.strip().lower()[:1], "no")
 
 
-def _bindings() -> KeyBindings:
+def _bindings(toggle_thinking: Callable[[], object]) -> KeyBindings:
     bindings = KeyBindings()
 
     @bindings.add("escape", "enter")
     def _newline(event: object) -> None:
         """Alt-Enter inserts a newline instead of submitting."""
         event.current_buffer.insert_text("\n")  # type: ignore[attr-defined]
+
+    @bindings.add("c-o")
+    def _thinking(event: object) -> None:
+        """Ctrl-O toggles thinking. Ours is added last, so it wins over
+        prompt_toolkit's emacs default for the key."""
+        # Prints through the prompt rather than over it.
+        run_in_terminal(toggle_thinking)
 
     return bindings
 
@@ -198,6 +248,57 @@ def _ctrl_c_calls(callback: Callable[[], object]) -> Iterator[None]:
         # None means the old handler was not set from Python, so there is
         # nothing to hand back; Python's default is the nearest equivalent.
         signal.signal(signal.SIGINT, signal.default_int_handler if previous is None else previous)
+
+
+@contextmanager
+def _ctrl_o_passes_through(fd: int | None) -> Iterator[None]:
+    """Stop Ctrl-O discarding output for the duration, then restore the terminal.
+
+    In a cooked-mode terminal on macOS and the BSDs, Ctrl-O is DISCARD: the
+    terminal silently drops the program's output until it is pressed again.
+    A run reads no keys, so the terminal is cooked for its whole length — and
+    Ctrl-O is the key the collapsed-thinking line says to press. With the
+    character disabled, the keypress stays in the input queue instead, where
+    the next prompt reads it as the toggle.
+
+    Only DISCARD, rather than every extended character: turning off IEXTEN
+    would also take Ctrl-W and Ctrl-V away from text typed ahead mid-run.
+    """
+    termios = _termios()
+    if termios is None or fd is None or not os.isatty(fd):
+        yield
+        return
+    saved = termios.tcgetattr(fd)
+    changed = [*saved[:6], list(saved[6])]
+    changed[6][termios.VDISCARD] = bytes([os.fpathconf(fd, "PC_VDISABLE")])
+    # TCSANOW rather than TCSAFLUSH, which would throw away typed-ahead input.
+    termios.tcsetattr(fd, termios.TCSANOW, changed)
+    try:
+        yield
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, saved)
+
+
+def _termios() -> Any:
+    """The termios module, or None on a platform without one, or without DISCARD."""
+    try:
+        import termios
+    except ImportError:
+        return None
+    return termios if hasattr(termios, "VDISCARD") else None
+
+
+def _stdin_fd() -> int | None:
+    try:
+        return sys.stdin.fileno()
+    except (OSError, ValueError, io.UnsupportedOperation):
+        # Replaced by something that is not a file — a test runner's capture.
+        return None
+
+
+@contextmanager
+def _nothing() -> Iterator[None]:
+    yield
 
 
 def build_approval_gate(terminal: Terminal, config: Config) -> ApprovalGate:

@@ -18,8 +18,15 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from harness.agent import Agent
-from harness.cli.terminal import Terminal, _ctrl_c_calls, build_approval_gate
-from harness.config import Config, PricingConfig, TerminalConfig
+from harness.agent.types import AgentStart
+from harness.cli.terminal import (
+    Terminal,
+    _bindings,
+    _ctrl_c_calls,
+    _ctrl_o_passes_through,
+    build_approval_gate,
+)
+from harness.config import Config, ConfigError, PricingConfig, TerminalConfig, ThemeConfig
 from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from harness.llm.types import AssistantMessage, TextBlock, ToolCallBlock, Usage, UserMessage, text
 
@@ -29,9 +36,9 @@ class ScriptedSession:
 
     def __init__(self, lines: list[str | type[BaseException]]) -> None:
         self._lines = list(lines)
-        self.prompts: list[str] = []
+        self.prompts: list[object] = []
 
-    async def prompt_async(self, message: str = "") -> str:
+    async def prompt_async(self, message: object = "") -> str:
         self.prompts.append(message)
         if not self._lines:
             raise EOFError
@@ -133,6 +140,7 @@ async def test_a_runtime_error_ends_the_turn_not_the_session() -> None:
 
     assert await terminal.run() == 0
     assert "provider exploded" in buffer.getvalue()
+    assert not terminal.renderer.active, "a crashed turn must not leave its region up"
 
 
 # --- cancellation ---------------------------------------------------------
@@ -369,7 +377,40 @@ async def test_the_question_names_the_tool() -> None:
     await terminal.ask_approval("write", {"path": "a.txt"})
 
     session = terminal._session
-    assert "write" in session.prompts[-1]  # type: ignore[attr-defined]
+    assert "write" in str(session.prompts[-1])  # type: ignore[attr-defined]
+
+
+async def test_the_question_shows_the_whole_command() -> None:
+    """The call line is cut short; what is being approved must not be."""
+    terminal, buffer = _terminal(["n"])
+    _attach(terminal, FakeProvider([]))
+    command = "make clean && " + "x" * 80 + " && rm -rf build/"
+
+    await terminal.ask_approval("bash", {"command": command})
+
+    assert command in buffer.getvalue().replace("\n", "")
+
+
+async def test_the_question_is_asked_with_the_live_region_down() -> None:
+    """A prompt under a live region is drawn over by its next redraw."""
+    terminal, _ = _terminal([])
+    _attach(terminal, FakeProvider([]))
+    seen: list[bool] = []
+
+    class Watching(ScriptedSession):
+        async def prompt_async(self, message: object = "") -> str:
+            seen.append(terminal.renderer.active)
+            return "y"
+
+    terminal._session = Watching([])  # type: ignore[assignment]
+    await terminal.renderer(AgentStart())
+    assert terminal.renderer.active
+
+    await terminal.ask_approval("bash", {"command": "ls"})
+
+    assert seen == [False]
+    assert terminal.renderer.active, "the region comes back once answered"
+    terminal.renderer.close()
 
 
 async def test_a_denied_tool_does_not_run_through_the_terminal(tmp_path) -> None:
@@ -414,6 +455,123 @@ async def test_an_approved_tool_runs_through_the_terminal(tmp_path) -> None:
     await terminal.run()
 
     assert (tmp_path / "new.txt").read_text() == "hi"
+
+
+# --- thinking toggle ------------------------------------------------------
+
+
+async def test_ctrl_o_at_the_prompt_toggles_thinking() -> None:
+    """Through a real PromptSession, so the binding beats prompt_toolkit's own
+    Ctrl-O (emacs operate-and-get-next) and the typed line is left intact."""
+    calls: list[str] = []
+    with create_pipe_input() as pipe:
+        pipe.send_text("ab\x0fcd\r")
+        session: PromptSession[str] = PromptSession(
+            input=pipe, output=DummyOutput(), key_bindings=_bindings(lambda: calls.append("t"))
+        )
+        assert await session.prompt_async("› ") == "abcd"  # noqa: RUF001
+
+    assert calls == ["t"]
+
+
+async def test_toggling_expands_the_last_runs_thinking() -> None:
+    terminal, buffer = _terminal(["think"])
+    _attach(terminal, FakeProvider([text_response("answer", thinking="the reasoning")]))
+    await terminal.run()
+    assert "the reasoning" not in buffer.getvalue()
+
+    terminal._toggle_thinking()
+
+    assert "the reasoning" in buffer.getvalue()
+    assert terminal.renderer.thinking_mode == "full"
+
+
+def test_an_invalid_prompt_style_is_a_config_error() -> None:
+    config = Config(terminal=TerminalConfig(theme=ThemeConfig(prompt="rgb(1,2,3)")))
+
+    with pytest.raises(ConfigError, match=r"terminal\.theme\.prompt"):
+        Terminal(console=Console(file=io.StringIO()), config=config)
+
+
+def test_ctrl_o_cannot_discard_output_during_a_run() -> None:
+    """Cooked-mode Ctrl-O is DISCARD on macOS and the BSDs: it would silently
+    drop the run's output. Disabled for the run, restored after."""
+    termios = pytest.importorskip("termios")
+    import os
+    import pty
+
+    master, slave = pty.openpty()
+    try:
+        disabled = bytes([os.fpathconf(slave, "PC_VDISABLE")])
+        before = termios.tcgetattr(slave)
+        with _ctrl_o_passes_through(slave):
+            during = termios.tcgetattr(slave)
+        after = termios.tcgetattr(slave)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+    assert before[6][termios.VDISCARD] != disabled
+    assert during[6][termios.VDISCARD] == disabled
+    assert after == before
+
+
+def test_the_discard_guard_ignores_a_non_terminal() -> None:
+    with _ctrl_o_passes_through(None):
+        pass
+
+
+async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -> None:
+    termios = pytest.importorskip("termios")
+    import os
+    import pty
+
+    from pydantic import BaseModel
+
+    from harness.tools.base import ToolContext, ToolResult, ok, tool
+
+    class _P(BaseModel):
+        pass
+
+    master, slave = pty.openpty()
+    disabled = bytes([os.fpathconf(slave, "PC_VDISABLE")])
+    during: list[bytes] = []
+
+    @tool(name="probe", description="probe")
+    async def probe(p: _P, ctx: ToolContext) -> ToolResult:
+        during.append(termios.tcgetattr(slave)[6][termios.VDISCARD])
+        return ok("probed")
+
+    monkeypatch.setattr("harness.cli.terminal._stdin_fd", lambda: slave)
+    call = ToolCallBlock(id="c1", name="probe", arguments={})
+    terminal, _ = _terminal(["go"])
+    _attach(
+        terminal,
+        FakeProvider([tool_call_response([call]), text_response("done")]),
+        tools=(probe,),
+    )
+    try:
+        await terminal.run()
+        after = termios.tcgetattr(slave)[6][termios.VDISCARD]
+    finally:
+        os.close(master)
+        os.close(slave)
+
+    assert during == [disabled]
+    assert after != disabled
+
+
+# --- the prompt -----------------------------------------------------------
+
+
+async def test_the_prompt_glyph_is_styled() -> None:
+    terminal, _ = _terminal([])
+    _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    first = terminal._session.prompts[0]  # type: ignore[attr-defined]
+    assert first == [("class:glyph", "› ")]  # noqa: RUF001
 
 
 # --- wiring ---------------------------------------------------------------

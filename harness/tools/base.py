@@ -31,7 +31,9 @@ ExecutionMode = Literal["parallel", "sequential"]
 class ToolResult:
     content: tuple[ContentBlock, ...]
     is_error: bool = False
-    #: Structured data for renderers. Never sent to the model.
+    #: Structured data for renderers — `edit`'s diff, `bash`'s exit code.
+    #: Never sent to the model. Carried on `tool_execution_end`, so JSON
+    #: primitives only, and paths relative to cwd as in `content`.
     details: dict[str, object] = field(default_factory=dict)
 
 

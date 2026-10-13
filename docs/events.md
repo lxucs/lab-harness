@@ -51,7 +51,7 @@ agent_end
 | `message_end` | `message` | |
 | `tool_execution_start` | `tool_call_id`, `tool_name`, `arguments` | |
 | `tool_execution_update` | `tool_call_id`, `tool_name`, `content` | Streaming partial results |
-| `tool_execution_end` | `tool_call_id`, `tool_name`, `content`, `is_error`, `duration_ms` | |
+| `tool_execution_end` | `tool_call_id`, `tool_name`, `content`, `is_error`, `duration_ms`, `details` | `details` is the result's structured data for renderers — see below |
 
 ### `message_start` on an assistant message is a placeholder
 
@@ -78,6 +78,20 @@ its own answers with none of the questions.
 `_reduce` stays the single writer to `state.messages`. The consequence worth
 knowing: **the event stream reproduces the transcript exactly**, in order. That
 is what makes the session recorder a plain subscriber.
+
+### `tool_execution_end` carries the result's `details`
+
+A `ToolResult` has `content`, which is what the model sees, and `details`,
+which it never does: structured data for whoever renders the call. The end
+event is how a renderer gets them. `edit` and `write` put a unified diff of
+their change there, under `diff`, which is what the terminal draws as red and
+green lines; `bash` puts its exit code.
+
+They follow the rule every event does — JSON primitives only — so they reach a
+`--json` consumer intact, and paths in them are relative to the working
+directory, as in output. An `after_tool_call` hook can replace them as well as
+the content, which a redaction hook has to: a diff shows the text it removed.
+A hook that fails drops them along with the content it was meant to review.
 
 ### Why `message_update` carries a delta
 

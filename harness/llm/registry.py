@@ -52,6 +52,9 @@ MODELS: dict[str, Model] = {
         provider="anthropic",
         context_window=_CONTEXT_200K,
         max_tokens=8_192,
+        # Extended thinking, the budgeted kind — see
+        # `providers.anthropic.budget_thinking_models`.
+        supports_reasoning=True,
         supports_images=True,
         supports_server_tools=True,
     ),

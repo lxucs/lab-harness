@@ -206,14 +206,35 @@ class AnthropicProvider:
             ]
         if opts.temperature is not None:
             request["temperature"] = opts.temperature
-        if opts.reasoning is not None and model.supports_reasoning:
-            request["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": self._config.thinking_budget_tokens,
-            }
-            # The API rejects temperature alongside extended thinking.
-            request.pop("temperature", None)
+        if model.supports_reasoning:
+            thinking = self._thinking(model, opts)
+            if thinking is not None:
+                request["thinking"] = thinking
+                # The API rejects temperature alongside thinking.
+                request.pop("temperature", None)
+            if opts.reasoning is not None and not self._takes_budget(model):
+                # Adaptive thinking has no budget; effort is how deep it goes.
+                request["output_config"] = {"effort": opts.reasoning}
         return request
+
+    def _thinking(self, model: Model, opts: StreamOptions) -> dict[str, Any] | None:
+        """The `thinking` field for a reasoning model, or None to send none.
+
+        Two request shapes, per model. Adaptive is sent whether or not
+        reasoning was requested, because the models that take it think by
+        default anyway, and only an explicit request can ask for `display`.
+        """
+        if self._takes_budget(model):
+            if opts.reasoning is None:
+                return None
+            return {"type": "enabled", "budget_tokens": self._config.thinking_budget_tokens}
+        thinking: dict[str, Any] = {"type": "adaptive"}
+        if self._config.thinking_display:
+            thinking["display"] = self._config.thinking_display
+        return thinking
+
+    def _takes_budget(self, model: Model) -> bool:
+        return model.id.startswith(self._config.budget_thinking_models)
 
 
 # --- request translation --------------------------------------------------

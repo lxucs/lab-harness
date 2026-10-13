@@ -29,6 +29,6 @@ Working agreements for AI coding agents are in [`../AGENTS.md`](../AGENTS.md).
 Every numbered build step is complete, so these pages describe what the code
 does rather than what it will do. The one piece of the original design still
 unbuilt is context compaction, marked TODO in
-[architecture.md](architecture.md). The remaining TODOs — compaction, Anthropic
-prompt caching, and Anthropic's thinking request — and what is deliberately not
-planned are listed in [the README](../README.md#todo).
+[architecture.md](architecture.md). The remaining TODOs — compaction and Anthropic
+prompt caching — and what is deliberately not planned are listed in
+[the README](../README.md#todo).

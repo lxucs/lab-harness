@@ -77,6 +77,9 @@ max_bytes = 256000      # largest file `read` will open
 [tools.list]
 max_entries = 1000      # entries per `ls`
 
+[tools.diff]
+context_lines = 3       # unchanged lines around each change in an edit's diff
+
 [tools.bash]
 timeout_seconds = 120       # default wall-clock limit
 max_timeout_seconds = 600   # ceiling on a requested timeout
@@ -109,9 +112,16 @@ enabled_tools = [
     "web_search", "web_fetch",
 ]
 max_result_lines = 12   # tool output shown before collapsing
+max_diff_lines = 40     # lines of an edit's diff shown before collapsing
 markdown = true         # render assistant text as markdown
+thinking = "collapse"   # reasoning once its message ends: "full" | "collapse" | "hidden"
+thinking_preview_lines = 4  # lines of reasoning shown while it streams, when collapsing
 show_usage = true       # token, cache and cost line after each run
 currency_symbol = "$"   # label for costs computed from [pricing]
+
+[terminal.theme]        # rich style strings, by role; see "The terminal" below
+accent = "#d77757"
+prompt = "bold #d77757"
 
 [session]
 home = "~/.harness"     # root for state; $HARNESS_HOME overrides
@@ -120,7 +130,9 @@ version = 2             # transcript schema version
 
 [providers.anthropic]
 default_max_tokens = 8192     # when the model declares none
-thinking_budget_tokens = 4096 # when reasoning is requested
+thinking_display = "summarized"  # "summarized" | "omitted" | "" for no preference
+budget_thinking_models = ["claude-haiku-4-5", "claude-3"]  # …and the rest before 4.6
+thinking_budget_tokens = 4096 # for those, when reasoning is requested
 
 # Endpoints in the OpenAI family, keyed by profile name. openai, deepseek and
 # glm ship as defaults; see "Provider profiles" below.
@@ -160,9 +172,13 @@ The full list, with every default, is in
 [tools.web.tavily]
 api_key = "tvly-..."   # placeholder
 
-[providers.anthropic]
-base_url = "https://internal-gateway.example.com"   # placeholder
+[providers.openai.deepseek]
+base_url = "https://internal-gateway.example.com/v1"   # placeholder
 ```
+
+Anthropic's endpoint has no `base_url` key: it is read from
+`ANTHROPIC_BASE_URL` (named by `providers.anthropic.base_url_env`), so a
+gateway in front of it is an environment setting.
 
 Prefer environment variables for secrets. `config.local.toml` is for
 machine-specific non-secret values, and for keys when env vars are inconvenient
@@ -326,6 +342,44 @@ entry.
 Amounts are labelled with `terminal.currency_symbol` (default `$`). It is only a
 label: write every rate in the same currency, because a session that switches
 models adds the costs together.
+
+## The terminal
+
+How the interactive terminal looks. What each element is:
+[cli.md](cli.md#interactive).
+
+`thinking` picks what a model's reasoning leaves in scrollback — `full`,
+`collapse` (the default) or `hidden` — and Ctrl-O switches between `full` and
+it for the session. [cli.md](cli.md#thinking) has the table.
+
+`[terminal.theme]` styles the output by role rather than by color, so "what
+does a failed tool look like" is one setting. Values are rich style strings —
+a color name or hex code, plus any of `bold`, `dim`, `italic`, `underline`:
+
+```toml
+[terminal.theme]
+accent = "#d77757"        # the spinner — Claude Code's orange
+prompt = "bold #d77757"   # the › glyph
+muted = "dim"             # tool arguments and output, notices, the usage line
+thinking = "italic dim"   # reasoning, streamed or expanded
+tool = "bold"             # the tool's name in a call line
+success = "green"         # the bullet of a call that finished cleanly
+error = "red"             # failed calls and errors
+warning = "yellow"        # cancellations, warnings, calls awaiting approval
+diff_added = "#ffffff on #225c2b"    # whole added lines of a diff
+diff_removed = "#ffffff on #7a2936"  # whole removed lines
+```
+
+**Diff lines name a foreground as well as a background**, so they read the
+same on a light terminal as a dark one. A background alone would leave the
+terminal's own text color on it — near-black on a light theme.
+
+**`prompt` is parsed by prompt_toolkit, not rich**, since the input line is
+prompt_toolkit's. Hex colors and `bold`/`italic`/`underline` work in both;
+rich's `rgb(…)` form does not.
+
+**Every style is checked at startup.** A typo is a config error naming the
+key, rather than a crash on the first message that uses it.
 
 ## Logging
 

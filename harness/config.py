@@ -189,9 +189,21 @@ class WebConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DiffConfig:
+    """The diff `edit` and `write` report beside their result, for a renderer.
+
+    Never sent to the model: it rides in the result's `details`.
+    """
+
+    #: Unchanged lines shown around each change. Three is git's default.
+    context_lines: int = 3
+
+
+@dataclass(frozen=True, slots=True)
 class ToolsConfig:
     read: ReadConfig = field(default_factory=ReadConfig)
     list: ListConfig = field(default_factory=ListConfig)
+    diff: DiffConfig = field(default_factory=DiffConfig)
     bash: BashConfig = field(default_factory=BashConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
     web: WebConfig = field(default_factory=WebConfig)
@@ -207,9 +219,30 @@ class AnthropicConfig:
     base_url_env: str = "ANTHROPIC_BASE_URL"
     #: Sampling ceiling when the model declares none.
     default_max_tokens: int = 8_192
-    #: Thinking budget when reasoning is requested, in tokens. Haiku 4.5 needs
-    #: one; Sonnet 5 and Opus 5 reject it — see the TODO in docs/providers.md.
-    #: Nothing requests reasoning yet.
+    #: What comes back in a thinking block: "summarized" or "omitted". Opus 5
+    #: and Sonnet 5 think whether asked to or not, but default to omitted —
+    #: the blocks arrive empty, and a terminal has nothing to show. Billing is
+    #: the same either way. Empty sends no preference, for a model that
+    #: rejects the field.
+    thinking_display: str = "summarized"
+    #: Models that take the older thinking request, a token budget, matched by
+    #: id prefix so a dated id and its alias agree: everything before 4.6,
+    #: which introduced adaptive thinking. Any other reasoning model gets
+    #: adaptive, as an uncatalogued id is assumed current — and the 5-series
+    #: rejects a budget with a 400.
+    budget_thinking_models: tuple[str, ...] = (
+        "claude-haiku-4-5",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
+        "claude-opus-4-1",
+        "claude-opus-4-0",
+        "claude-opus-4-2025",
+        "claude-sonnet-4-0",
+        "claude-sonnet-4-2025",
+        "claude-3",
+    )
+    #: Budget for those models, in tokens, when reasoning is requested. They
+    #: do not think otherwise.
     thinking_budget_tokens: int = 4_096
 
 
@@ -402,6 +435,39 @@ class SessionConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ThemeConfig:
+    """Styles for the interactive terminal, as rich style strings.
+
+    Named by role rather than by color, so that "what does a failed tool look
+    like" is one setting. Each is checked at startup — a typo fails there, not
+    on the first message that uses it. The defaults follow Claude Code.
+    """
+
+    #: The spinner and other highlights. Claude Code's orange.
+    accent: str = "#d77757"
+    #: The input prompt's glyph. prompt_toolkit parses this one, not rich, so
+    #: it takes prompt_toolkit's syntax — hex colors and bold/italic/underline
+    #: work in both; rich's `rgb(...)` does not.
+    prompt: str = "bold #d77757"
+    #: Secondary text: tool arguments and output, notices, the usage line.
+    muted: str = "dim"
+    #: Reasoning, streamed or expanded.
+    thinking: str = "italic dim"
+    #: The tool's name in a call line.
+    tool: str = "bold"
+    #: The bullet of a tool call that finished cleanly.
+    success: str = "green"
+    #: Failed tool calls and errors.
+    error: str = "red"
+    #: Cancellations and warnings.
+    warning: str = "yellow"
+    #: Whole lines of a diff, added and removed. A foreground as well as the
+    #: background, so they read the same on a light terminal as a dark one.
+    diff_added: str = "#ffffff on #225c2b"
+    diff_removed: str = "#ffffff on #7a2936"
+
+
+@dataclass(frozen=True, slots=True)
 class TerminalConfig:
     #: Tools whose default tool set the interactive terminal enables.
     enabled_tools: tuple[str, ...] = (
@@ -417,14 +483,26 @@ class TerminalConfig:
     )
     #: Lines of tool output shown inline before collapsing to a summary.
     max_result_lines: int = 12
+    #: Lines of an edit's diff shown before collapsing. More than plain
+    #: output gets, since the diff is the part of an edit worth reading.
+    max_diff_lines: int = 40
     #: Render assistant text as markdown rather than plain text.
     markdown: bool = True
+    #: What a model's reasoning leaves in scrollback once its message ends:
+    #: "full", "collapse" to one line, or "hidden". The first two also show it
+    #: as it streams; hidden shows only the spinner. Ctrl-O switches between
+    #: full and this for the rest of the session.
+    thinking: str = "collapse"
+    #: Lines of reasoning shown while it streams, when it is going to
+    #: collapse. "full" shows as much as fits.
+    thinking_preview_lines: int = 4
     #: Print one line of token, cache and cost figures after each run.
     #: `:status` shows the session's totals either way.
     show_usage: bool = True
     #: Label for amounts computed from `pricing`. Only a label — nothing is
     #: converted, so it has to match the currency the rates are quoted in.
     currency_symbol: str = "$"
+    theme: ThemeConfig = field(default_factory=ThemeConfig)
 
 
 @dataclass(frozen=True, slots=True)

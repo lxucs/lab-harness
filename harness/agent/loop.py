@@ -593,11 +593,12 @@ async def _finish(
             # Report the hook failure rather than passing the tool's result
             # through: this seam is where result redaction and approval live,
             # so silently forwarding an unreviewed result is the worse default.
+            # That goes for the details as much as the content — they reach
+            # every renderer too.
             _log.exception("after_tool_call hook failed for %r", call.name)
             result = ToolResult(
                 content=text(_HOOK_FAILED_NOTICE.format(hook="after_tool_call", error=exc)),
                 is_error=True,
-                details=result.details,
             )
         else:
             if override is not None:
@@ -606,7 +607,7 @@ async def _finish(
                     is_error=(
                         override.is_error if override.is_error is not None else result.is_error
                     ),
-                    details=result.details,
+                    details=override.details if override.details is not None else result.details,
                 )
 
     await _safe_emit(
@@ -617,6 +618,7 @@ async def _finish(
             content=result.content,
             is_error=result.is_error,
             duration_ms=duration_ms,
+            details=result.details,
         ),
     )
     return result

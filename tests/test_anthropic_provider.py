@@ -525,17 +525,83 @@ async def test_max_tokens_comes_from_the_model_not_a_literal() -> None:
     assert client.messages.requests[0]["max_tokens"] == MODEL.max_tokens
 
 
-async def test_reasoning_enables_thinking_and_drops_temperature() -> None:
-    """The API rejects temperature alongside extended thinking."""
+HAIKU = resolve_model("claude-haiku-4-5-20251001")
+
+
+async def _request_for(
+    model_id: str, opts: StreamOptions | None = None, **config: Any
+) -> dict[str, Any]:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    config = AnthropicConfig(thinking_budget_tokens=2_048)
-    provider = AnthropicProvider(config, client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(AnthropicConfig(**config), client=client)  # type: ignore[arg-type]
+    _ = [event async for event in provider.stream(resolve_model(model_id), _ctx(), opts)]
+    return client.messages.requests[0]
 
-    await _collect(provider, _ctx(), StreamOptions(reasoning="high", temperature=0.7))
 
-    request = client.messages.requests[0]
-    assert request["thinking"] == {"type": "enabled", "budget_tokens": 2_048}
-    assert "temperature" not in request
+@pytest.mark.parametrize("model_id", ["claude-opus-5", "claude-sonnet-5"])
+async def test_adaptive_models_ask_for_summarized_thinking(model_id: str) -> None:
+    """Both think unasked, but return empty thinking text unless asked for it."""
+    request = await _request_for(model_id)
+
+    assert request["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+async def test_an_adaptive_model_is_never_sent_a_budget() -> None:
+    """The 5-series rejects `budget_tokens` with a 400; effort is the dial."""
+    request = await _request_for("claude-sonnet-5", StreamOptions(reasoning="high"))
+
+    assert request["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert request["output_config"] == {"effort": "high"}
+
+
+async def test_an_empty_display_sends_no_preference() -> None:
+    request = await _request_for("claude-opus-5", thinking_display="")
+
+    assert request["thinking"] == {"type": "adaptive"}
+
+
+async def test_thinking_drops_temperature() -> None:
+    """The API rejects temperature alongside thinking, of either kind."""
+    adaptive = await _request_for("claude-sonnet-5", StreamOptions(temperature=0.7))
+    budget = await _request_for(
+        HAIKU.id, StreamOptions(reasoning="high", temperature=0.7), thinking_budget_tokens=2_048
+    )
+
+    assert "temperature" not in adaptive
+    assert budget["thinking"] == {"type": "enabled", "budget_tokens": 2_048}
+    assert "temperature" not in budget
+
+
+async def test_a_budget_model_thinks_only_when_asked() -> None:
+    """Haiku 4.5 predates adaptive thinking and does not think by default."""
+    request = await _request_for(HAIKU.id, StreamOptions(temperature=0.7))
+
+    assert "thinking" not in request
+    assert request["temperature"] == 0.7
+
+
+@pytest.mark.parametrize("model_id", ["claude-haiku-4-5", "claude-sonnet-4-20250514"])
+async def test_budget_models_match_by_id_prefix(model_id: str) -> None:
+    """So a dated id and its alias take the same request shape."""
+    unasked = await _request_for(model_id)
+    asked = await _request_for(
+        model_id, StreamOptions(reasoning="high"), thinking_budget_tokens=1_024
+    )
+
+    assert "thinking" not in unasked, "a pre-4.6 model may not support thinking at all"
+    assert asked["thinking"] == {"type": "enabled", "budget_tokens": 1_024}
+    assert "output_config" not in asked
+
+
+async def test_a_model_without_reasoning_gets_no_thinking_request() -> None:
+    from dataclasses import replace
+
+    client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
+    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    plain = replace(MODEL, supports_reasoning=False)
+
+    _ = [event async for event in provider.stream(plain, _ctx(), StreamOptions(reasoning="high"))]
+
+    assert "thinking" not in client.messages.requests[0]
 
 
 def _fake_response(status: int) -> Any:

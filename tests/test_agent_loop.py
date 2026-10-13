@@ -7,6 +7,8 @@ import pytest
 
 from harness.agent.loop import run_agent_loop
 from harness.agent.types import (
+    AfterToolCallContext,
+    AfterToolCallResult,
     AgentContext,
     AgentEnd,
     AgentEvent,
@@ -448,6 +450,64 @@ async def test_abort_signal_stops_the_run() -> None:
 
 
 # --- hook and subscriber isolation (Finding 1) ----------------------------
+
+
+class DetailedTool(RecordingTool):
+    """Returns `details` beside its content, as `edit` does with its diff."""
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        return ToolResult(content=text("done"), details={"diff": "secret-bearing diff"})
+
+
+async def _end_event(**cfg: Any) -> ToolExecutionEnd:
+    call = ToolCallBlock(id="c1", name="detailed", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("ok")])
+    events, emit = _collector()
+
+    await run_agent_loop(_ctx(DetailedTool(name="detailed")), _cfg(provider, **cfg), emit)
+
+    return next(e for e in events if isinstance(e, ToolExecutionEnd))
+
+
+async def test_tool_details_reach_the_end_event() -> None:
+    """`details` exist for renderers, and the event is how a renderer gets them."""
+    end = await _end_event()
+
+    assert end.details == {"diff": "secret-bearing diff"}
+
+
+async def test_after_tool_call_can_replace_the_details() -> None:
+    """A redaction hook has to reach the details too, or a diff leaks what the
+    content no longer shows."""
+
+    async def redact(ctx: AfterToolCallContext) -> AfterToolCallResult:
+        return AfterToolCallResult(details={"diff": "[redacted]"})
+
+    end = await _end_event(after_tool_call=redact)
+
+    assert end.details == {"diff": "[redacted]"}
+
+
+async def test_after_tool_call_that_changes_only_content_keeps_the_details() -> None:
+    async def reword(ctx: AfterToolCallContext) -> AfterToolCallResult:
+        return AfterToolCallResult(content=text("reworded"))
+
+    end = await _end_event(after_tool_call=reword)
+
+    assert end.details == {"diff": "secret-bearing diff"}
+
+
+async def test_a_failing_after_tool_call_drops_the_details() -> None:
+    """The hook is where redaction lives: when it fails, nothing it was meant
+    to review is passed through — the content is replaced, and so are these."""
+
+    async def boom(ctx: object) -> None:
+        raise RuntimeError("hook exploded")
+
+    end = await _end_event(after_tool_call=boom)
+
+    assert end.is_error
+    assert end.details == {}
 
 
 async def test_raising_after_tool_call_hook_does_not_kill_the_run() -> None:

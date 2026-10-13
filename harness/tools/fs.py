@@ -9,6 +9,7 @@ say what went wrong and what to do instead, because the model's next action is
 chosen from that text.
 """
 
+import difflib
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -32,10 +33,11 @@ def resolve(path: str, ctx: ToolContext) -> Path:
 
 
 def _display(path: Path, ctx: ToolContext) -> str:
-    """Render a path for the model: relative to cwd when it is inside it.
+    """Render a path for output and `details`: relative to cwd when inside it.
 
     Absolute paths leak the machine's layout into the transcript, which is both
-    noisy and the kind of thing that ends up committed.
+    noisy and the kind of thing that ends up committed — and `details` reach the
+    event stream, so every `--json` log, as well.
     """
     try:
         return str(path.relative_to(Path(ctx.cwd).expanduser().resolve()))
@@ -95,7 +97,7 @@ async def read(p: ReadParams, ctx: ToolContext) -> ToolResult:
     if not lines:
         rendered = "[file is empty]"
 
-    return ok(rendered, path=str(path), lines=len(window), total_lines=len(lines))
+    return ok(rendered, path=_display(path, ctx), lines=len(window), total_lines=len(lines))
 
 
 def _clip(line: str, limit: int) -> str:
@@ -122,19 +124,26 @@ async def write(p: WriteParams, ctx: ToolContext) -> ToolResult:
         return fail(f"{_display(path, ctx)} is a directory.")
 
     existed = path.exists()
+    shown = _display(path, ctx)
+    before = _previous_text(path) if existed else ""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(p.content, encoding="utf-8")
     except OSError as exc:
-        return fail(f"Could not write {_display(path, ctx)}: {exc}")
+        return fail(f"Could not write {shown}: {exc}")
 
     verb = "Updated" if existed else "Created"
     line_count = len(p.content.splitlines())
+    # A file that was not text has no diff worth showing; the write still happens.
+    change = (
+        {} if before is None else {"diff": _diff(before, p.content, shown, ctx, new=not existed)}
+    )
     return ok(
-        f"{verb} {_display(path, ctx)} ({line_count} lines)",
-        path=str(path),
+        f"{verb} {shown} ({line_count} lines)",
+        path=shown,
         created=not existed,
         lines=line_count,
+        **change,
     )
 
 
@@ -193,11 +202,39 @@ async def edit(p: EditParams, ctx: ToolContext) -> ToolResult:
         return fail(f"Could not write {_display(path, ctx)}: {exc}")
 
     replaced = occurrences if p.replace_all else 1
+    shown = _display(path, ctx)
     return ok(
-        f"Replaced {replaced} occurrence(s) in {_display(path, ctx)}",
-        path=str(path),
+        f"Replaced {replaced} occurrence(s) in {shown}",
+        path=shown,
         replacements=replaced,
+        diff=_diff(content, updated, shown, ctx),
     )
+
+
+def _previous_text(path: Path) -> str | None:
+    """What a write is about to replace, or None if it was not readable text."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _diff(before: str, after: str, shown: str, ctx: ToolContext, *, new: bool = False) -> str:
+    """A unified diff of a change, for `details` — never for the model.
+
+    The standard format rather than an invented one, so a consumer of the event
+    stream in any language can parse it with whatever it already has. Named by
+    the displayed path, for the same reason output is.
+    """
+    lines = difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        fromfile="/dev/null" if new else f"a/{shown}",
+        tofile=f"b/{shown}",
+        n=ctx.config.tools.diff.context_lines,
+        lineterm="",
+    )
+    return "\n".join(lines)
 
 
 # --- ls -------------------------------------------------------------------
@@ -231,7 +268,7 @@ async def ls(p: ListParams, ctx: ToolContext) -> ToolResult:
     if len(entries) > limit:
         rendered += f"\n[truncated at {limit} of {len(entries)} entries]"
 
-    return ok(rendered, path=str(path), entries=len(shown), total_entries=len(entries))
+    return ok(rendered, path=_display(path, ctx), entries=len(shown), total_entries=len(entries))
 
 
 FILESYSTEM_TOOLS = (read, write, edit, ls)

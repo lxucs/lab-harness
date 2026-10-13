@@ -14,6 +14,13 @@ what to do instead:
 unique, or set replace_all.
 ```
 
+A `ToolResult` carries two things. `content` is what the model reads.
+`details` is structured data it never sees, for whoever renders the call —
+`edit`'s diff, `bash`'s exit code — and reaches renderers on the
+`tool_execution_end` event. Keep it to JSON primitives, like every event, and
+paths in it relative to `cwd`, like output: it reaches `--json` logs too. See
+[events.md](events.md#tool_execution_end-carries-the-results-details).
+
 The contract lives in `harness/tools/base.py` rather than in `agent/`, because
 dependencies point downward: `agent/` consumes tools, so `tools/` must never
 import from it. `agent/types.py` re-exports the names for callers.
@@ -143,8 +150,8 @@ one run must not silently authorize the next.
 | Tool | Mode | Notes |
 |---|---|---|
 | `read` | parallel | 1-indexed numbered lines; offset/limit; clips long lines; refuses oversized and binary files |
-| `write` | **sequential** | Creates parent directories; overwrites. **Approval-gated.** |
-| `edit` | **sequential** | Exact string replacement; refuses ambiguous matches unless `replace_all`. **Approval-gated.** |
+| `write` | **sequential** | Creates parent directories; overwrites; reports a diff against what was there. **Approval-gated.** |
+| `edit` | **sequential** | Exact string replacement; refuses ambiguous matches unless `replace_all`; reports a diff. **Approval-gated.** |
 | `ls` | parallel | Directories first, marked with `/`; hides dotfiles unless `all` |
 | `bash` | **sequential** | Combined stdout+stderr, streamed; timeout; output capped. **Approval-gated.** |
 | `grep` | parallel | Regex over file contents; skips binary files and ignored directories |
@@ -162,6 +169,7 @@ Every threshold is a config key, never a literal:
 | `tools.read.max_line_length` | 2000 | Where a long line is clipped |
 | `tools.read.max_bytes` | 256000 | Largest file `read` will open |
 | `tools.list.max_entries` | 1000 | Entries per `ls` |
+| `tools.diff.context_lines` | 3 | Unchanged lines around each change in an edit's or write's diff |
 | `tools.bash.timeout_seconds` | 120 | Default command timeout |
 | `tools.bash.max_timeout_seconds` | 600 | Ceiling on a requested timeout |
 | `tools.bash.max_output_bytes` | 30000 | Output kept before eliding the middle |
@@ -180,9 +188,20 @@ mechanical rather than guesswork.
 
 ### Paths in output
 
-Tool output renders paths **relative to `cwd`** when they are inside it.
-Absolute paths leak the machine's layout into a transcript that may well be
-committed — see the hygiene rules in [contributing.md](contributing.md).
+Tool output renders paths **relative to `cwd`** when they are inside it, and
+so do the paths in `details` and in a diff's header. Absolute paths leak the
+machine's layout into a transcript that may well be committed, and into every
+`--json` log — see the hygiene rules in [contributing.md](contributing.md).
+
+### Diffs
+
+`edit` and `write` report their change as a unified diff in
+`details["diff"]` — the standard format rather than an invented one, so a
+consumer in any language can parse it. A write that creates a file diffs
+against `/dev/null`; one that overwrites a file that was not UTF-8 text writes
+it anyway and reports no diff. The model is told only what it always was
+("Replaced 1 occurrence(s) in a.py"): a diff it already knows the content of
+would cost tokens and tell it nothing.
 
 ## Web tools
 

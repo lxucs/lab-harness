@@ -7,7 +7,7 @@ consumer in another language must be possible.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from harness.config import Config
@@ -102,6 +102,9 @@ class ToolExecutionEnd:
     content: tuple[ContentBlock, ...]
     is_error: bool
     duration_ms: int
+    #: The result's `details` — structured data for renderers, never sent to
+    #: the model; `edit`'s diff, for one. JSON primitives only, like the rest.
+    details: dict[str, object] = field(default_factory=dict)
     type: Literal["tool_execution_end"] = "tool_execution_end"
 
 
@@ -143,8 +146,14 @@ class AfterToolCallContext:
 
 @dataclass(frozen=True, slots=True)
 class AfterToolCallResult:
+    """Overrides for a finished call's result. None leaves that part alone."""
+
     content: tuple[ContentBlock, ...] | None = None
     is_error: bool | None = None
+    #: Replaces the result's `details`. A hook that redacts the content has to
+    #: redact these too: they reach every renderer, and a diff in them shows
+    #: the text the content no longer does.
+    details: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -82,7 +82,7 @@ This works only if events stay plain data — see [events.md](events.md).
 | Hook | When | Used by |
 |---|---|---|
 | `before_tool_call` | after args validate, before execute | approval gate (`cli/approval.py`) |
-| `after_tool_call` | after execute, before events emit | truncation, redaction |
+| `after_tool_call` | after execute, before events emit | truncation, redaction — of `content` and `details` both |
 | `prepare_request` | before every provider request | compaction (TODO) |
 | `finish_turn` | when a turn would cleanly end the run | auto-continue |
 

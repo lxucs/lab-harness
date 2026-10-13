@@ -39,7 +39,9 @@ See [architecture.md](architecture.md).
 
 Every `AgentEvent` is a frozen dataclass of JSON primitives. No live objects,
 file handles, SDK types, or callables. `tests/test_serialization.py`
-round-trips every event type and fails if this breaks.
+round-trips every event type and fails if this breaks. That includes a tool's
+`ToolResult.details`, which ride on `tool_execution_end` — a `Path` or a
+datetime put there would break every serializing subscriber.
 
 This is what lets a second consumer exist — the JSONL sink today, a frontend in
 another language later. See [events.md](events.md).

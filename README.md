@@ -9,7 +9,7 @@ layering, trimmed to the parts that earn their keep.
 
 > **Status: usable, and feature-complete against its design.** Three provider
 > adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions — 788 tests, all offline. Details in
+> durable sessions — 850 tests, all offline. Details in
 > [Status](#status).
 
 ## Why
@@ -80,7 +80,11 @@ uv run harness --model gpt-5                 # OpenAI, via the Responses API
 ```
 
 In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
-session and `Ctrl-D` exits. Mutating tools (`bash`, `write`, `edit`) ask before
+session, `Ctrl-O` expands or collapses the model's thinking, and `Ctrl-D`
+exits. Reasoning streams live — DeepSeek's and GLM's raw chain, OpenAI's and
+Claude's summaries — and collapses to one line when its answer starts. Edits
+show as red and green diffs, Claude Code style, both when they ask for approval
+and once they land. Mutating tools (`bash`, `write`, `edit`) ask before
 running. Conversations are saved per project under `~/.harness/sessions/` and
 `--resume` picks the last one back up; `--no-save` skips persistence. A saved
 session records the system prompt, tools, model and config each invocation ran
@@ -117,11 +121,12 @@ should also read [AGENTS.md](AGENTS.md).
 **Everything planned is built:** a tested runtime core, the full local tool set
 (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch` with
 pluggable backends, three provider adapters (Messages, Responses, Chat
-Completions), an interactive terminal with a per-run token, cache and cost
-readout, a fail-closed approval gate, layered TOML config, project instructions
-from `HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable
-sessions that record enough to rebuild every request they made. A step-by-step
-reading order is in
+Completions), an interactive terminal with streamed, collapsible thinking,
+colored edit diffs and a per-run token, cache and cost readout, a fail-closed
+approval gate, layered TOML config, project instructions from
+`HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable sessions
+that record enough to rebuild every request they made. A step-by-step reading
+order is in
 [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
@@ -147,10 +152,6 @@ key either way.
   markers yet, so Anthropic caches nothing and its cache hit rate reads 0%.
   Contained to one function in `anthropic.py`; the placement is planned in
   [docs/providers.md](docs/providers.md#the-anthropic-adapter).
-- **Anthropic's thinking request.** Asking for reasoning sends `budget_tokens`,
-  which Claude Sonnet 5 and Opus 5 reject — they take adaptive thinking only.
-  Nothing asks for reasoning today (both think by default), so no current path
-  hits it. Details in the same section.
 
 ### Not planned
 

@@ -163,7 +163,12 @@ AGENT_EVENTS = [
     ToolExecutionStart(tool_call_id="c1", tool_name="read", arguments={"p": "a"}),
     ToolExecutionUpdate(tool_call_id="c1", tool_name="read", content=text("partial")),
     ToolExecutionEnd(
-        tool_call_id="c1", tool_name="read", content=text("done"), is_error=False, duration_ms=5
+        tool_call_id="c1",
+        tool_name="edit",
+        content=text("done"),
+        is_error=False,
+        duration_ms=5,
+        details={"path": "a.py", "replacements": 1, "diff": "--- a/a.py\n+++ b/a.py\n"},
     ),
 ]
 

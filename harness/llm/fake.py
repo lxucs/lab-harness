@@ -16,6 +16,9 @@ from harness.llm.events import (
     TextDelta,
     TextEnd,
     TextStart,
+    ThinkingDelta,
+    ThinkingEnd,
+    ThinkingStart,
     ToolCallEnd,
     ToolCallStart,
 )
@@ -25,6 +28,7 @@ from harness.llm.types import (
     Context,
     Model,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     Usage,
 )
@@ -43,34 +47,49 @@ _DEFAULT_USAGE = Usage(input=10, output=5)
 def text_response(
     value: str,
     *,
+    thinking: str | None = None,
     model: str = FAKE_MODEL.id,
     provider: str = "fake",
     chunk_size: int = 0,
 ) -> list[StreamEvent]:
-    """A complete turn that returns `value` as text.
+    """A complete turn that returns `value` as text, after `thinking` if given.
 
-    chunk_size=0 emits one delta; larger values split the text, which is how
-    streaming-render tests get multiple updates.
+    chunk_size=0 emits one delta per block; larger values split the text, which
+    is how streaming-render tests get multiple updates.
     """
-    chunks = (
-        [value]
-        if chunk_size <= 0
-        else [value[i : i + chunk_size] for i in range(0, len(value), chunk_size)]
-    )
+
+    def chunks(whole: str) -> list[str]:
+        if chunk_size <= 0:
+            return [whole]
+        return [whole[i : i + chunk_size] for i in range(0, len(whole), chunk_size)]
+
+    events: list[StreamEvent] = [StreamStart()]
+    content: list[ThinkingBlock | TextBlock] = []
+    index = count()
+    if thinking is not None:
+        i = next(index)
+        events += [
+            ThinkingStart(block_index=i),
+            *(ThinkingDelta(block_index=i, delta=c) for c in chunks(thinking)),
+            ThinkingEnd(block_index=i, thinking=thinking),
+        ]
+        content.append(ThinkingBlock(thinking=thinking))
+    i = next(index)
+    events += [
+        TextStart(block_index=i),
+        *(TextDelta(block_index=i, delta=c) for c in chunks(value)),
+        TextEnd(block_index=i, text=value),
+    ]
+    content.append(TextBlock(text=value))
     message = AssistantMessage(
-        content=(TextBlock(text=value),),
+        content=tuple(content),
         model=model,
         provider=provider,
         usage=_DEFAULT_USAGE,
         stop_reason="stop",
     )
-    return [
-        StreamStart(),
-        TextStart(block_index=0),
-        *(TextDelta(block_index=0, delta=c) for c in chunks),
-        TextEnd(block_index=0, text=value),
-        StreamDone(message=message, reason="stop"),
-    ]
+    events.append(StreamDone(message=message, reason="stop"))
+    return events
 
 
 def tool_call_response(
