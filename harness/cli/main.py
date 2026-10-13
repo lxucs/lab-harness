@@ -7,6 +7,7 @@ docs/contributing.md.
 
 import argparse
 import asyncio
+import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 
@@ -14,7 +15,7 @@ from rich.console import Console
 from rich.text import Text
 
 from harness.agent import Agent
-from harness.agent.types import AgentEvent, MessageEnd
+from harness.agent.types import AgentEvent, MessageEnd, declarations_for
 from harness.cli.json_sink import json_sink
 from harness.cli.terminal import Terminal, build_approval_gate
 from harness.config import Config, ConfigError, load_config
@@ -27,12 +28,13 @@ from harness.session import (
     SessionRecorder,
     TranscriptError,
     list_sessions,
-    prompt_hash,
     read_transcript,
     resume,
     start_recorder,
 )
 from harness.tools import default_registry
+
+_log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
     "You are a helpful coding assistant running in a terminal. You have tools "
@@ -150,27 +152,33 @@ def _attach_session(
             cwd=args.cwd,
             config=config.session,
             session_id=args.resume or None,
-            system_prompt_hash=prompt_hash(agent.state.system_prompt),
+            system_prompt=agent.state.system_prompt,
         )
         agent.restore(resumed.messages)
+        note = f"Resumed {resumed.path.stem} — {len(resumed.messages)} message(s)"
         if console is not None:
-            console.print(
-                Text(
-                    f"Resumed {resumed.path.stem} — {len(resumed.messages)} message(s)",
-                    style="dim",
-                )
-            )
+            console.print(Text(note, style="dim"))
             for warning in resumed.warnings:
                 console.print(Text(f"  {warning}", style="yellow"))
+        else:
+            # One-shot mode has no terminal to show these in. Logging puts them
+            # on stderr, clear of the answer on stdout and of the JSONL stream.
+            _log.info(note)
+            for warning in resumed.warnings:
+                _log.warning("Resumed %s: %s", resumed.path.stem, warning)
 
     if args.no_save or not config.session.enabled:
         return None
 
+    # Everything a request carries besides the messages, so that a transcript
+    # rebuilds each one exactly — see `recorded_requests`.
     recorder = start_recorder(
         cwd=args.cwd,
         model=agent.state.model,
         system_prompt=agent.state.system_prompt,
-        config=config.session,
+        tools=declarations_for(agent.state.tools),
+        config=config,
+        restored=len(agent.state.messages),
         path=resumed.path if resumed is not None else None,
     )
     agent.subscribe(recorder)

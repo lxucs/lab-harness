@@ -116,7 +116,7 @@ currency_symbol = "$"   # label for costs computed from [pricing]
 [session]
 home = "~/.harness"     # root for state; $HARNESS_HOME overrides
 enabled = true          # write transcripts at all
-version = 1             # transcript schema version
+version = 2             # transcript schema version
 
 [providers.anthropic]
 default_max_tokens = 8192     # when the model declares none
@@ -350,14 +350,15 @@ the answer alone with logging turned all the way up.
 | Level | What you get |
 |---|---|
 | `error` | Only failures the run could not absorb |
-| `warning` *(default)* | …plus a model id not in the catalog, project instructions truncated, `max_turns` exhausted, a provider request that failed |
-| `info` | …plus one line per significant decision: the model in use, the transcript being written |
+| `warning` *(default)* | …plus a model id not in the catalog, project instructions truncated, `max_turns` exhausted, a provider request that failed, and a resumed session's warnings in `-p` mode |
+| `info` | …plus one line per significant decision: the model in use, the transcript being written, a `-p` resume |
 | `debug` | …plus a trace: every config file read or skipped, request shape per turn, tool durations, outbound web requests |
 
 The default is `warning` because a run that works should print nothing beyond
 its answer. The warnings are the ones with no other channel: interactive mode
-shows a truncation notice on screen, but `-p` has no screen, and a model id the
-catalog has never seen otherwise surfaces as an opaque API error later.
+shows a truncation notice and resume warnings on screen, but `-p` has no
+screen, and a model id the catalog has never seen otherwise surfaces as an
+opaque API error later.
 
 **A level set in a config file cannot report that file being read.** Logging is
 configured twice — once from the flag, the environment and the schema defaults
@@ -437,6 +438,6 @@ silent skip — the same reasoning as a malformed config file. Instructions you
 meant to apply and that quietly did nothing are the one failure this feature
 must not have.
 
-Changing the file changes the system prompt, which changes its hash — so
-`--resume` on an older session will warn that the prompt has moved. That is
-the warning working, not a bug.
+Changing the file changes the system prompt — so `--resume` on an older
+session will warn that the prompt has moved. That is the warning working, not
+a bug; the transcript records which prompt each invocation ran with.

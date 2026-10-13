@@ -8,26 +8,21 @@ It records `message_end` and ignores everything else: deltas and tool progress
 describe a run in flight, not its durable result.
 """
 
-import hashlib
 import logging
 from pathlib import Path
 
 from harness.agent.types import AgentEvent, MessageEnd
-from harness.config import SessionConfig
-from harness.llm.types import AssistantMessage, Model
+from harness.config import Config, snapshot
+from harness.llm.types import AssistantMessage, Model, ToolDeclaration
 from harness.session.store import new_session_id, session_path
-from harness.session.transcript import SessionHeader, TranscriptWriter, now_timestamp
+from harness.session.transcript import (
+    SessionContext,
+    SessionHeader,
+    TranscriptWriter,
+    now_timestamp,
+)
 
 _log = logging.getLogger(__name__)
-
-
-def prompt_hash(system_prompt: str) -> str:
-    """A short digest of the system prompt.
-
-    Hashed rather than stored: a prompt can carry project context that does not
-    belong in a file users may share or paste into a bug report.
-    """
-    return hashlib.sha256(system_prompt.encode()).hexdigest()[:16]
 
 
 class SessionRecorder:
@@ -68,31 +63,47 @@ def start_recorder(
     cwd: str,
     model: Model,
     system_prompt: str,
-    config: SessionConfig,
+    config: Config,
+    restored: int,
+    tools: tuple[ToolDeclaration, ...] = (),
     session_id: str | None = None,
     path: Path | None = None,
 ) -> SessionRecorder:
-    """Open a transcript and return a recorder writing to it.
+    """Open a transcript, record what this invocation runs with, and return a
+    recorder writing to it.
 
     Pass `path` to append to an existing session (resume); otherwise a new
-    session file is created.
+    session file is created. `restored` is how many of the session's messages
+    the agent was handed — 0 for a new session. It is required, and passed
+    rather than worked out from the file, because resume may have trimmed an
+    interrupted turn: the count is what keeps that turn out of the history the
+    next read rebuilds.
     """
     appending = path is not None
     if path is not None:
         identifier = path.stem
     else:
         identifier = session_id or new_session_id()
-        path = session_path(cwd, identifier, config)
+        path = session_path(cwd, identifier, config.session)
 
     header = SessionHeader(
         id=identifier,
         cwd=str(Path(cwd).expanduser().resolve()),
         model=model.id,
         timestamp=now_timestamp(),
-        version=config.version,
-        system_prompt_hash=prompt_hash(system_prompt),
+        version=config.session.version,
     )
     writer = TranscriptWriter(path, header)
     writer.open()
+    writer.append_context(
+        SessionContext(
+            timestamp=now_timestamp(),
+            restored=restored,
+            system_prompt=system_prompt,
+            tools=tools,
+            model=model,
+            config=snapshot(config),
+        )
+    )
     _log.info("%s transcript %s", "Appending to" if appending else "Writing", path)
     return SessionRecorder(writer)

@@ -1,7 +1,22 @@
 # Harness Runtime — Design
 
 **Date:** 2026-10-09
-**Status:** Approved, pre-implementation
+**Status:** Approved, then built. This is the original design and is kept for
+its rationale; where it and the code differ, the pages under [`docs/`](../..)
+describe what was built. The larger departures:
+
+- **Providers:** three protocol-named adapters — `anthropic.py`,
+  `responses.py`, `chat_completions.py` — rather than `anthropic.py` plus
+  `openai.py`, with vendors as config profiles
+  ([providers.md](../../providers.md)).
+- **Provider-native web search is not planned.** `ToolKind`, `native.py`, and
+  `web_search` resolving to a server tool were dropped; the web tools run
+  locally against Tavily or ddgs ([tools.md](../../tools.md#web-tools)).
+- **`finish_turn` was built** ([architecture.md](../../architecture.md#2-the-hooks)).
+- **Sessions record the system prompt and tools** in a `context` entry per
+  invocation, so every request can be rebuilt
+  ([sessions.md](../../sessions.md#trajectories)).
+- There is no `prompts/` directory; the base prompt lives in `cli/main.py`.
 
 ## Goal
 
@@ -49,6 +64,11 @@ system messages, replaying them to derive current state — `declareToolChanges`
 
 We lose mid-session tool-change provenance. We gain a much smaller core. For a
 harness whose tool set is fixed at startup, this is the right trade.
+
+*Revised after implementation.* Not replaying them stayed; not *recording*
+them did not. A transcript without the prompt and tools cannot rebuild the
+requests it came from, so each invocation now writes both down once, as a
+record the agent never reads back.
 
 ## 2. `llm/` — provider layer
 
@@ -127,8 +147,9 @@ in-flight message read `agent.state.streaming_message`.
 | `after_tool_call` | `(ctx) -> AfterResult \| None` | truncation, redaction |
 | `prepare_request` | `(req) -> RequestUpdate \| None` | compaction (later) |
 
-`finish_turn` was in this design but was not built — nothing needed it. It
-belongs here when an auto-continue feature does.
+`finish_turn` was cut from the first milestone for want of a caller, then
+built: `(ctx) -> FinishTurnResult | None`, consulted when a turn would cleanly
+end the run, and able to continue it with a new user message.
 
 **Simplification over pi:** no message queue at all. pi has separate steering
 and follow-up queues with `all` / `one-at-a-time` drain modes. Here a single run
@@ -203,6 +224,10 @@ A header line (id, cwd, timestamp, model, system-prompt hash) followed by one
 entry per line: `message`, `usage`. (`compaction` entries are reserved for when
 §7 lands.) Resume replays the file; `--resume` with no argument takes the most
 recent session for the cwd.
+
+*Revised after implementation.* The hash became the prompt itself, in a
+`context` entry that also holds the tools, model and redacted config; see §1
+and [sessions.md](../../sessions.md).
 
 This reuses the serialization from §2, which is the argument for building that
 first.

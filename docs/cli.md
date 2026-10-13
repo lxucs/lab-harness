@@ -166,8 +166,10 @@ Resume continues writing to the *same* file, so a conversation stays one
 transcript across many invocations. Sessions are scoped to the working
 directory — resuming in one project never surfaces another's history.
 
-Format, trimming of interrupted turns, and the reserved `compaction` entry:
-[sessions.md](sessions.md).
+Each invocation also records the system prompt, tool declarations, model and
+config (credentials redacted) it ran with, so every request can be rebuilt
+from the file. Format, trimming of interrupted turns, rebuilding trajectories,
+and the reserved `compaction` entry: [sessions.md](sessions.md).
 
 ## Project instructions
 
@@ -212,7 +214,9 @@ HARNESS_LOG_LEVEL=debug harness      # trace this shell
 Logs go to **stderr**, always, so they never mix into the answer on stdout or
 the JSONL stream. Nothing is printed by default beyond genuine problems: a
 model id missing from the catalog, project instructions truncated, `max_turns`
-exhausted with the model still working, a failed provider request.
+exhausted with the model still working, a failed provider request, and — in
+`-p` mode, which has no terminal to show them in — a resumed session's
+warnings.
 
 `debug` adds the trace you need when a setting appears to do nothing — every
 config file read or skipped, in precedence order:

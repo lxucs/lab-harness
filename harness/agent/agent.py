@@ -46,6 +46,8 @@ Listener = Callable[[AgentEvent], Awaitable[None]]
 class AgentState:
     system_prompt: str
     model: Model
+    #: Declared to the model on every request, in this order.
+    tools: tuple[AgentTool, ...] = ()
     messages: list[Message] = field(default_factory=list)
     is_running: bool = False
     #: Text accumulated for the in-flight assistant message, for renderers that
@@ -76,9 +78,8 @@ class Agent:
             Callable[[FinishTurnContext], Awaitable[FinishTurnResult | None]] | None
         ) = None,
     ) -> None:
-        self.state = AgentState(system_prompt=system_prompt, model=model)
+        self.state = AgentState(system_prompt=system_prompt, model=model, tools=tools)
         self._provider = provider
-        self._tools = tools
         self._config = config if config is not None else load_config()
         self._cwd = cwd
         self._before_tool_call = before_tool_call
@@ -144,8 +145,7 @@ class Agent:
     async def prompt(self, message: str | Message) -> list[Message]:
         """Send a message and run until the agent stops.
 
-        Raises if a run is already in flight — see the module docstring on why
-        there is no queue.
+        Raises if a run is already in flight.
         """
         # Claim the run in the same synchronous step as the check, so there is
         # no await between testing the flag and setting it.
@@ -163,7 +163,7 @@ class Agent:
             ctx = AgentContext(
                 system_prompt=self.state.system_prompt,
                 messages=(*self.state.messages, user),
-                tools=self._tools,
+                tools=self.state.tools,
                 unannounced=(user,),
             )
             cfg = LoopConfig(

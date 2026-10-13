@@ -6,7 +6,11 @@ silent no-op, and a wrong type is caught at startup rather than at the call
 site hours later.
 """
 
+import json
+import re
+from dataclasses import is_dataclass
 from pathlib import Path
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
@@ -14,13 +18,20 @@ from harness.config import (
     CONFIG_FILE,
     LOCAL_CONFIG_FILE,
     PROJECT_DIRECTORY,
+    REDACTED,
+    SECRET_FIELDS,
     Config,
     ConfigError,
     OpenAIConfig,
     config_paths,
     harness_home,
     load_config,
+    snapshot,
 )
+
+#: Field names that hold a credential rather than, say, an env var's name
+#: (`api_key_env`) or a count (`max_tokens`).
+_CREDENTIAL_NAME = re.compile(r"(^|_)(key|token|secret|password)$")
 
 
 def write(path: Path, body: str) -> Path:
@@ -379,3 +390,42 @@ def test_a_rate_where_a_model_belongs_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="name one explicitly"):
         load_config(tmp_path)
+
+
+# --- snapshot -------------------------------------------------------------
+
+
+def _field_names(cls: type) -> set[str]:
+    """Every leaf field name in a config dataclass, through nested sections and
+    named tables (`dict[str, Section]`)."""
+    names: set[str] = set()
+    for name, hint in get_type_hints(cls).items():
+        target = get_args(hint)[-1] if get_origin(hint) is dict else hint
+        if isinstance(target, type) and is_dataclass(target):
+            names |= _field_names(target)
+        else:
+            names.add(name)
+    return names
+
+
+def test_a_snapshot_is_plain_data_with_credentials_replaced(tmp_path: Path) -> None:
+    project(
+        tmp_path,
+        '[providers.openai.deepseek]\napi_key = "sk-from-a-local-file"\n',
+        name=LOCAL_CONFIG_FILE,
+    )
+
+    recorded = snapshot(load_config(tmp_path))
+
+    assert "sk-from-a-local-file" not in json.dumps(recorded)
+    assert recorded["providers"]["openai"]["deepseek"]["api_key"] == REDACTED
+    assert recorded["agent"]["max_turns"] == Config().agent.max_turns
+
+
+def test_every_credential_field_is_redacted() -> None:
+    """A new field named like a credential has to join SECRET_FIELDS, or the next
+    session transcript records its value."""
+    looks_secret = {n for n in _field_names(Config) if _CREDENTIAL_NAME.search(n)}
+
+    assert looks_secret, "the pattern should find the credential fields that exist"
+    assert looks_secret <= SECRET_FIELDS

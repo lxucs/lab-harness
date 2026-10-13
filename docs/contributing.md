@@ -120,6 +120,15 @@ gateway. Log the variable's *name*, never its value.
 `tests/test_logging.py` asserts a key set in the environment does not appear in
 debug output; extend it when you add a provider.
 
+### Nothing sensitive is recorded
+
+Session transcripts hold a snapshot of the whole config, so a credential set in
+`config.local.toml` would land in every one. `config.snapshot` replaces the
+fields named in `SECRET_FIELDS`. A new config field that holds a credential
+must be named like one (`api_key`, `*_token`, `*_secret`) and added there —
+`tests/test_config_loading.py` fails on a credential-shaped name the set is
+missing.
+
 ## Logging
 
 Take a logger the ordinary way and emit unconditionally:

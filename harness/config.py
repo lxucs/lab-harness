@@ -23,7 +23,7 @@ import logging
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import Field, dataclass, field, fields, is_dataclass, replace
+from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any, get_args
 
@@ -397,7 +397,8 @@ class SessionConfig:
     enabled: bool = True
     #: Schema version written into each file's header. Readers use it to refuse
     #: files they do not understand. A genuine protocol constant, not a knob.
-    version: int = 1
+    #: Version 2 added the `context` entry; version 1 files still read.
+    version: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -465,6 +466,40 @@ class Config:
 
 class ConfigError(Exception):
     """A config file was unreadable or contained something unusable."""
+
+
+#: Field names that hold a credential. `snapshot` replaces their values, which
+#: is what keeps a key out of a session transcript. A test fails when a field
+#: named like a credential is missing from this set.
+SECRET_FIELDS = frozenset({"api_key"})
+#: What a credential that was set reads as in a snapshot. One that was not set
+#: stays empty, so the record still says which were configured.
+REDACTED = "[redacted]"
+
+
+def snapshot(config: Config) -> dict[str, Any]:
+    """The config as plain, JSON-safe data, with every credential replaced.
+
+    For recording what a run was configured with. Credentials read from the
+    environment never reach a `Config` at all; this covers the ones a
+    config.local.toml supplied.
+    """
+    return _redact(asdict(config))
+
+
+def _redact(data: dict[str, Any]) -> dict[str, Any]:
+    redacted: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            redacted[key] = _redact(value)
+        elif key in SECRET_FIELDS and value:
+            redacted[key] = REDACTED
+        elif isinstance(value, tuple):
+            # As JSON reads it back, so a snapshot equals its own record.
+            redacted[key] = list(value)
+        else:
+            redacted[key] = value
+    return redacted
 
 
 #: Per-project config directory, relative to the working directory.

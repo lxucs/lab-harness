@@ -9,7 +9,7 @@ layering, trimmed to the parts that earn their keep.
 
 > **Status: usable, and feature-complete against its design.** Three provider
 > adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions — 775 tests, all offline. Details in
+> durable sessions — 786 tests, all offline. Details in
 > [Status](#status).
 
 ## Why
@@ -41,7 +41,7 @@ other layer. (Every layer reads the leaf modules `config.py`, `project.py` and
 | `llm/` | Provider-neutral LLM access — messages, models, streaming, tool declarations |
 | `agent/` | The agentic loop and a stateful `Agent` that owns the transcript and emits events |
 | `tools/` | Built-in capabilities and the registry that declares them to the model |
-| `session/` | Append-only JSONL transcripts, resume — a subscriber, not a dependency |
+| `session/` | Append-only JSONL transcripts, resume, rebuilding requests — a subscriber, not a dependency |
 | `cli/` | Terminal and JSONL subscribers to the event stream |
 
 Two seams carry almost everything extensible:
@@ -82,7 +82,9 @@ uv run harness --model gpt-5                 # OpenAI, via the Responses API
 In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
 session and `Ctrl-D` exits. Mutating tools (`bash`, `write`, `edit`) ask before
 running. Conversations are saved per project under `~/.harness/sessions/` and
-`--resume` picks the last one back up; `--no-save` skips persistence. Exit
+`--resume` picks the last one back up; `--no-save` skips persistence. A saved
+session records the system prompt, tools, model and config each invocation ran
+with, so every request it made can be rebuilt — for replay or training. Exit
 status is `0` on a clean run, `1` when the final turn errored or was aborted.
 
 A `HARNESS.md` or `AGENTS.md` in the working directory is appended to the
@@ -99,7 +101,7 @@ Configuration and every environment variable: [docs/configuration.md](docs/confi
 | [events.md](docs/events.md) | The event protocol between runtime and frontend |
 | [providers.md](docs/providers.md) | Provider contract, profiles, adding a vendor |
 | [tools.md](docs/tools.md) | Tool contract, built-ins, adding a tool |
-| [sessions.md](docs/sessions.md) | Transcript format, resume |
+| [sessions.md](docs/sessions.md) | Transcript format, resume, rebuilding trajectories |
 | [cli.md](docs/cli.md) | Terminal, flags, keybindings, the usage and cost readout |
 | [configuration.md](docs/configuration.md) | Config files, environment variables, pricing |
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
@@ -118,7 +120,8 @@ pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with a per-run token, cache and cost
 readout, a fail-closed approval gate, layered TOML config, project instructions
 from `HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable
-sessions. A step-by-step reading order is in
+sessions that record enough to rebuild every request they made. A step-by-step
+reading order is in
 [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
@@ -137,7 +140,9 @@ key either way.
 - **Context compaction.** The one piece of the original design still unbuilt.
   `prepare_request` is called before every provider request,
   `Model.context_window` and per-message `Usage` exist, and the session schema
-  reserves a `compaction` entry — so it lands without touching the loop.
+  reserves a `compaction` entry — so it lands without touching the loop. That
+  entry has to record the summary, or rebuilt trajectories would show the
+  uncompacted history.
 - **Anthropic prompt caching.** The Messages adapter sends no `cache_control`
   markers yet, so Anthropic caches nothing and its cache hit rate reads 0%.
   Contained to one function in `anthropic.py`; the placement is planned in

@@ -54,9 +54,10 @@ rather than in `agent/`, precisely because of the rule above: `agent/` consumes
 tools, so a definition in `agent/` would force every tool module to import
 upward. `agent/types.py` re-exports them for callers.
 
-**`session/`** — the append-only transcript on disk. The recorder is a
-*subscriber*, so persistence is wiring rather than a branch in the loop: `cli/`
-decides whether to attach one.
+**`session/`** — the append-only transcript on disk, and the reader that
+rebuilds every request from it. The recorder is a *subscriber*, so persistence
+is wiring rather than a branch in the loop: `cli/` decides whether to attach
+one, and hands it the prompt, tools and config to record.
 
 **`cli/`** — a *subscriber* to the agent's event stream. The runtime never
 imports from `cli/`. Deleting `cli/` leaves the runtime working.
@@ -111,12 +112,14 @@ function plus a stateful `Agent` wrapper is pi's.
 
 Deliberate deviations:
 
-**Prompt and tools are not in the transcript.** pi stores the system prompt and
-tool declarations as system messages inside the transcript, replaying them to
-derive current state. We pass `Context(system_prompt, messages, tools)` to the
-provider directly. We lose mid-session tool-change provenance; the core gets
-several hundred lines smaller. For a harness whose tool set is fixed at startup,
-that is the right trade.
+**Prompt and tools are recorded, not replayed.** pi stores the system prompt
+and tool declarations as system messages inside the transcript, replaying them
+to derive current state. We pass `Context(system_prompt, messages, tools)` to
+the provider directly, and the session writes them down once per invocation as
+a `context` entry — a record, never read back into the agent. That keeps
+enough to rebuild every request (see [sessions.md](sessions.md#trajectories))
+while the core stays several hundred lines smaller. A tool set that changes
+*mid*-invocation would go unrecorded, but ours is fixed at startup.
 
 **One run at a time, no queue.** pi has separate steering and follow-up queues,
 each with `all` and `one-at-a-time` drain modes, so a message can be injected
@@ -133,9 +136,12 @@ extensions-as-plugins, MCP, branch summarization.
 The seam it needs — `prepare_request` — already exists and is already called
 before every provider request. Compaction reads the context, decides whether to
 summarize, and returns a replacement; nothing in the loop changes when it
-arrives. v1 also records `Usage` per assistant message, defines
+arrives. The runtime already records `Usage` per assistant message, defines
 `Model.context_window`, and reserves a `compaction` entry type in the session
-schema, so the groundwork is laid.
+schema, so the groundwork is laid. The entry is not optional when it lands:
+`prepare_request` rewrites what is sent without touching the transcript, so
+without a record of the summary, rebuilt
+[trajectories](sessions.md#trajectories) would show the uncompacted history.
 
 See §7 of the design spec for the full plan.
 

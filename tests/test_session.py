@@ -4,16 +4,21 @@
 nothing here can touch a real `~/.harness`.
 """
 
+import asyncio
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from harness.agent import Agent
-from harness.config import Config, SessionConfig
+from harness.agent.types import declarations_for
+from harness.config import REDACTED, Config, OpenAIConfig, SessionConfig, TavilyConfig, snapshot
 from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from harness.llm.types import (
     AssistantMessage,
+    Message,
     TextBlock,
     ToolCallBlock,
     ToolResultMessage,
@@ -21,7 +26,7 @@ from harness.llm.types import (
     UserMessage,
     text,
 )
-from harness.session.recorder import prompt_hash, start_recorder
+from harness.session.recorder import SessionRecorder, start_recorder
 from harness.session.resume import ResumeError, resume, trim_to_resumable
 from harness.session.store import (
     find_session,
@@ -36,10 +41,14 @@ from harness.session.transcript import (
     TranscriptError,
     TranscriptWriter,
     read_transcript,
+    recorded_requests,
 )
 from harness.tools import default_registry
+from harness.tools.base import ExecutionMode, ToolContext, ToolResult
 
 CONFIG = SessionConfig()
+#: What a recorder snapshots. The session part of it is CONFIG.
+RUNTIME = Config()
 
 
 def _header(session_id: str = "s1", cwd: str = "/tmp/project") -> SessionHeader:
@@ -49,8 +58,24 @@ def _header(session_id: str = "s1", cwd: str = "/tmp/project") -> SessionHeader:
         model=FAKE_MODEL.id,
         timestamp="2026-10-10T00:00:00+00:00",
         version=1,
-        system_prompt_hash="abc123",
     )
+
+
+def _attach(
+    agent: Agent, cwd: Path, *, config: Config = RUNTIME, path: Path | None = None
+) -> SessionRecorder:
+    """Start recording `agent` the way `cli/main.py` does."""
+    recorder = start_recorder(
+        cwd=str(cwd),
+        model=agent.state.model,
+        system_prompt=agent.state.system_prompt,
+        tools=declarations_for(agent.state.tools),
+        config=config,
+        restored=len(agent.state.messages),
+        path=path,
+    )
+    agent.subscribe(recorder)
+    return recorder
 
 
 # --- store ----------------------------------------------------------------
@@ -286,7 +311,7 @@ def test_blank_lines_are_ignored(tmp_path: Path) -> None:
 async def test_a_run_is_persisted_end_to_end(tmp_path: Path) -> None:
     agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("the answer")]))
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
     )
     agent.subscribe(recorder)
 
@@ -307,7 +332,7 @@ async def test_the_persisted_transcript_matches_agent_state(tmp_path: Path) -> N
         cwd=str(tmp_path),
     )
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
     )
     agent.subscribe(recorder)
 
@@ -321,7 +346,7 @@ async def test_the_user_message_is_persisted(tmp_path: Path) -> None:
     """Regression: user turns were never emitted, so transcripts were unresumable."""
     agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("reply")]))
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
     )
     agent.subscribe(recorder)
 
@@ -339,7 +364,7 @@ async def test_the_user_message_is_persisted(tmp_path: Path) -> None:
 async def test_usage_is_recorded_for_assistant_messages(tmp_path: Path) -> None:
     agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("hi")]))
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
     )
     agent.subscribe(recorder)
 
@@ -353,7 +378,7 @@ async def test_usage_is_recorded_for_assistant_messages(tmp_path: Path) -> None:
 async def test_a_write_failure_does_not_kill_the_run(tmp_path: Path) -> None:
     """A full disk must not take down a conversation in progress."""
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
     )
     recorder.close()  # subsequent writes reopen; make them fail instead
 
@@ -369,17 +394,52 @@ async def test_a_write_failure_does_not_kill_the_run(tmp_path: Path) -> None:
     assert messages[-1].role == "assistant"
 
 
-def test_the_prompt_is_hashed_not_stored(tmp_path: Path) -> None:
-    """A system prompt can carry project context that should not be shared."""
-    secret = "You are working on Project Codename Falcon."
+def test_the_context_entry_records_what_every_request_is_sent_with(tmp_path: Path) -> None:
+    """Everything a request carries besides the messages, so a trajectory can be rebuilt."""
+    prompt = "You are working on Project Codename Falcon."
+    tools = declarations_for(default_registry().select(["ls", "read"]))
     recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt=secret, config=CONFIG
+        cwd=str(tmp_path),
+        model=FAKE_MODEL,
+        system_prompt=prompt,
+        tools=tools,
+        config=RUNTIME,
+        restored=0,
     )
     recorder.close()
 
-    body = recorder.path.read_text()
-    assert "Falcon" not in body
-    assert prompt_hash(secret) in body
+    [segment] = read_transcript(recorder.path).segments
+    assert segment.context.system_prompt == prompt, "stored in full, not hashed"
+    assert segment.context.tools == tools
+    assert segment.context.model == FAKE_MODEL
+    assert segment.context.config == snapshot(RUNTIME)
+    assert segment.context.restored == 0
+
+
+def test_credentials_never_reach_the_transcript(tmp_path: Path) -> None:
+    secret = "sk-test-not-a-real-key"
+    config = replace(
+        RUNTIME,
+        providers=replace(
+            RUNTIME.providers,
+            openai={**RUNTIME.providers.openai, "mine": OpenAIConfig(api_key=secret)},
+        ),
+        tools=replace(
+            RUNTIME.tools, web=replace(RUNTIME.tools.web, tavily=TavilyConfig(api_key=secret))
+        ),
+    )
+    recorder = start_recorder(
+        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=config, restored=0
+    )
+    recorder.close()
+
+    assert secret not in recorder.path.read_text()
+    recorded = read_transcript(recorder.path).segments[0].context.config
+    assert recorded["providers"]["openai"]["mine"]["api_key"] == REDACTED
+    assert recorded["tools"]["web"]["tavily"]["api_key"] == REDACTED
+    # An unset key stays visibly unset, and the env var *name* is kept.
+    assert recorded["providers"]["openai"]["deepseek"]["api_key"] == ""
+    assert recorded["providers"]["openai"]["mine"]["api_key_env"] == "OPENAI_API_KEY"
 
 
 # --- resume ---------------------------------------------------------------
@@ -387,10 +447,7 @@ def test_the_prompt_is_hashed_not_stored(tmp_path: Path) -> None:
 
 async def _record(tmp_path: Path, provider: FakeProvider, prompt: str = "q") -> Path:
     agent = Agent(model=FAKE_MODEL, provider=provider, system_prompt="sys")
-    recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG
-    )
-    agent.subscribe(recorder)
+    recorder = _attach(agent, tmp_path)
     await agent.prompt(prompt)
     recorder.close()
     return recorder.path
@@ -428,10 +485,7 @@ async def test_resuming_appends_to_the_same_file(tmp_path: Path) -> None:
     resumed = resume(cwd=str(tmp_path), config=CONFIG)
     agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("two")]))
     agent.restore(resumed.messages)
-    recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG, path=resumed.path
-    )
-    agent.subscribe(recorder)
+    recorder = _attach(agent, tmp_path, path=resumed.path)
     await agent.prompt("second")
     recorder.close()
 
@@ -452,10 +506,7 @@ async def test_restore_does_not_re_record_history(tmp_path: Path) -> None:
     resumed = resume(cwd=str(tmp_path), config=CONFIG)
     agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("two")]))
     agent.restore(resumed.messages)
-    recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=CONFIG, path=resumed.path
-    )
-    agent.subscribe(recorder)
+    recorder = _attach(agent, tmp_path, path=resumed.path)
     await agent.prompt("second")
     recorder.close()
 
@@ -509,16 +560,53 @@ def test_a_newer_format_version_is_refused(tmp_path: Path) -> None:
         resume(cwd=str(tmp_path), config=CONFIG)
 
 
-def test_a_changed_system_prompt_warns_but_still_resumes(tmp_path: Path) -> None:
-    directory = project_directory(tmp_path, CONFIG)
-    directory.mkdir(parents=True)
-    with TranscriptWriter(directory / "20260101T000000-a.jsonl", _header()) as writer:
-        writer.append_message(UserMessage(content=text("hi")))
+async def test_a_changed_system_prompt_warns_but_still_resumes(tmp_path: Path) -> None:
+    await _record(tmp_path, FakeProvider([text_response("a")]))
 
-    resumed = resume(cwd=str(tmp_path), config=CONFIG, system_prompt_hash="different")
+    resumed = resume(cwd=str(tmp_path), config=CONFIG, system_prompt="a different prompt")
 
     assert any("system prompt has changed" in w for w in resumed.warnings)
-    assert len(resumed.messages) == 1
+    assert len(resumed.messages) == 2
+
+
+async def test_an_unchanged_session_resumes_without_a_warning(tmp_path: Path) -> None:
+    """Regression: `usage` entries were counted as unknown, so every resume warned."""
+    await _record(tmp_path, FakeProvider([text_response("a")]))
+
+    resumed = resume(cwd=str(tmp_path), config=CONFIG, system_prompt="sys")
+
+    assert resumed.warnings == ()
+
+
+def test_a_version_1_file_still_resumes(tmp_path: Path) -> None:
+    """Written before the context entry: a prompt hash in the header, nothing else."""
+    directory = project_directory(tmp_path, CONFIG)
+    directory.mkdir(parents=True)
+    path = directory / "20260101T000000-a.jsonl"
+    entries = [
+        {
+            "type": "session",
+            "version": 1,
+            "id": "20260101T000000-a",
+            "cwd": str(tmp_path),
+            "model": "m",
+            "timestamp": "t",
+            "system_prompt_hash": "abc123",
+        },
+        {
+            "type": "message",
+            "message": {"role": "user", "content": [{"type": "text", "text": "q"}]},
+        },
+        {"type": "usage", "usage": {"input": 1}, "model": "m"},
+    ]
+    path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+    resumed = resume(cwd=str(tmp_path), config=CONFIG, system_prompt="sys")
+
+    assert [m.role for m in resumed.messages] == ["user"]
+    assert resumed.transcript.segments == ()
+    assert resumed.warnings == (), "no recorded prompt, so nothing to say it changed"
+    assert [e.timestamp for e in resumed.transcript.history] == [""], "and no timestamps"
 
 
 def test_sessions_are_scoped_to_their_directory(tmp_path: Path) -> None:
@@ -651,6 +739,134 @@ async def test_a_resumed_interrupted_session_can_actually_continue(tmp_path: Pat
     sent = provider.requests[0].messages
     # No dangling tool call reaches the provider.
     assert not any(isinstance(m, AssistantMessage) and m.tool_calls for m in sent)
+
+
+async def _continue(tmp_path: Path, prompt: str) -> FakeProvider:
+    """Resume the latest session, prompt once, and record it — one CLI invocation."""
+    resumed = resume(cwd=str(tmp_path), config=CONFIG)
+    provider = FakeProvider([text_response("ok")])
+    agent = Agent(model=FAKE_MODEL, provider=provider, system_prompt="sys")
+    agent.restore(resumed.messages)
+    recorder = _attach(agent, tmp_path, path=resumed.path)
+    await agent.prompt(prompt)
+    recorder.close()
+    return provider
+
+
+async def test_a_trimmed_turn_stays_trimmed_on_the_next_resume(tmp_path: Path) -> None:
+    """Regression: the trimmed messages are still on disk, and the second resume
+    rebuilt them into the middle of the history — an unanswered tool call that
+    every provider rejects."""
+    directory = project_directory(tmp_path, CONFIG)
+    directory.mkdir(parents=True)
+    with TranscriptWriter(directory / "20260101T000000-a.jsonl", _header()) as writer:
+        writer.append_message(UserMessage(content=text("q")))
+        writer.append_message(_assistant_with_calls("c1"))
+
+    await _continue(tmp_path, "first")
+    provider = await _continue(tmp_path, "second")
+
+    sent = provider.requests[0].messages
+    assert not any(isinstance(m, AssistantMessage) and m.tool_calls for m in sent)
+    assert [m.role for m in sent] == ["user", "user", "assistant", "user"]
+
+
+# --- trajectories ---------------------------------------------------------
+
+
+class _Killed:
+    """A tool the process dies inside: its call is recorded, its result never is."""
+
+    def __init__(self) -> None:
+        self.name = "slow"
+        self.description = "Takes forever."
+        self.parameters: dict[str, object] = {"type": "object", "properties": {}}
+        self.execution_mode: ExecutionMode = "parallel"
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        raise asyncio.CancelledError
+
+
+def _assistants(messages: list[Message]) -> list[AssistantMessage]:
+    return [m for m in messages if isinstance(m, AssistantMessage)]
+
+
+async def test_every_request_can_be_rebuilt_from_the_transcript(tmp_path: Path) -> None:
+    """The trajectory guarantee: each request exactly as the provider received it,
+    with the response it got — across resumes, a turn killed mid-tool, and a change
+    of prompt, tools, model and config between invocations."""
+    ls = default_registry().select(["ls"])
+    first = FakeProvider(
+        [
+            text_response("hello"),
+            tool_call_response([ToolCallBlock(id="c1", name="ls", arguments={})]),
+            text_response("listed"),
+            tool_call_response([ToolCallBlock(id="c2", name="slow", arguments={})]),
+        ]
+    )
+    agent = Agent(
+        model=FAKE_MODEL,
+        provider=first,
+        system_prompt="prompt one",
+        tools=(*ls, _Killed()),
+        cwd=str(tmp_path),
+    )
+    recorder = _attach(agent, tmp_path)
+    await agent.prompt("one")
+    await agent.prompt("two")
+    with pytest.raises(asyncio.CancelledError):
+        await agent.prompt("three")
+    recorder.close()
+    responses = _assistants(agent.state.messages)
+
+    # Two more invocations, each resuming the last: the first trims the killed
+    # turn, the second must not bring it back.
+    other_model = replace(FAKE_MODEL, id="fake-model-2")
+    other_config = replace(RUNTIME, agent=replace(RUNTIME.agent, max_turns=7))
+    later: list[FakeProvider] = []
+    for prompt in ("four", "five"):
+        resumed = resume(cwd=str(tmp_path), config=CONFIG)
+        provider = FakeProvider([text_response(f"re: {prompt}")])
+        later.append(provider)
+        agent = Agent(model=other_model, provider=provider, system_prompt="prompt two", tools=ls)
+        agent.restore(resumed.messages)
+        recorder = _attach(agent, tmp_path, config=other_config, path=resumed.path)
+        responses += _assistants(await agent.prompt(prompt))
+        recorder.close()
+
+    transcript = read_transcript(recorder.path)
+    rebuilt = recorded_requests(transcript)
+
+    assert [r.request for r in rebuilt] == [*first.requests, *later[0].requests, *later[1].requests]
+    assert [r.response for r in rebuilt] == responses
+    assert [r.model for r in rebuilt] == [FAKE_MODEL] * 4 + [other_model] * 2
+    assert [r.config for r in rebuilt] == [snapshot(RUNTIME)] * 4 + [snapshot(other_config)] * 2
+    assert transcript.messages == tuple(agent.state.messages)
+
+
+async def test_every_message_is_timestamped_in_order(tmp_path: Path) -> None:
+    call = ToolCallBlock(id="c1", name="ls", arguments={})
+    agent = Agent(
+        model=FAKE_MODEL,
+        provider=FakeProvider([tool_call_response([call]), text_response("done")]),
+        tools=default_registry().select(["ls"]),
+        cwd=str(tmp_path),
+    )
+    before = datetime.now(UTC)
+    recorder = _attach(agent, tmp_path)
+    await agent.prompt("list files")
+    recorder.close()
+    after = datetime.now(UTC)
+
+    transcript = read_transcript(recorder.path)
+    stamps = [datetime.fromisoformat(e.timestamp) for e in transcript.history]
+    assert len(stamps) == 4
+    assert before <= stamps[0] and stamps == sorted(stamps) and stamps[-1] <= after
+    assert all(s.tzinfo is not None for s in stamps), "UTC, not local time"
+
+    steps = recorded_requests(transcript)
+    responses = [e for e in transcript.history if isinstance(e.message, AssistantMessage)]
+    assert [s.timestamp for s in steps] == [e.timestamp for e in responses]
 
 
 # --- disabled -------------------------------------------------------------

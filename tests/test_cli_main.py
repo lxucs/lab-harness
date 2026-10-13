@@ -5,14 +5,17 @@ because nothing calls `stream()` — construction alone makes no request.
 """
 
 import argparse
+from io import StringIO
 from pathlib import Path
 
 import pytest
+from rich.console import Console
 
 from harness.agent import Agent
 from harness.cli.approval import ApprovalGate
 from harness.cli.main import (
     SYSTEM_PROMPT,
+    _attach_session,
     _brief,
     _build_agent,
     build_parser,
@@ -29,11 +32,15 @@ from harness.config import (
     ProvidersConfig,
     TerminalConfig,
     ToolsConfig,
+    snapshot,
 )
+from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
 from harness.llm.providers.anthropic import AnthropicProvider
 from harness.llm.providers.chat_completions import ChatCompletionsProvider
 from harness.llm.registry import resolve_model
 from harness.project import ProjectContext
+from harness.session import list_sessions, read_transcript, recorded_requests
+from harness.tools import default_registry
 
 
 @pytest.fixture(autouse=True)
@@ -126,7 +133,7 @@ def test_yes_flag_defaults_off() -> None:
 def test_one_shot_gets_every_builtin_tool() -> None:
     agent = _build_agent(_args(prompt="hi"), Config())
 
-    names = {t.name for t in agent._tools}
+    names = {t.name for t in agent.state.tools}
     assert {"read", "write", "edit", "ls", "bash", "grep", "glob"} <= names
 
 
@@ -135,7 +142,7 @@ def test_interactive_narrows_to_the_configured_tool_set() -> None:
 
     agent = _build_agent(_args(), config, tool_names=config.terminal.enabled_tools)
 
-    assert [t.name for t in agent._tools] == ["read", "ls"]
+    assert [t.name for t in agent.state.tools] == ["read", "ls"]
 
 
 def test_an_unknown_configured_tool_fails_loudly() -> None:
@@ -437,3 +444,62 @@ def test_an_unknown_provider_is_a_startup_error(
 ) -> None:
     assert main(["-p", "hi", "--provider", "nope", "--cwd", str(tmp_path), "--no-save"]) == 1
     assert "nope" in capsys.readouterr().err
+
+
+# --- sessions ---------------------------------------------------------------
+
+
+def test_a_saved_session_rebuilds_every_request_the_cli_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wiring half of the trajectory guarantee: what `main` records is
+    enough to rebuild each request — project instructions, tools and all —
+    across a `--resume`."""
+    provider = FakeProvider([text_response("one"), text_response("two")])
+    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
+
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    assert main(["-p", "second", "--resume", "--cwd", str(tmp_path)]) == 0
+
+    [path] = list_sessions(tmp_path, Config().session)
+    rebuilt = recorded_requests(read_transcript(path))
+    assert [r.request for r in rebuilt] == provider.requests
+    assert "Indent with tabs." in rebuilt[0].request.system_prompt
+    assert {t.name for t in rebuilt[0].request.tools} == {t.name for t in default_registry()}
+    assert rebuilt[0].config == snapshot(Config())
+
+
+def test_resume_warns_when_the_project_instructions_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editing AGENTS.md changes the system prompt, which resume should say."""
+    provider = FakeProvider([text_response("one")])
+    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
+
+    args = _args(cwd=str(tmp_path), resume="")
+    output = StringIO()
+    _attach_session(_build_agent(args, Config()), args, Config(), Console(file=output))
+
+    assert "system prompt has changed" in output.getvalue()
+
+
+def test_one_shot_resume_warnings_go_to_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`-p` has no terminal to print them in, and must not mix them into the answer."""
+    provider = FakeProvider([text_response("one"), text_response("two")])
+    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
+    capsys.readouterr()
+
+    assert main(["-p", "second", "--resume", "--cwd", str(tmp_path)]) == 0
+
+    captured = capsys.readouterr()
+    assert "system prompt has changed" in captured.err
+    assert captured.out == "two\n"

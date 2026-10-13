@@ -17,14 +17,14 @@ from harness.session.transcript import Transcript, read_transcript
 @dataclass(frozen=True, slots=True)
 class ResumedSession:
     path: Path
+    #: The file as read, before trimming.
     transcript: Transcript
+    #: The history to hand the agent: the transcript's, less any interrupted
+    #: turn at its end.
+    messages: tuple[Message, ...]
     #: Non-fatal problems worth telling the user about — a trimmed trailing
     #: turn, skipped entries, a changed system prompt.
     warnings: tuple[str, ...] = ()
-
-    @property
-    def messages(self) -> tuple[Message, ...]:
-        return self.transcript.messages
 
 
 class ResumeError(Exception):
@@ -36,9 +36,13 @@ def resume(
     cwd: str,
     config: SessionConfig,
     session_id: str | None = None,
-    system_prompt_hash: str | None = None,
+    system_prompt: str | None = None,
 ) -> ResumedSession:
-    """Load the named session, or the most recent one for this directory."""
+    """Load the named session, or the most recent one for this directory.
+
+    Pass the `system_prompt` the agent will run with to be warned when it
+    differs from the one the session last recorded.
+    """
     if session_id:
         path = find_session(cwd, session_id, config)
         if path is None:
@@ -59,9 +63,9 @@ def resume(
     if transcript.skipped:
         warnings.append(f"{transcript.skipped} unreadable or unknown entrie(s) skipped.")
     if (
-        system_prompt_hash is not None
-        and transcript.header.system_prompt_hash
-        and transcript.header.system_prompt_hash != system_prompt_hash
+        system_prompt is not None
+        and transcript.segments
+        and transcript.segments[-1].context.system_prompt != system_prompt
     ):
         warnings.append("The system prompt has changed since this session was recorded.")
 
@@ -73,11 +77,7 @@ def resume(
         )
 
     return ResumedSession(
-        path=path,
-        transcript=Transcript(
-            header=transcript.header, messages=messages, skipped=transcript.skipped
-        ),
-        warnings=tuple(warnings),
+        path=path, transcript=transcript, messages=messages, warnings=tuple(warnings)
     )
 
 

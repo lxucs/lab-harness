@@ -138,7 +138,8 @@ directory_name = "sessions"
 # Write transcripts to disk at all.
 enabled = true
 # Schema version written into each file header. A protocol constant, not a knob.
-version = 1
+# Version 2 added the per-invocation `context` entry; version 1 files still read.
+version = 2
 
 [providers.anthropic]
 # Names of the environment variables credentials are read from. The values
