@@ -129,8 +129,13 @@ into a run already in flight. We have none of it: `prompt()` refuses while a run
 is active. A frontend that wants to accept typing mid-run buffers the text
 itself and prompts again when the run returns.
 
-**Dropped entirely:** the provider catalog, codemode, durable/RPC/server,
-extensions-as-plugins, MCP, branch summarization.
+**Dropped entirely:** codemode, durable/RPC/server, extensions-as-plugins, MCP,
+branch summarization.
+
+**pi's generated provider catalog** shrinks to `llm/catalog.toml`: a hand-kept
+table of the endpoints we ship and the models they serve, in config-file
+format, so adding a model is a few lines of TOML and a config file can add or
+override one the same way.
 
 ## TODO, with a place to land
 

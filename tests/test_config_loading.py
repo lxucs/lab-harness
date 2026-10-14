@@ -22,6 +22,7 @@ from lab_harness.config import (
     SECRET_FIELDS,
     Config,
     ConfigError,
+    ModelConfig,
     OpenAIConfig,
     config_paths,
     lab_harness_home,
@@ -258,14 +259,13 @@ def test_a_new_profile_can_be_added_in_config(tmp_path: Path) -> None:
         tmp_path,
         "[providers.openai.groq]\n"
         'base_url = "https://api.groq.com/openai/v1"\n'
-        'api_key_env = "GROQ_API_KEY"\n'
-        'models = ["llama-3.3-70b"]\n',
+        'api_key_env = "GROQ_API_KEY"\n',
     )
 
     groq = load_config(tmp_path).providers.openai["groq"]
 
     assert groq.base_url == "https://api.groq.com/openai/v1"
-    assert groq.models == ("llama-3.3-70b",)
+    assert groq.api_key_env == "GROQ_API_KEY"
 
 
 def test_a_new_profile_keeps_the_shipped_ones(tmp_path: Path) -> None:
@@ -293,7 +293,7 @@ def test_an_existing_profile_merges_rather_than_replaces(tmp_path: Path) -> None
 
     assert deepseek.timeout_seconds == 30.0
     # Untouched keys survive.
-    assert deepseek.models == ("deepseek-flash", "deepseek-v4-pro")
+    assert deepseek.base_url == "https://api.deepseek.com/v1"
     assert deepseek.api_key_env == "DEEPSEEK_API_KEY"
 
 
@@ -346,49 +346,73 @@ def test_a_local_file_can_carry_a_profile_key(tmp_path: Path) -> None:
     assert deepseek.timeout_seconds == 30.0
 
 
-# --- pricing --------------------------------------------------------------
+# --- models ---------------------------------------------------------------
 #
-# The other table of named sections. A key is a model id, and a model with no
-# entry is unpriced — which the terminal shows as no cost at all.
+# The other table of named sections, whose default is the shipped catalog. A
+# key is a model id; an entry gives any of who serves it, its limits and flags,
+# and its price.
 
 
-def test_a_model_can_be_priced_in_config(tmp_path: Path) -> None:
+def test_a_model_can_be_added_in_config(tmp_path: Path) -> None:
     # Quoted: a bare TOML key cannot contain the dot in "my-model-1.5".
-    project(tmp_path, '[pricing."my-model-1.5"]\ninput = 0.6\noutput = 2.2\n')
+    project(
+        tmp_path,
+        '[models."my-model-1.5"]\nprovider = "groq"\nmax_tokens = 4096\n'
+        "price = { input = 0.6, output = 2.2 }\n",
+    )
 
-    price = load_config(tmp_path).pricing["my-model-1.5"]
+    entry = load_config(tmp_path).models["my-model-1.5"]
 
-    assert (price.input, price.output) == (0.6, 2.2)
-    assert (price.cache_read, price.cache_write) == (0.0, 0.0), "an unset rate is zero"
-
-
-def test_pricing_a_model_keeps_the_shipped_prices(tmp_path: Path) -> None:
-    project(tmp_path, '[pricing."my-model-1.5"]\ninput = 0.6\n')
-
-    assert set(load_config(tmp_path).pricing) >= {"claude-sonnet-5", "glm-5.3", "my-model-1.5"}
-
-
-def test_a_shipped_price_merges_rather_than_replaces(tmp_path: Path) -> None:
-    project(tmp_path, "[pricing.claude-sonnet-5]\ninput = 2.5\n")
-
-    price = load_config(tmp_path).pricing["claude-sonnet-5"]
-
-    assert price.input == 2.5
-    assert price.output == Config().pricing["claude-sonnet-5"].output
+    assert (entry.provider, entry.max_tokens) == ("groq", 4_096)
+    assert entry.context_window == ModelConfig().context_window, "an unset key is the default"
+    assert (entry.price.input, entry.price.output) == (0.6, 2.2)
+    assert (entry.price.cache_read, entry.price.cache_write) == (0.0, 0.0), "an unset rate is zero"
 
 
-def test_a_typo_inside_a_price_is_an_error(tmp_path: Path) -> None:
-    project(tmp_path, "[pricing.claude-sonnet-5]\ninptu = 2.5\n")
+def test_adding_a_model_keeps_the_catalog(tmp_path: Path) -> None:
+    project(tmp_path, '[models."my-model-1.5"]\nprovider = "groq"\n')
 
-    with pytest.raises(ConfigError, match=r"pricing\.claude-sonnet-5\.inptu"):
+    assert set(load_config(tmp_path).models) >= {"claude-sonnet-5", "glm-5.3", "my-model-1.5"}
+
+
+def test_a_catalogued_model_merges_rather_than_replaces(tmp_path: Path) -> None:
+    project(tmp_path, "[models.claude-sonnet-5.price]\ninput = 2.5\n")
+
+    shipped = Config().models["claude-sonnet-5"]
+    entry = load_config(tmp_path).models["claude-sonnet-5"]
+
+    assert entry.price.input == 2.5
+    assert entry.price.output == shipped.price.output, "the other rates survive"
+    assert entry.max_tokens == shipped.max_tokens, "and so does the rest of the entry"
+
+
+def test_a_typo_inside_a_model_is_an_error(tmp_path: Path) -> None:
+    project(tmp_path, "[models.claude-sonnet-5]\nmax_tokenz = 1\n")
+
+    with pytest.raises(ConfigError, match=r"models\.claude-sonnet-5\.max_tokenz"):
         load_config(tmp_path)
 
 
-def test_a_rate_where_a_model_belongs_is_an_error(tmp_path: Path) -> None:
-    """`[pricing] input = 2` prices nothing: every rate belongs to a model."""
-    project(tmp_path, "[pricing]\ninput = 2\n")
+def test_a_typo_inside_a_price_is_an_error(tmp_path: Path) -> None:
+    project(tmp_path, "[models.claude-sonnet-5.price]\ninptu = 2.5\n")
+
+    with pytest.raises(ConfigError, match=r"models\.claude-sonnet-5\.price\.inptu"):
+        load_config(tmp_path)
+
+
+def test_a_setting_where_a_model_belongs_is_an_error(tmp_path: Path) -> None:
+    """`[models] max_tokens = 2` sets nothing: every setting belongs to a model."""
+    project(tmp_path, "[models]\nmax_tokens = 2\n")
 
     with pytest.raises(ConfigError, match="name one explicitly"):
+        load_config(tmp_path)
+
+
+def test_the_old_pricing_table_is_an_error(tmp_path: Path) -> None:
+    """Prices moved into each model's entry; a table that does nothing must say so."""
+    project(tmp_path, "[pricing.claude-sonnet-5]\ninput = 2.5\n")
+
+    with pytest.raises(ConfigError, match="unknown setting 'pricing'"):
         load_config(tmp_path)
 
 

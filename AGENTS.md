@@ -29,7 +29,7 @@ root, created and managed by `uv sync`. There is no named or global environment
 uv sync                 # create/update .venv from pyproject.toml + uv.lock
 uv sync --extra ddgs    # ...plus the optional keyless search backend
 uv run pytest           # run tests
-uv run lab-harness          # run the CLI
+uv run lab-harness      # run the CLI
 uv add <package>        # add a dependency
 ```
 
@@ -43,13 +43,14 @@ command in the message.
 
 **Nothing sensitive goes in a committed file.** No API keys or tokens, no
 absolute paths (`/Users/...`, `/home/...`), no private URLs, hostnames, or org
-ids — in config, docs, tests, or examples.
+ids — in config, the model catalog, docs, tests, or examples.
 
 | File | Committed | Holds |
 |---|---|---|
 | `.lab-harness/config.toml` | yes | Non-sensitive defaults |
 | `.lab-harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `.lab-harness/config.toml.example` | yes | Template, placeholders only |
+| `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
 
 Real runtime values belong in the `*.local.toml` layer, which `.gitignore`
 excludes; it merges over the committed file, so it only needs the keys that

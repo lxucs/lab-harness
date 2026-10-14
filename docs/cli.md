@@ -112,8 +112,8 @@ suits them.
 
 What there is to show depends on the provider: DeepSeek and GLM stream their
 real chain of thought; OpenAI's Responses API and Claude send a summary; OpenAI
-via Chat Completions sends nothing. Claude Opus 5 and Sonnet 5 return empty
-thinking unless asked for a summary, which the adapter does by default —
+via Chat Completions sends nothing. Claude Fable 5, Opus 5 and Sonnet 5 return
+empty thinking unless asked for a summary, which the adapter does by default —
 `providers.anthropic.thinking_display`, see
 [providers.md](providers.md#the-thinking-request).
 
@@ -154,7 +154,7 @@ Each run ends with one dim line covering every request it made:
 | `out` | Tokens generated |
 | `cached` | Share of `in` served from the provider's prompt cache |
 | `context` | Size of the latest request — prompt plus output — against the model's window |
-| cost | From [`pricing`](configuration.md#pricing); left out for an unpriced model |
+| cost | From the model's [`price`](configuration.md#prices); left out for an unpriced model |
 
 `context` is the latest request, not a sum: every request resends the history,
 so adding them up would count it again on each turn. `in` *is* a sum, because
@@ -248,15 +248,16 @@ capped at `project.max_bytes`. Full behavior:
 
 ```bash
 lab-harness --model claude-opus-5          # Anthropic, Messages API
-lab-harness --model gpt-5                  # OpenAI, Responses API
+lab-harness --model gpt-6-luna             # OpenAI, Responses API
 lab-harness --model deepseek-flash         # DeepSeek, Chat Completions
 lab-harness --model glm-5.3                # GLM, Chat Completions
 lab-harness --model their-model --provider groq
 ```
 
 The provider is inferred from the model id, so `--provider` is only needed for
-an id no profile claims. OpenAI, DeepSeek and GLM are configured out of the
-box; any other endpoint speaking either protocol is a few lines of config —
+an id the catalog does not list. OpenAI, DeepSeek and GLM are configured out of
+the box, in [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml);
+any other endpoint speaking either protocol is a few lines of config —
 [configuration.md](configuration.md#provider-profiles).
 
 Reasoning models differ in what they will show you and what has to be handed

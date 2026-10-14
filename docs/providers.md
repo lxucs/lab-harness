@@ -46,7 +46,7 @@ type to `llm/types.py`, use `ProviderBlock` instead.
 though compaction does not — it is where token accounting will hang, and the
 terminal already measures context against it. Prices are deliberately *not*
 on `Model`: they vary by vendor, platform and contract, so they live in
-config — see [`pricing`](configuration.md#pricing).
+config — see [`models`](configuration.md#models).
 
 ## Shipped providers
 
@@ -111,7 +111,7 @@ the last block of each of the last two user messages. The second of those sits
 exactly where the previous request wrote its entry, so a turn that adds more
 than the API's 20-block lookback — many parallel tool calls — still hits.
 Three markers, under the limit of four. `Usage` already reports cache reads
-and writes, and the shipped [prices](configuration.md#pricing) already include
+and writes, and the shipped [prices](configuration.md#prices) already include
 both rates, so nothing downstream changes when it lands.
 
 ### The thinking request
@@ -120,11 +120,11 @@ Two request shapes, chosen per model:
 
 | Models | Sent | Thinks |
 |---|---|---|
-| Opus 5, Sonnet 5, and any Claude id not listed below | `thinking: {type: "adaptive", display: "summarized"}`, on every request | Always — they think by default |
+| Fable 5, Opus 5, Sonnet 5, and any Claude id not listed below | `thinking: {type: "adaptive", display: "summarized"}`, on every request | Always — they think by default |
 | Everything before 4.6 — `budget_thinking_models`, by id prefix | `thinking: {type: "enabled", budget_tokens: …}`, only when reasoning is requested | Only when asked |
 
 **Adaptive is sent even though the models think unasked**, because the
-request is the only place to ask for `display`. Opus 5 and Sonnet 5 default it
+request is the only place to ask for `display`. The 5-series models default it
 to `"omitted"`: thinking blocks arrive with empty text, which to a terminal
 looks like a long silent pause. `"summarized"` gets a readable summary; the
 raw chain is never returned either way, and billing is the same.
@@ -267,20 +267,25 @@ parse into arguments that validate while silently missing fields.
 
 A vendor is config, not code. `providers.openai` is a table of named profiles,
 and one of only two places in the schema where an unknown key is *not* an
-error — a new key is a new vendor.
+error — a new key is a new vendor. The other is `models`, where a model names
+the profile that serves it.
 
 ```toml
 [providers.openai.groq]
 api = "chat_completions"      # the default
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
-models = ["llama-3.3-70b-versatile"]
+
+[models."llama-3.3-70b-versatile"]
+provider = "groq"
 ```
 
 `api` picks the protocol: `chat_completions` (default, since that is what a new
-vendor almost certainly speaks) or `responses`. The shipped `openai` profile
-sets `responses`; `deepseek` and `glm` use the default. An unusable value fails
-at startup naming the profile.
+vendor almost certainly speaks) or `responses`. The shipped `openai` profile —
+like every shipped endpoint, in
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml) — sets
+`responses`; `deepseek` and `glm` use the default. An unusable value fails at
+startup naming the profile.
 
 `replay_reasoning_field` names the assistant-message field earlier reasoning
 goes back in. The shipped `deepseek` and `glm` profiles set
@@ -302,36 +307,44 @@ still fails at startup.
 **Which provider serves a model**, highest precedence first:
 
 1. `--provider`
-2. a profile whose `models` list names the id — so `--model deepseek-flash`
-   reaches DeepSeek with no flag
-3. the catalog's `Model.provider`
-4. `agent.provider` (default `anthropic`)
+2. the `provider` of the id's [`models`](configuration.md#models) entry — so
+   `--model deepseek-flash` reaches DeepSeek with no flag
+3. `agent.provider` (default `anthropic`)
 
-Rung 2 sits above the catalog on purpose: it lets a config file re-point a
-model id at a different endpoint — a gateway, or a local server running the
-same weights — without the catalog having to agree.
+Rung 2 is config like any other, so re-pointing a catalogued model at a
+gateway, or at a local server running the same weights, is one line:
+`[models.claude-sonnet-5] provider = "my-gateway"`.
 
 `select_provider`, `build_provider` and `route` live in
 `lab_harness/llm/providers/__init__.py`. `route` is the one the CLI calls; it
-resolves the id, picks the provider, and rewrites `Model.provider` to match —
-which matters because an uncatalogued id is cloned from an Anthropic entry for
-its limits and would otherwise claim to be Anthropic's whatever served it.
+resolves the id, picks the provider, and writes it onto `Model.provider` — an
+uncatalogued id resolves naming none, and `--provider` can override the one a
+catalogued id names.
 
 A profile's credential resolves from the environment first, then
 `config.local.toml` — never a committed file.
 
-## Model registry
+## The model catalog
 
-`lab_harness/llm/registry.py` holds the catalog and `resolve_model()`. Precedence:
-explicit argument, then `LAB_HARNESS_MODEL`, then the configured default.
+Every model lab-harness knows, and the endpoints it ships, are data rather
+than code: [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
+It is the default of the `providers.openai` and `models` config sections and
+uses their format exactly, so a config file adds a model or a vendor, or
+changes one, with the same tables. One `[models.<id>]` table holds everything
+about a model — who serves it, its limits and flags, its price; the keys are in
+[configuration.md](configuration.md#models).
+
+`resolve_model()` in `lab_harness/llm/registry.py` turns an id into the `Model`
+the adapters read. Precedence: explicit argument, then `LAB_HARNESS_MODEL`,
+then the configured default.
 
 An **unknown model id is not an error**. Model names ship faster than this
 catalog does, so an unlisted id is given conservative limits rather than
 refused. Being unable to use a model released last week is worse than a
-slightly wrong `context_window`. Routing still works for it: list the id in a
-profile's `models`, or pass `--provider`.
+slightly wrong `context_window`. Routing still works for it: give it a
+`[models]` entry naming its provider, or pass `--provider`.
 
-Catalogued `provider` values name the *profile* that serves the model, not the
+A model's `provider` names the *profile* that serves it, not the
 dialect it speaks — `deepseek-flash` says `deepseek`, not `openai`.
 
 Capability flags live with the model, not at the call site.
@@ -346,18 +359,20 @@ think by default anyway.
 ## Adding a vendor
 
 **If it speaks either protocol — which almost all do — write no code.** Add a
-profile:
+profile, and a `[models]` entry for each model it serves:
 
 ```toml
 [providers.openai.myvendor]
 base_url = "https://api.myvendor.example/v1"
 api_key_env = "MYVENDOR_API_KEY"
-models = ["their-model-v1"]
+
+[models.their-model-v1]
+provider = "myvendor"
 ```
 
-`lab-harness --model their-model-v1` now routes there. Add a catalog entry in
-`llm/registry.py` only if you want its real limits and capability flags, and a
-[`[pricing]`](configuration.md#pricing) entry if you want a cost shown. For a
+`lab-harness --model their-model-v1` now routes there. Add its real limits,
+capability flags and price to the same `[models]` table if you have them —
+[configuration.md](configuration.md#models) lists the keys. For a
 reasoning model, check the vendor's docs on sending reasoning back before
 setting `replay_reasoning_field` — see [Profiles](#profiles).
 
@@ -374,7 +389,7 @@ setting `replay_reasoning_field` — see [Profiles](#profiles).
    docstring. Replaying something the server cannot decrypt is a 400; dropping
    something it needed is a silent loss of context.
 5. Register it in `PROTOCOLS` so a profile can name it.
-6. Add its models to `llm/registry.py` and update the table above.
+6. Add its models to `llm/catalog.toml` and update the table above.
 
 ## Testing
 

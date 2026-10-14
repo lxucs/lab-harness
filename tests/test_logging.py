@@ -350,15 +350,14 @@ def test_a_profile_with_no_key_says_so() -> None:
     ("model_id", "override", "reason"),
     [
         ("claude-opus-5", "deepseek", "set by --provider"),
-        ("deepseek-flash", None, "listed in providers.openai.deepseek"),
-        ("claude-opus-5", None, "from the model catalog"),
+        ("deepseek-flash", None, "from its models entry"),
         ("not-a-catalogued-model", None, "agent.provider"),
     ],
 )
 def test_info_says_which_rule_routed_the_model(
     model_id: str, override: str | None, reason: str
 ) -> None:
-    """Four rungs decide the provider; a wrong endpoint needs the one that fired."""
+    """Three rungs decide the provider; a wrong endpoint needs the one that fired."""
     stream = sink()
     configure_logging("info", stream=stream)
     select_provider(model_id, Config(), override)

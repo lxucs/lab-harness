@@ -5,22 +5,73 @@ which beats config. Getting it backwards is invisible until someone is billed
 for the wrong model, so each link is asserted on its own and then together.
 """
 
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
-from lab_harness.config import AgentConfig
-from lab_harness.llm.registry import MODELS, resolve_model
+from lab_harness import config as config_module
+from lab_harness.config import AgentConfig, Config, ConfigError, ModelConfig, _catalog
+from lab_harness.llm.providers import ANTHROPIC
+from lab_harness.llm.registry import resolve_model
+
+
+def agent(**settings: str) -> Config:
+    return Config(agent=replace(AgentConfig(), **settings))
 
 
 def test_a_catalog_id_resolves_to_its_entry() -> None:
+    entry = Config().models["claude-opus-5"]
     model = resolve_model("claude-opus-5")
-    assert model is MODELS["claude-opus-5"]
-    assert model.context_window == MODELS["claude-opus-5"].context_window
+    assert (model.id, model.name, model.provider) == ("claude-opus-5", entry.name, entry.provider)
+    assert (model.context_window, model.max_tokens) == (entry.context_window, entry.max_tokens)
+    assert model.supports_reasoning is entry.supports_reasoning
 
 
-def test_the_catalog_entries_are_self_consistent() -> None:
-    """A key that disagrees with its own `id` would break resolution silently."""
-    for key, model in MODELS.items():
-        assert model.id == key
+def test_a_configured_entry_is_what_resolves() -> None:
+    """The catalog is config: an entry a config file changed is the one used."""
+    config = Config()
+    models = {**config.models, "claude-opus-5": ModelConfig(max_tokens=1_000)}
+    assert resolve_model("claude-opus-5", replace(config, models=models)).max_tokens == 1_000
+
+
+# --- the shipped catalog --------------------------------------------------
+
+
+def test_every_catalogued_model_names_a_provider_that_exists() -> None:
+    """A typo in `provider` would route the model to an endpoint that is not there."""
+    config = Config()
+    known = {ANTHROPIC, *config.providers.openai}
+    for model_id, entry in config.models.items():
+        assert entry.provider in known, model_id
+
+
+def test_every_catalogued_model_has_a_name_and_a_price() -> None:
+    """So the terminal labels it, and `:status` shows a cost for it."""
+    for model_id, entry in Config().models.items():
+        assert entry.name, model_id
+        assert entry.price.input and entry.price.output, model_id
+
+
+def test_the_catalog_may_only_hold_endpoints_and_models(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It is read like a config file, so a stray section fails rather than vanishing."""
+    stray = tmp_path / "catalog.toml"
+    stray.write_text("[agent]\nmax_turns = 3\n")
+    monkeypatch.setattr(config_module, "CATALOG_FILE", stray)
+
+    with pytest.raises(ConfigError, match=r"catalog\.toml: unknown setting 'agent'"):
+        _catalog.__wrapped__()
+
+
+def test_a_missing_catalog_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(config_module, "CATALOG_FILE", tmp_path / "catalog.toml")
+
+    with pytest.raises(ConfigError, match="package is incomplete"):
+        _catalog.__wrapped__()
 
 
 # --- precedence -----------------------------------------------------------
@@ -31,25 +82,25 @@ def test_nothing_specified_uses_the_configured_model() -> None:
 
 
 def test_the_configured_model_is_honored() -> None:
-    config = AgentConfig(model="claude-opus-5")
+    config = agent(model="claude-opus-5")
     assert resolve_model(config=config).id == "claude-opus-5"
 
 
 def test_the_environment_beats_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = AgentConfig(model="claude-opus-5")
-    monkeypatch.setenv(config.model_env, "claude-haiku-4-5-20251001")
+    config = agent(model="claude-opus-5")
+    monkeypatch.setenv(config.agent.model_env, "claude-haiku-4-5-20251001")
     assert resolve_model(config=config).id == "claude-haiku-4-5-20251001"
 
 
 def test_the_explicit_argument_beats_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = AgentConfig(model="claude-opus-5")
-    monkeypatch.setenv(config.model_env, "claude-haiku-4-5-20251001")
+    config = agent(model="claude-opus-5")
+    monkeypatch.setenv(config.agent.model_env, "claude-haiku-4-5-20251001")
     assert resolve_model("claude-sonnet-5", config).id == "claude-sonnet-5"
 
 
 def test_the_env_var_name_comes_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """The *name* is a config key, so a deployment renames it without a patch."""
-    config = AgentConfig(model_env="DEPLOYMENT_MODEL")
+    config = agent(model_env="DEPLOYMENT_MODEL")
     monkeypatch.setenv("DEPLOYMENT_MODEL", "claude-opus-5")
     monkeypatch.setenv("LAB_HARNESS_MODEL", "claude-haiku-4-5-20251001")
     assert resolve_model(config=config).id == "claude-opus-5"
@@ -57,8 +108,8 @@ def test_the_env_var_name_comes_from_config(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_an_empty_env_var_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     """`LAB_HARNESS_MODEL=` is an unset variable, not a request for a nameless model."""
-    config = AgentConfig(model="claude-opus-5")
-    monkeypatch.setenv(config.model_env, "")
+    config = agent(model="claude-opus-5")
+    monkeypatch.setenv(config.agent.model_env, "")
     assert resolve_model(config=config).id == "claude-opus-5"
 
 
@@ -81,13 +132,18 @@ def test_an_unknown_id_gets_conservative_limits() -> None:
 
 def test_an_unknown_configured_model_still_resolves() -> None:
     """A config file naming next month's model must not break startup."""
-    config = AgentConfig(model="claude-something-7")
+    config = agent(model="claude-something-7")
     assert resolve_model(config=config).id == "claude-something-7"
 
 
 def test_an_unknown_id_does_not_mutate_the_catalog() -> None:
-    """The template is cloned, not edited — `replace` on a frozen dataclass."""
-    before = dict(MODELS)
+    """Resolving reads the catalog; it never adds the guess to it."""
+    before = Config().models
     resolve_model("claude-something-7")
-    assert before == MODELS
-    assert "claude-something-7" not in MODELS
+    assert Config().models == before
+    assert "claude-something-7" not in before
+
+
+def test_an_unknown_id_names_no_provider() -> None:
+    """Routing decides; the catalog has nothing to say about an id it lacks."""
+    assert resolve_model("claude-something-7").provider == ""

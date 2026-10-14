@@ -13,9 +13,13 @@ from typing import Any
 
 import pytest
 
-from lab_harness.config import Config, _apply
+from lab_harness.config import Config, _apply, _member_type
 
 EXAMPLE = Path(__file__).resolve().parent.parent / ".lab-harness" / "config.toml.example"
+
+#: Stands in for the entry name in a table of named sections, whose keys are
+#: schema while the names are data: one documented entry covers them all.
+NAME = "<name>"
 
 #: Keys deliberately absent from the example, and why. Anything else missing is
 #: an undocumented setting.
@@ -25,10 +29,8 @@ INTENTIONALLY_ABSENT = {
     "tools.web.tavily.api_key",
     # A machine-specific endpoint, for the same reason.
     "tools.web.tavily.base_url",
-    # Same rule, once per shipped OpenAI-compatible profile.
-    "providers.openai.openai.api_key",
-    "providers.openai.deepseek.api_key",
-    "providers.openai.glm.api_key",
+    # Same rule, for an OpenAI-compatible profile.
+    f"providers.openai.{NAME}.api_key",
 }
 
 #: Substrings that would mean a real secret leaked into a committed file.
@@ -43,10 +45,10 @@ def example_data() -> dict[str, Any]:
 def leaf_paths(instance: object, trail: tuple[str, ...] = ()) -> set[str]:
     """Every scalar setting in the schema, as dotted paths.
 
-    A dict field is a table of *named* sections (`providers.openai.deepseek`),
-    so it recurses one level deeper than a plain one — the names are data, but
-    the keys inside each section are schema and must be documented like any
-    other.
+    A dict field is a table of *named* sections (`providers.openai.deepseek`).
+    Its keys come from the entry type, not from whatever entries ship: the
+    names are data, but the keys inside a section are schema and must be
+    documented like any other.
     """
     found: set[str] = set()
     for field in fields(instance):  # type: ignore[arg-type]
@@ -55,19 +57,28 @@ def leaf_paths(instance: object, trail: tuple[str, ...] = ()) -> set[str]:
         if is_dataclass(value):
             found |= leaf_paths(value, where)
         elif isinstance(value, dict):
-            for name, section in value.items():
-                found |= leaf_paths(section, (*where, name))
+            found |= leaf_paths(_member_type(field)(), (*where, NAME))
         else:
             found.add(".".join(where))
     return found
 
 
-def documented_paths(data: dict[str, Any], trail: tuple[str, ...] = ()) -> set[str]:
+def documented_paths(
+    data: dict[str, Any], schema: object = None, trail: tuple[str, ...] = ()
+) -> set[str]:
+    """Every scalar the example sets, as dotted paths, named entries as `NAME`."""
+    schema = Config() if schema is None else schema
+    known = {field.name: field for field in fields(schema)}  # type: ignore[arg-type]
     found: set[str] = set()
     for key, value in data.items():
         where = (*trail, key)
-        if isinstance(value, dict):
-            found |= documented_paths(value, where)
+        current = getattr(schema, key, None)
+        if isinstance(current, dict):
+            member = _member_type(known[key])
+            for section in value.values():
+                found |= documented_paths(section, member(), (*where, NAME))
+        elif is_dataclass(current):
+            found |= documented_paths(value, current, where)
         else:
             found.add(".".join(where))
     return found

@@ -79,6 +79,11 @@ Defaults live in one place — the schema in `lab_harness/config.py` — so read
 schema tells you every knob the system has. Adding a tunable means adding it to
 the schema with a default in the same change.
 
+The LLMs that ship are data, not defaults in code: every model and every
+OpenAI-family endpoint is a table in `lab_harness/llm/catalog.toml`, in the
+same format a config file uses. Adding a model is one `[models.<id>]` table
+there, with its documented limits and price; no Python changes.
+
 A literal is fine only for genuine protocol constants that would be wrong to
 change: an API version header, a JSONL schema version, the `"\n"` a line
 splitter splits on.
@@ -86,14 +91,15 @@ splitter splits on.
 ### Nothing sensitive is committed
 
 No API keys, tokens, absolute paths (`/Users/...`, `/home/...`), private URLs,
-hostnames, org IDs, or personal identifiers — in config, docs, tests, or
-examples.
+hostnames, org IDs, or personal identifiers — in config, the model catalog,
+docs, tests, or examples.
 
 | File | Committed | Contents |
 |---|---|---|
 | `config.toml` | yes | Non-sensitive defaults |
 | `config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `config.toml.example` | yes | Template with placeholders |
+| `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
 
 Prefer environment variables for secrets. If you add a config location, add its
 local variant to `.gitignore` in the same change.

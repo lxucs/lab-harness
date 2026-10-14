@@ -1,0 +1,234 @@
+# The LLMs lab-harness knows out of the box: the OpenAI-family endpoints it
+# ships, and the model catalog.
+#
+# This file is the default for two config sections, [providers.openai] and
+# [models], and uses their format exactly. A config file adds a vendor or a
+# model with the same tables, and a table with a name used here overrides only
+# the keys it gives: `[models.claude-sonnet-5.price] input = 2.5` keeps the
+# other rates. Every key is checked as strictly as in any config file. The
+# schema, with what each key means and what an omitted one defaults to, is
+# `OpenAIConfig` and `ModelConfig` in lab_harness/config.py.
+#
+# Public, documented vendor data only. Keys and private endpoints belong in a
+# gitignored config.local.toml, never here.
+
+
+# --- endpoints --------------------------------------------------------------
+#
+# One table per vendor speaking an OpenAI-family protocol. Claude is not here:
+# it has an adapter of its own, configured under [providers.anthropic].
+
+[providers.openai.openai]
+api = "responses"
+
+[providers.openai.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url_env = "DEEPSEEK_BASE_URL"
+replay_reasoning_field = "reasoning_content"
+
+[providers.openai.glm]
+# The mainland endpoint. The international one is https://api.z.ai/api/paas/v4
+# — override base_url to use it.
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_key_env = "ZHIPUAI_API_KEY"
+base_url_env = "ZHIPUAI_BASE_URL"
+replay_reasoning_field = "reasoning_content"
+preserve_thinking = true
+
+
+# --- models -----------------------------------------------------------------
+#
+# One table per model id. `provider` is "anthropic" or the name of an endpoint
+# above; it is what routes `--model <id>` with no --provider flag. An id listed
+# nowhere still works, with the conservative limits of an omitted
+# context_window and max_tokens.
+#
+# Limits are the vendor's documented figures, never guesses above them: a
+# window that is understated costs a little context, one that is overstated
+# fails the request. The capability flags are what the runtime acts on —
+# `supports_reasoning` decides the thinking request an adapter sends.
+#
+# `price` is USD per million tokens, used only to show a cost. The four rates
+# mirror `Usage`; one left out is zero, and an all-zero price shows no cost.
+# Prices change: override them rather than trusting these.
+
+# Claude. Anthropic's first-party rates as published mid-2026 (Fable 5's from
+# 2026-10), with cache_write at the 5-minute-TTL premium, 1.25x input. Bedrock
+# and Vertex bill separately.
+
+[models.claude-fable-5]
+name = "Claude Fable 5"
+provider = "anthropic"
+context_window = 1_000_000
+max_tokens = 128_000
+# Always thinks: it rejects both a budget and `disabled`, which leaves
+# adaptive — what the adapter sends any model not on the budget list.
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 10.0, output = 50.0, cache_read = 1.0, cache_write = 12.5 }
+
+[models.claude-opus-5]
+name = "Claude Opus 5"
+provider = "anthropic"
+context_window = 1_000_000
+max_tokens = 32_000
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 5.0, output = 25.0, cache_read = 0.5, cache_write = 6.25 }
+
+[models.claude-sonnet-5]
+name = "Claude Sonnet 5"
+provider = "anthropic"
+context_window = 1_000_000
+max_tokens = 64_000
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 2.0, output = 10.0, cache_read = 0.2, cache_write = 2.5 }
+
+[models.claude-haiku-4-5-20251001]
+name = "Claude Haiku 4.5"
+provider = "anthropic"
+context_window = 200_000
+max_tokens = 8_192
+# Extended thinking, the budgeted kind — see
+# `providers.anthropic.budget_thinking_models`.
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 1.0, output = 5.0, cache_read = 0.1, cache_write = 1.25 }
+
+# OpenAI: the three GPT-6 flagships as of 2026-10, largest first. Each has a
+# documented "1,050,000 context window" and "128,000 max output tokens".
+#
+# Standard-tier rates (2026-10). A request over 272K input tokens bills at
+# long-context rates — input and cache reads 2x, output 1.5x — which one rate
+# cannot follow, so a cost shown for one runs low. OpenAI charges for cache
+# writes on some models, but the Responses adapter reports no write tokens, so
+# they count as `input` and cache_write is left at zero.
+
+[models.gpt-6-astra]
+name = "GPT-6 Astra"
+provider = "openai"
+context_window = 1_050_000
+max_tokens = 128_000
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 10.0, output = 50.0, cache_read = 1.0 }
+
+[models."gpt-6.1-sol"]
+name = "GPT-6.1 Sol"
+provider = "openai"
+context_window = 1_050_000
+max_tokens = 128_000
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 2.0, output = 10.0, cache_read = 0.1 }
+
+[models.gpt-6-luna]
+name = "GPT-6 Luna"
+provider = "openai"
+context_window = 1_050_000
+max_tokens = 128_000
+supports_reasoning = true
+supports_images = true
+supports_server_tools = true
+price = { input = 0.1, output = 0.5, cache_read = 0.01 }
+
+# DeepSeek: the two ids its API accepts as of 2026-09. Both think by default,
+# and reasoning counts against max_tokens — so the ceiling is DeepSeek's
+# documented default for thinking mode ("64K"), not the 8K non-thinking one,
+# which a long chain of thought would exhaust before the answer began.
+# `supports_reasoning` gates `reasoning_effort` in the request; reasoning
+# deltas are read whatever it says, since a model that streams them means them.
+#
+# PEAK rates (2026-10), which apply 01:00-04:00 and 06:00-10:00 UTC on weekdays
+# other than Chinese public holidays. Every other hour costs half, but one rate
+# cannot follow the clock, so these take the higher one: a shown cost may run
+# high, never low. `input` is the cache-miss rate, and there is no cache_write
+# — DeepSeek charges nothing to fill its cache.
+
+[models.deepseek-flash]
+name = "DeepSeek Flash"
+provider = "deepseek"
+context_window = 1_000_000
+max_tokens = 64_000
+supports_reasoning = true
+price = { input = 0.3, output = 1.2, cache_read = 0.006 }
+
+[models.deepseek-v4-pro]
+name = "DeepSeek V4 Pro"
+provider = "deepseek"
+context_window = 1_000_000
+max_tokens = 64_000
+supports_reasoning = true
+price = { input = 1.32, output = 3.96, cache_read = 0.044 }
+
+# GLM: Z.ai's lineup (2026-10), flagship first. Limits are given only for the
+# ids whose limits Z.ai documents on a model page, with its documented maximum
+# output ("128K"); the rest take the conservative defaults.
+#
+# Z.ai's international list rates (2026-10). The glm endpoint above is the
+# MAINLAND one, which bills in CNY at its own rates — override these if that is
+# the one you use. Z.ai's cache storage is "limited-time free", so there is no
+# cache_write. Quoted names: a bare TOML key cannot contain a dot.
+
+[models."glm-5.3"]
+name = "GLM-5.3"
+provider = "glm"
+context_window = 1_000_000
+max_tokens = 128_000
+supports_reasoning = true
+price = { input = 1.4, output = 4.4, cache_read = 0.26 }
+
+[models."glm-5.3-flash"]
+name = "GLM-5.3-Flash"
+provider = "glm"
+context_window = 1_000_000
+max_tokens = 128_000
+supports_reasoning = true
+price = { input = 0.15, output = 0.5, cache_read = 0.03 }
+
+[models."glm-5.3-flashx"]
+name = "GLM-5.3-FlashX"
+provider = "glm"
+context_window = 1_000_000
+max_tokens = 128_000
+supports_reasoning = true
+price = { input = 0.37, output = 1.25, cache_read = 0.075 }
+
+[models."glm-5.2"]
+name = "GLM-5.2"
+provider = "glm"
+price = { input = 1.4, output = 4.4, cache_read = 0.26 }
+
+[models."glm-5.1"]
+name = "GLM-5.1"
+provider = "glm"
+price = { input = 1.4, output = 4.4, cache_read = 0.26 }
+
+[models."glm-5"]
+name = "GLM-5"
+provider = "glm"
+price = { input = 1.0, output = 3.2, cache_read = 0.2 }
+
+[models."glm-4.7"]
+name = "GLM-4.7"
+provider = "glm"
+context_window = 200_000
+max_tokens = 128_000
+supports_reasoning = true
+price = { input = 0.6, output = 2.2, cache_read = 0.11 }
+
+[models."glm-4.6"]
+name = "GLM-4.6"
+provider = "glm"
+context_window = 200_000
+max_tokens = 128_000
+supports_reasoning = true
+price = { input = 0.6, output = 2.2, cache_read = 0.11 }

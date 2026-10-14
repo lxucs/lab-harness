@@ -22,7 +22,8 @@ from lab_harness.llm.provider import Provider
 from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.providers.responses import ResponsesProvider
-from lab_harness.llm.registry import MODELS, Model, resolve_model
+from lab_harness.llm.registry import resolve_model
+from lab_harness.llm.types import Model
 
 _log = logging.getLogger(__name__)
 
@@ -42,26 +43,21 @@ def select_provider(model_id: str, config: Config, override: str | None = None) 
     Precedence, highest first:
 
     1. `override` — the `--provider` flag
-    2. a profile whose `models` list names this id
-    3. the catalog's `Model.provider`
-    4. `agent.provider`
+    2. the `provider` of the id's `models` entry
+    3. `agent.provider`
 
-    Rung 2 is what makes `--model deepseek-flash` reach DeepSeek with no flag,
-    and it is checked before the catalog so that a config file can re-point a
-    model id at a different endpoint — a gateway, or a local server serving the
-    same weights — without the catalog having to agree.
+    Rung 2 is what makes `--model deepseek-flash` reach DeepSeek with no flag.
+    It is config like any other, so a config file can re-point a catalogued id
+    at a different endpoint — a gateway, or a local server serving the same
+    weights — with `[models.<id>] provider = "<profile>"`.
     """
     if override:
         _log.info("Provider %s for %r: set by --provider", override, model_id)
         return override
-    for name, profile in config.providers.openai.items():
-        if model_id in profile.models:
-            _log.info("Provider %s for %r: listed in providers.openai.%s", name, model_id, name)
-            return name
-    known = MODELS.get(model_id)
-    if known is not None:
-        _log.info("Provider %s for %r: from the model catalog", known.provider, model_id)
-        return known.provider
+    entry = config.models.get(model_id)
+    if entry is not None and entry.provider:
+        _log.info("Provider %s for %r: from its models entry", entry.provider, model_id)
+        return entry.provider
     fallback = config.agent.provider
     _log.info("Provider %s for %r: agent.provider, as nothing else claims it", fallback, model_id)
     return fallback
@@ -107,11 +103,10 @@ def route(
     together: the id has to be resolved before routing can look at it, and the
     resolved `Model` carries a provider name that routing may well change.
 
-    That rewrite matters. An id the catalog has never seen is cloned from an
-    Anthropic entry for its limits, so it arrives here claiming
-    `provider="anthropic"` no matter which endpoint will actually serve it.
+    That rewrite matters: an id the catalog has never seen arrives with no
+    provider at all, and `--provider` can override the one a catalogued id has.
     """
-    model = resolve_model(model_id, config.agent)
+    model = resolve_model(model_id, config)
     name = select_provider(model.id, config, override)
     return replace(model, provider=name), build_provider(name, config)
 

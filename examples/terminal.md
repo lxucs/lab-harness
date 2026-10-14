@@ -67,10 +67,10 @@ Each records what every request was sent with;
 uv run lab-harness --model claude-opus-5
 DEEPSEEK_API_KEY=sk-... uv run lab-harness --model deepseek-flash   # routed by config
 ZHIPUAI_API_KEY=... uv run lab-harness --model glm-5.3
-OPENAI_API_KEY=sk-... uv run lab-harness --model gpt-5 --provider openai
+OPENAI_API_KEY=sk-... uv run lab-harness --model gpt-6-luna
 ```
 
-Adding a vendor is a config section:
+Adding a vendor or a model is a few lines of config:
 [docs/configuration.md](../docs/configuration.md#provider-profiles).
 
 ## Another directory, and debugging

@@ -16,7 +16,7 @@ from lab_harness.cli.usage import (
     price_for,
     summarize,
 )
-from lab_harness.config import Config, PricingConfig
+from lab_harness.config import Config, ModelConfig, PricingConfig
 from lab_harness.llm.fake import FAKE_MODEL
 from lab_harness.llm.types import AssistantMessage, Usage, UserMessage, text
 
@@ -24,7 +24,8 @@ PRICED = "priced-model"
 UNPRICED = "unpriced-model"
 #: Round rates so expected costs can be worked out by hand.
 PRICE = PricingConfig(input=2.0, output=10.0, cache_read=0.2, cache_write=2.5)
-PRICING = {PRICED: PRICE}
+#: The models table `summarize` reads prices from, holding one priced model.
+MODELS = {PRICED: ModelConfig(price=PRICE)}
 
 
 def reply(usage: Usage, *, model: str = PRICED, stop_reason: str = "stop") -> AssistantMessage:
@@ -47,14 +48,14 @@ def test_usage_is_summed_across_requests() -> None:
         reply(Usage(input=20, output=5, cache_read=150, cache_write=0)),
     ]
 
-    summary = summarize(messages, PRICING)
+    summary = summarize(messages, MODELS)
 
     assert summary.requests == 2
     assert summary.usage == Usage(input=120, output=15, cache_read=150, cache_write=50)
 
 
 def test_only_assistant_messages_count_as_requests() -> None:
-    summary = summarize([UserMessage(content=text("go"))], PRICING)
+    summary = summarize([UserMessage(content=text("go"))], MODELS)
 
     assert summary.requests == 0
     assert summary.usage == Usage()
@@ -64,7 +65,7 @@ def test_a_failed_request_counts_but_adds_no_tokens() -> None:
     """One request per assistant message, even one that reported nothing."""
     messages = [reply(Usage(input=10, output=5)), reply(Usage(), stop_reason="error")]
 
-    summary = summarize(messages, PRICING)
+    summary = summarize(messages, MODELS)
 
     assert summary.requests == 2
     assert summary.usage == Usage(input=10, output=5)
@@ -77,20 +78,20 @@ def test_context_is_the_latest_request_not_the_sum() -> None:
         reply(Usage(input=200, output=50, cache_read=1_100)),
     ]
 
-    assert summarize(messages, PRICING).context_tokens == 200 + 50 + 1_100
+    assert summarize(messages, MODELS).context_tokens == 200 + 50 + 1_100
 
 
 def test_context_skips_a_trailing_request_that_reported_nothing() -> None:
     """An aborted turn has no usage; the context is still what came before it."""
     messages = [reply(Usage(input=300, output=20)), reply(Usage(), stop_reason="aborted")]
 
-    assert summarize(messages, PRICING).context_tokens == 320
+    assert summarize(messages, MODELS).context_tokens == 320
 
 
 def test_cost_is_computed_from_every_rate() -> None:
     usage = Usage(input=1_000_000, output=1_000_000, cache_read=1_000_000, cache_write=1_000_000)
 
-    summary = summarize([reply(usage)], PRICING)
+    summary = summarize([reply(usage)], MODELS)
 
     assert summary.cost == pytest.approx(2.0 + 10.0 + 0.2 + 2.5)
 
@@ -98,11 +99,11 @@ def test_cost_is_computed_from_every_rate() -> None:
 def test_cost_is_summed_across_requests() -> None:
     messages = [reply(Usage(input=500_000)), reply(Usage(output=100_000))]
 
-    assert summarize(messages, PRICING).cost == pytest.approx(1.0 + 1.0)
+    assert summarize(messages, MODELS).cost == pytest.approx(1.0 + 1.0)
 
 
 def test_an_unpriced_model_has_no_cost() -> None:
-    summary = summarize([reply(Usage(input=10), model=UNPRICED)], PRICING)
+    summary = summarize([reply(Usage(input=10), model=UNPRICED)], MODELS)
 
     assert summary.cost is None
 
@@ -111,53 +112,56 @@ def test_one_unpriced_request_makes_the_total_unknown() -> None:
     """A total that silently left requests out would read as the whole bill."""
     messages = [reply(Usage(input=10)), reply(Usage(input=10), model=UNPRICED)]
 
-    assert summarize(messages, PRICING).cost is None
+    assert summarize(messages, MODELS).cost is None
 
 
 def test_an_unpriced_request_with_no_tokens_does_not_hide_the_cost() -> None:
     """A failed request on another model cost nothing, so the total is still known."""
     messages = [reply(Usage(input=1_000_000)), reply(Usage(), model=UNPRICED)]
 
-    assert summarize(messages, PRICING).cost == pytest.approx(2.0)
+    assert summarize(messages, MODELS).cost == pytest.approx(2.0)
 
 
 def test_no_usage_means_no_cost() -> None:
-    assert summarize([reply(Usage())], PRICING).cost is None
+    assert summarize([reply(Usage())], MODELS).cost is None
 
 
 # --- prices ---------------------------------------------------------------
 
 
 def test_a_model_without_an_entry_is_unpriced() -> None:
-    assert price_for(UNPRICED, PRICING) is None
+    assert price_for(UNPRICED, MODELS) is None
 
 
-def test_an_all_zero_entry_is_unpriced() -> None:
+def test_an_entry_without_a_price_is_unpriced() -> None:
+    """An entry may give only limits or a provider; its default price is none."""
+    assert price_for(PRICED, {PRICED: ModelConfig(provider="groq")}) is None
+
+
+def test_an_all_zero_price_is_unpriced() -> None:
     """TOML has no null, and a merged table cannot delete a shipped entry."""
-    assert price_for(PRICED, {PRICED: PricingConfig()}) is None
+    assert price_for(PRICED, {PRICED: ModelConfig(price=PricingConfig())}) is None
 
 
 def test_a_partly_priced_entry_is_priced() -> None:
     price = PricingConfig(input=1.0)
 
-    assert price_for(PRICED, {PRICED: price}) == price
+    assert price_for(PRICED, {PRICED: ModelConfig(price=price)}) == price
 
 
 def test_cost_of_is_per_million_tokens() -> None:
     assert cost_of(Usage(input=1_000), PricingConfig(input=3.0)) == pytest.approx(0.003)
 
 
-def test_every_model_a_shipped_profile_routes_has_a_price() -> None:
-    """So `:status` shows a cost for any model the defaults can reach."""
-    config = Config()
-    routed = {m for p in config.providers.openai.values() for m in p.models}
-    shipped = {"claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"} | routed
-    for model in sorted(shipped):
-        assert price_for(model, config.pricing) is not None, model
+def test_openai_is_priced_at_standard_rates() -> None:
+    price = Config().models["gpt-6-luna"].price
+
+    assert (price.input, price.cache_read, price.output) == (0.1, 0.01, 0.5)
+    assert price.cache_write == 0.0, "the Responses adapter reports no cache writes"
 
 
 def test_glm_is_priced_at_z_ai_list_rates() -> None:
-    price = Config().pricing["glm-5.3"]
+    price = Config().models["glm-5.3"].price
 
     assert (price.input, price.cache_read, price.output) == (1.4, 0.26, 4.4)
     assert price.cache_write == 0.0, "Z.ai does not charge to store the cache (for now)"
@@ -165,7 +169,7 @@ def test_glm_is_priced_at_z_ai_list_rates() -> None:
 
 def test_deepseek_is_priced_at_its_peak_rates() -> None:
     """The higher of its two daily rates, so a shown cost is never an underestimate."""
-    price = Config().pricing["deepseek-flash"]
+    price = Config().models["deepseek-flash"].price
 
     assert (price.input, price.cache_read, price.output) == (0.3, 0.006, 1.2)
     assert price.cache_write == 0.0, "DeepSeek charges nothing to write the cache"
@@ -223,7 +227,7 @@ def test_the_currency_symbol_is_configurable() -> None:
 
 def test_the_footer_shows_tokens_cache_context_and_cost() -> None:
     summary = summarize(
-        [reply(Usage(input=1_000, output=500, cache_read=9_000, cache_write=0))], PRICING
+        [reply(Usage(input=1_000, output=500, cache_read=9_000, cache_write=0))], MODELS
     )
 
     footer = format_footer(summary, FAKE_MODEL, "$")
@@ -238,7 +242,7 @@ def test_the_footer_shows_tokens_cache_context_and_cost() -> None:
 
 
 def test_the_footer_omits_cost_for_an_unpriced_model() -> None:
-    summary = summarize([reply(Usage(input=1_000, output=10), model=UNPRICED)], PRICING)
+    summary = summarize([reply(Usage(input=1_000, output=10), model=UNPRICED)], MODELS)
 
     footer = format_footer(summary, FAKE_MODEL, "$")
 
@@ -248,14 +252,14 @@ def test_the_footer_omits_cost_for_an_unpriced_model() -> None:
 
 def test_there_is_no_footer_when_nothing_reported_usage() -> None:
     """A provider with usage reporting off would otherwise print a row of zeros."""
-    summary = summarize([reply(Usage(), stop_reason="aborted")], PRICING)
+    summary = summarize([reply(Usage(), stop_reason="aborted")], MODELS)
 
     assert format_footer(summary, FAKE_MODEL, "$") is None
 
 
 def test_status_lists_the_session_totals() -> None:
     summary = summarize(
-        [reply(Usage(input=1_000, output=500, cache_read=3_000, cache_write=1_000))], PRICING
+        [reply(Usage(input=1_000, output=500, cache_read=3_000, cache_write=1_000))], MODELS
     )
 
     status = "\n".join(format_status(summary, FAKE_MODEL, "$"))
@@ -270,7 +274,7 @@ def test_status_lists_the_session_totals() -> None:
 
 
 def test_status_omits_cost_for_an_unpriced_model() -> None:
-    summary = summarize([reply(Usage(input=10), model=UNPRICED)], PRICING)
+    summary = summarize([reply(Usage(input=10), model=UNPRICED)], MODELS)
 
     status = "\n".join(format_status(summary, FAKE_MODEL, "$"))
 
@@ -278,7 +282,7 @@ def test_status_omits_cost_for_an_unpriced_model() -> None:
 
 
 def test_status_before_any_request_says_so_without_a_rate() -> None:
-    status = "\n".join(format_status(summarize([], PRICING), FAKE_MODEL, "$"))
+    status = "\n".join(format_status(summarize([], MODELS), FAKE_MODEL, "$"))
 
     assert "requests" in status
     assert "cache hit" not in status

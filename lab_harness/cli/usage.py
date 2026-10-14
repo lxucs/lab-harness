@@ -15,7 +15,7 @@ hit-rate formula and one cost formula serve every provider.
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from lab_harness.config import PricingConfig
+from lab_harness.config import ModelConfig, PricingConfig
 from lab_harness.llm.types import AssistantMessage, Message, Model, Usage
 
 #: Rates are quoted per million tokens, as every vendor's price list is.
@@ -40,7 +40,7 @@ class UsageSummary:
     context_tokens: int = 0
 
 
-def summarize(messages: Iterable[Message], pricing: Mapping[str, PricingConfig]) -> UsageSummary:
+def summarize(messages: Iterable[Message], models: Mapping[str, ModelConfig]) -> UsageSummary:
     requests = 0
     usage = Usage()
     cost: float | None = 0.0
@@ -56,7 +56,7 @@ def summarize(messages: Iterable[Message], pricing: Mapping[str, PricingConfig])
             continue
         usage = _add(usage, spent)
         context = spent.total
-        price = price_for(message.model, pricing)
+        price = price_for(message.model, models)
         cost = None if cost is None or price is None else cost + cost_of(spent, price)
     return UsageSummary(
         requests=requests,
@@ -66,17 +66,18 @@ def summarize(messages: Iterable[Message], pricing: Mapping[str, PricingConfig])
     )
 
 
-def price_for(model_id: str, pricing: Mapping[str, PricingConfig]) -> PricingConfig | None:
+def price_for(model_id: str, models: Mapping[str, ModelConfig]) -> PricingConfig | None:
     """The configured rates for a model, or None when it has none.
 
-    An entry with every rate at zero counts as none. TOML has no null, and a
-    config layer merges over the shipped table rather than replacing it, so
-    zeroing an entry is the only way to switch one off.
+    A price with every rate at zero counts as none — which is also the default,
+    so a model listed without a price is unpriced. TOML has no null, and a
+    config layer merges over the shipped catalog rather than replacing it, so
+    zeroing a price is the only way to switch one off.
     """
-    price = pricing.get(model_id)
-    if price is None or price == PricingConfig():
+    entry = models.get(model_id)
+    if entry is None or entry.price == PricingConfig():
         return None
-    return price
+    return entry.price
 
 
 def cost_of(usage: Usage, price: PricingConfig) -> float:

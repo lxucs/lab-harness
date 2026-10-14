@@ -173,7 +173,7 @@ class Terminal:
             self._renderer.toggle_thinking()
 
     def _print_footer(self, produced: list[Message]) -> None:
-        summary = summarize(produced, self.config.pricing)
+        summary = summarize(produced, self.config.models)
         footer = format_footer(
             summary, self.agent.state.model, self.config.terminal.currency_symbol
         )
@@ -182,7 +182,7 @@ class Terminal:
 
     def _print_status(self) -> None:
         # The whole transcript, so a resumed session counts its history too.
-        summary = summarize(self.agent.state.messages, self.config.pricing)
+        summary = summarize(self.agent.state.messages, self.config.models)
         lines = format_status(summary, self.agent.state.model, self.config.terminal.currency_symbol)
         self.console.print(Text("\n".join(lines)))
         self.console.print()

@@ -27,14 +27,15 @@ from lab_harness.cli.main import (
 )
 from lab_harness.cli.terminal import LogStream
 from lab_harness.config import (
+    CONFIG_FILE,
+    PROJECT_DIRECTORY,
     AgentConfig,
     ApprovalConfig,
     Config,
-    OpenAIConfig,
     ProjectConfig,
-    ProvidersConfig,
     TerminalConfig,
     ToolsConfig,
+    load_config,
     snapshot,
 )
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
@@ -423,19 +424,16 @@ def test_the_provider_flag_overrides_the_model_id() -> None:
     assert isinstance(agent._provider, AnthropicProvider)
 
 
-def test_a_config_only_profile_reaches_the_agent() -> None:
-    """A vendor added purely in config, end to end through the wiring."""
-    config = Config(
-        providers=ProvidersConfig(
-            openai={
-                "groq": OpenAIConfig(
-                    base_url="https://api.groq.com/openai/v1", models=("llama-3.3-70b",)
-                )
-            }
-        )
+def test_a_vendor_added_in_a_config_file_reaches_the_agent(tmp_path: Path) -> None:
+    """A vendor and its model, added purely in config, end to end through the wiring."""
+    directory = tmp_path / PROJECT_DIRECTORY
+    directory.mkdir()
+    (directory / CONFIG_FILE).write_text(
+        '[providers.openai.groq]\nbase_url = "https://api.groq.com/openai/v1"\n\n'
+        '[models."llama-3.3-70b"]\nprovider = "groq"\n'
     )
 
-    agent = _build_agent(_args(model="llama-3.3-70b"), config)
+    agent = _build_agent(_args(model="llama-3.3-70b"), load_config(tmp_path))
 
     assert isinstance(agent._provider, ChatCompletionsProvider)
     assert agent._provider.name == "groq"

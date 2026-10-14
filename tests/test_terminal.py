@@ -29,7 +29,14 @@ from lab_harness.cli.terminal import (
     _ctrl_o_passes_through,
     build_approval_gate,
 )
-from lab_harness.config import Config, ConfigError, PricingConfig, TerminalConfig, ThemeConfig
+from lab_harness.config import (
+    Config,
+    ConfigError,
+    ModelConfig,
+    PricingConfig,
+    TerminalConfig,
+    ThemeConfig,
+)
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import (
     AssistantMessage,
@@ -287,7 +294,8 @@ async def test_the_footer_can_be_turned_off() -> None:
 
 
 async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
-    config = Config(pricing={FAKE_MODEL.id: PricingConfig(input=1_000.0, output=1_000.0)})
+    price = PricingConfig(input=1_000.0, output=1_000.0)
+    config = Config(models={FAKE_MODEL.id: ModelConfig(price=price)})
     terminal, buffer = _terminal(["hello"], config)
     _attach(terminal, FakeProvider([text_response("Hi")]))
 

@@ -1,7 +1,7 @@
 """Which provider serves a model, and how one gets built.
 
-The ladder is the point: `--provider`, then a profile claiming the id, then
-the catalog, then `agent.provider`. Each rung is pinned separately, because a
+The ladder is the point: `--provider`, then the provider the id's `models`
+entry names, then `agent.provider`. Each rung is pinned separately, because a
 routing bug reads as "it used the wrong endpoint" long after the fact.
 """
 
@@ -9,7 +9,14 @@ from dataclasses import replace
 
 import pytest
 
-from lab_harness.config import AgentConfig, Config, ConfigError, OpenAIConfig, ProvidersConfig
+from lab_harness.config import (
+    AgentConfig,
+    Config,
+    ConfigError,
+    ModelConfig,
+    OpenAIConfig,
+    ProvidersConfig,
+)
 from lab_harness.llm.providers import (
     PROTOCOLS,
     build_protocol,
@@ -20,44 +27,49 @@ from lab_harness.llm.providers import (
 from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.providers.responses import ResponsesProvider
-from lab_harness.llm.registry import MODELS
 
 
 def with_profiles(**profiles: OpenAIConfig) -> Config:
     return Config(providers=ProvidersConfig(openai=dict(profiles)))
 
 
+def with_models(**models: ModelConfig) -> Config:
+    """The shipped config, with these entries added to or replacing its own."""
+    config = Config()
+    return replace(config, models={**config.models, **models})
+
+
 # --- the ladder -----------------------------------------------------------
 
 
 def test_the_flag_wins_over_everything() -> None:
-    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-flash",)))
-
-    assert select_provider("deepseek-flash", config, override="anthropic") == "anthropic"
+    assert select_provider("deepseek-flash", Config(), override="anthropic") == "anthropic"
 
 
-def test_a_profile_claiming_the_id_wins_over_the_catalog() -> None:
+def test_a_models_entry_routes_its_id() -> None:
     """How `--model deepseek-flash` reaches DeepSeek with no flag."""
-    config = with_profiles(deepseek=OpenAIConfig(models=("deepseek-flash",)))
-
-    assert select_provider("deepseek-flash", config) == "deepseek"
+    assert select_provider("deepseek-flash", Config()) == "deepseek"
 
 
-def test_a_profile_can_repoint_a_catalogued_model() -> None:
+def test_a_config_entry_can_repoint_a_catalogued_model() -> None:
     """A gateway, or a local server with the same weights, without a code change."""
-    config = with_profiles(local=OpenAIConfig(models=("claude-sonnet-5",)))
+    config = with_models(**{"claude-sonnet-5": ModelConfig(provider="local")})
 
     assert select_provider("claude-sonnet-5", config) == "local"
 
 
-def test_the_catalog_decides_when_no_profile_claims_the_id() -> None:
-    config = with_profiles()
+def test_an_entry_naming_no_provider_falls_through() -> None:
+    """An entry may only describe limits or a price, and leave routing alone."""
+    config = replace(
+        with_models(**{"their-model": ModelConfig(max_tokens=4_096)}),
+        agent=AgentConfig(provider="my-gateway"),
+    )
 
-    assert select_provider("claude-sonnet-5", config) == "anthropic"
+    assert select_provider("their-model", config) == "my-gateway"
 
 
 def test_an_unknown_id_falls_back_to_the_configured_default() -> None:
-    config = replace(with_profiles(), agent=AgentConfig(provider="my-gateway"))
+    config = replace(Config(), agent=AgentConfig(provider="my-gateway"))
 
     assert select_provider("something-released-last-week", config) == "my-gateway"
 
@@ -66,26 +78,17 @@ def test_the_default_default_is_anthropic() -> None:
     assert select_provider("something-new", Config()) == "anthropic"
 
 
-def test_the_shipped_profiles_route_their_own_models() -> None:
+def test_the_shipped_catalog_routes_each_model_to_its_vendor() -> None:
     """The defaults have to actually work, not merely exist."""
     config = Config()
 
+    assert select_provider("claude-fable-5", config) == "anthropic"
+    assert select_provider("gpt-6-luna", config) == "openai"
+    assert select_provider("gpt-6-astra", config) == "openai"
     assert select_provider("deepseek-flash", config) == "deepseek"
     assert select_provider("deepseek-v4-pro", config) == "deepseek"
     assert select_provider("glm-5.3", config) == "glm"
     assert select_provider("glm-4.6", config) == "glm"
-
-
-def test_every_catalogued_profile_model_is_routed_by_that_profile() -> None:
-    """The catalog and the shipped profiles name the same ids.
-
-    If they drift — a model renamed in one and not the other — a catalogued
-    id with a vendor's limits silently routes to the default provider instead.
-    """
-    profiles = Config().providers.openai
-    for model in MODELS.values():
-        if model.provider in profiles:
-            assert model.id in profiles[model.provider].models, model.id
 
 
 # --- construction ---------------------------------------------------------
@@ -134,18 +137,25 @@ def test_route_returns_a_matched_model_and_provider() -> None:
     assert provider.name == "deepseek"
 
 
-def test_route_rewrites_the_provider_of_an_unknown_model() -> None:
-    """An uncatalogued id is cloned from an Anthropic entry for its limits.
-
-    Without the rewrite it would claim `provider="anthropic"` while being
-    served by something else entirely.
-    """
-    config = with_profiles(groq=OpenAIConfig(models=("llama-3.3-70b",)))
+def test_route_sets_the_provider_of_a_model_from_its_entry() -> None:
+    """A model a config file added routes like a catalogued one."""
+    config = replace(
+        with_models(**{"llama-3.3-70b": ModelConfig(provider="groq")}),
+        providers=ProvidersConfig(openai={"groq": OpenAIConfig()}),
+    )
 
     model, provider = route("llama-3.3-70b", config)
 
     assert model.provider == "groq"
     assert isinstance(provider, ChatCompletionsProvider)
+
+
+def test_route_writes_the_chosen_provider_onto_an_unknown_model() -> None:
+    """An unlisted id resolves naming no provider; the Model must say what served it."""
+    model, provider = route("something-released-last-week", Config())
+
+    assert model.provider == "anthropic"
+    assert isinstance(provider, AnthropicProvider)
 
 
 def test_route_honors_the_flag() -> None:

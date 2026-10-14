@@ -39,7 +39,7 @@ from lab_harness.llm.events import (
 )
 from lab_harness.llm.provider import StreamOptions
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
-from lab_harness.llm.registry import MODELS
+from lab_harness.llm.registry import resolve_model
 from lab_harness.llm.types import (
     AssistantMessage,
     Context,
@@ -950,7 +950,7 @@ async def test_the_shipped_deepseek_profile_survives_a_tool_loop() -> None:
     )
     profile = replace(Config().providers.openai["deepseek"], api_key=TEST_KEY)
     agent = Agent(
-        model=MODELS["deepseek-flash"],
+        model=resolve_model("deepseek-flash"),
         provider=ChatCompletionsProvider(profile, "deepseek", client=transport.client()),
         tools=(_ls,),
     )

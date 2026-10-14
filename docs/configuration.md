@@ -5,7 +5,9 @@
 **Nothing tunable is hardcoded.** Models, timeouts, retry counts, truncation
 limits, directory locations, default tool sets — all of it resolves from config.
 The schema in `lab_harness/config.py` is the single list of every knob the system
-has, and every default lives there.
+has, and every default lives there — except the LLMs that ship, which are data:
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml) lists the
+endpoints and models, in config-file format.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
 go in `config.local.toml` (gitignored) or environment variables — never in
@@ -16,7 +18,8 @@ go in `config.local.toml` (gitignored) or environment variables — never in
 
 Lowest to highest precedence:
 
-1. Schema defaults in `lab_harness/config.py`
+1. Schema defaults in `lab_harness/config.py`, and the endpoints and models in
+   `lab_harness/llm/catalog.toml`
 2. `~/.lab-harness/config.toml` — user config
 3. `./.lab-harness/config.toml` — project config, committed
 4. `./.lab-harness/config.local.toml` — project-local, **gitignored**
@@ -59,11 +62,11 @@ the current default, so a key you do not set behaves exactly as written.
 
 ```toml
 [agent]
-max_turns = 50                  # ceiling on provider requests in one run
-parallel_tools = true           # run independent tool calls concurrently
-model = "claude-sonnet-5"       # used when --model and $LAB_HARNESS_MODEL are absent
-model_env = "LAB_HARNESS_MODEL"     # NAME of the variable that overrides `model`
-provider = "anthropic"          # for a model id nothing else routes
+max_turns = 50                   # ceiling on provider requests in one run
+parallel_tools = true            # run independent tool calls concurrently
+model = "claude-sonnet-5"        # used when --model and $LAB_HARNESS_MODEL are absent
+model_env = "LAB_HARNESS_MODEL"  # NAME of the variable that overrides `model`
+provider = "anthropic"           # for a model id nothing else routes
 
 [project]
 context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
@@ -117,7 +120,7 @@ markdown = true         # render assistant text as markdown
 thinking = "collapse"   # reasoning once its message ends: "full" | "collapse" | "hidden"
 thinking_preview_lines = 4  # lines of reasoning shown while it streams, when collapsing
 show_usage = true       # token, cache and cost line after each run
-currency_symbol = "$"   # label for costs computed from [pricing]
+currency_symbol = "$"   # label for costs computed from model prices
 
 [terminal.theme]        # rich style strings, by role; see "The terminal" below
 accent = "#d77757"
@@ -135,12 +138,11 @@ budget_thinking_models = ["claude-haiku-4-5", "claude-3"]  # …and the rest bef
 thinking_budget_tokens = 4096 # for those, when reasoning is requested
 
 # Endpoints in the OpenAI family, keyed by profile name. openai, deepseek and
-# glm ship as defaults; see "Provider profiles" below.
+# glm ship in llm/catalog.toml; see "Provider profiles" below.
 [providers.openai.deepseek]
 api = "chat_completions"      # or "responses" (OpenAI's current API)
 base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"   # NAME of the variable; never the value here
-models = ["deepseek-flash", "deepseek-v4-pro"]  # ids that route here
 default_max_tokens = 8192
 timeout_seconds = 120.0
 include_usage = true          # chat_completions only
@@ -149,22 +151,28 @@ preserve_thinking = false     # chat_completions only; GLM's Preserved Thinking
 reasoning_summary = "auto"    # responses only: "auto" | "concise" | "detailed"
 store = false                 # responses only; true disables encrypted replay
 
-# Per-million-token rates, keyed by model id. Optional: an unpriced model just
-# shows no cost. See "Pricing" below.
-[pricing.claude-sonnet-5]
-input = 2.0
-output = 10.0
-cache_read = 0.2
-cache_write = 2.5
+# Every model, keyed by id: who serves it, its limits, and its price. The
+# catalog ships the ones lab-harness knows; see "Models" below.
+[models.claude-sonnet-5]
+name = "Claude Sonnet 5"
+provider = "anthropic"        # or a [providers.openai] profile; routes --model
+context_window = 1000000
+max_tokens = 64000
+supports_reasoning = true     # gates the thinking request
+supports_images = true
+supports_server_tools = true
+price = { input = 2.0, output = 10.0, cache_read = 0.2, cache_write = 2.5 }  # USD per 1M
 
 [logging]
-level = "warning"             # debug | info | warning | error
+level = "warning"                    # debug | info | warning | error
 level_env = "LAB_HARNESS_LOG_LEVEL"  # NAME of the variable that overrides `level`
 format = "%(levelname)s %(name)s: %(message)s"
 ```
 
-The full list, with every default, is in
-[`.lab-harness/config.toml.example`](../.lab-harness/config.toml.example).
+Every key, with its default, is in
+[`.lab-harness/config.toml.example`](../.lab-harness/config.toml.example); the
+endpoints and models that ship are in
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
 
 ### `config.local.toml` — never committed
 
@@ -231,27 +239,28 @@ Model resolution is the general precedence rule in miniature: `--model`, then
 `claude-sonnet-5`. An id the catalog has never heard of is **not** an error —
 it is given conservative limits rather than refused, because being unable to
 use a model released last week is worse than a slightly wrong `context_window`.
-Which provider serves it is decided separately; see
-[Provider profiles](#provider-profiles).
+Which provider serves it is decided separately; see [Models](#models).
 
 ## Provider profiles
 
 `providers.openai` is a table of **named** endpoints. It is one of the two
 places in the schema where an unknown key is not an error — a new key is a new
-vendor (the other is [`pricing`](#pricing), where it is a new model). That is
+vendor (the other is [`models`](#models), where it is a new model). That is
 how OpenAI, DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama are all supported
-by one adapter.
+by one adapter. The shipped `openai`, `deepseek` and `glm` profiles are in
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
 
 ```toml
 [providers.openai.groq]
 base_url = "https://api.groq.com/openai/v1"
 api_key_env = "GROQ_API_KEY"
-models = ["llama-3.3-70b-versatile"]
+
+[models."llama-3.3-70b-versatile"]   # what routes to it — see "Models"
+provider = "groq"
 
 [providers.openai.local]
 base_url = "http://localhost:11434/v1"   # Ollama
 api_key_env = "OLLAMA_API_KEY"
-models = ["qwen3:8b"]
 ```
 
 **`api` picks the protocol.** `chat_completions` is the default because that is
@@ -273,71 +282,96 @@ earlier reasoning unless the request says `thinking.clear_thinking: false`, so
 replaying it there would buy nothing. The shipped `glm` profile turns this on;
 it sends GLM's own request shape, so leave it off for any other vendor.
 
+**Adding does not replace.** A profile named in a config file merges into the
+shipped one; `[providers.openai.deepseek] timeout_seconds = 30` leaves its
+`base_url` and `api_key_env` alone. Keys *inside* a profile are checked as
+strictly as anywhere else, so a typo there still fails at startup.
+
+## Models
+
+`models` describes each model, keyed by id: which provider serves it, its
+limits and capabilities, and what it costs. The ones lab-harness knows ship in
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml), and a config
+file adds a model or changes one with the same table:
+
+```toml
+[models."my-model-1.5"]    # quoted: a bare TOML key cannot contain a dot
+provider = "groq"          # "anthropic" or a [providers.openai] profile
+context_window = 128000
+max_tokens = 8192
+supports_reasoning = false
+price = { input = 1.0, output = 4.0 }   # illustrative; take real rates from the vendor
+
+[models.claude-sonnet-5]   # a catalogued model: only the keys given change
+provider = "my-gateway"
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `name` | the id | Display name |
+| `provider` | `""` | Who serves it; empty leaves it to `agent.provider` |
+| `context_window` | `200000` | Tokens the model reads; the terminal measures context against it |
+| `max_tokens` | `8192` | Output ceiling sent with every request |
+| `supports_reasoning` | `true` | Gates the thinking request an adapter sends |
+| `supports_images`, `supports_server_tools` | `false` | Recorded; nothing acts on them |
+| `price` | all zero | USD — or any one currency — per million tokens |
+
+**The defaults are what an unlisted id gets.** An id with no entry still works:
+it is assumed current, so it reasons, and its limits are floors across current
+models, so guessing cannot exceed what one accepts. An entry needs only the
+keys that differ.
+
+**Which provider serves a model**, highest precedence first: `--provider`, then
+the entry's `provider`, then `agent.provider`. So `--model deepseek-flash`
+reaches DeepSeek with no flag, and pointing a catalogued model at a gateway or
+a local server is one line. Full rationale:
+[providers.md](providers.md#profiles).
+
 ```bash
-lab-harness --model deepseek-flash           # routed by the models list, no flag
+lab-harness --model deepseek-flash           # routed by its models entry, no flag
 lab-harness --model their-new-model --provider groq
 ```
 
-**Adding does not replace.** A profile named in a config file merges into the
-shipped one; `[providers.openai.deepseek] timeout_seconds = 30` leaves its
-`models` and `api_key_env` alone. Keys *inside* a profile are checked as
-strictly as anywhere else, so a typo there still fails at startup.
+### Prices
 
-Which profile serves a model, highest precedence first: `--provider`, then a
-profile whose `models` names the id, then the catalog, then `agent.provider`.
-Full rationale: [providers.md](providers.md#profiles).
+`price` exists only so the terminal can show a cost — nothing is enforced or
+budgeted. Its four rates mirror `Usage`: `input`, `output`, `cache_read` and
+`cache_write`.
 
-## Pricing
+**No price means no cost.** A model without one is unpriced, and the footer
+and `:status` simply leave the cost out. The same goes for a session where
+*any* request that used tokens ran on an unpriced model: a total that silently
+skipped some requests would look like the whole bill.
 
-`pricing` maps a model id to what it costs **per million tokens**. It exists
-only so the terminal can show a cost — nothing is enforced or budgeted.
-
-```toml
-[pricing.claude-sonnet-5]
-input = 2.0
-output = 10.0
-cache_read = 0.2       # prompt tokens served from the cache
-cache_write = 2.5      # prompt tokens written to it
-
-[pricing."my-model-1.5"]  # quoted: a bare TOML key cannot contain a dot
-input = 1.0               # illustrative; take real rates from the vendor
-output = 4.0
-```
-
-**No entry means no cost.** A model without an entry is unpriced, and the
-footer and `:status` simply leave the cost out. The same goes for a session
-where *any* request that used tokens ran on an unpriced model: a total that
-silently skipped some requests would look like the whole bill.
-
-**The four rates mirror `Usage`.** Every adapter reports `input` as the
-uncached remainder, with cache reads and writes counted separately, so one
-formula prices every provider. A rate left out of an entry is zero — for
-OpenAI, DeepSeek or GLM, which cache implicitly and report no writes,
-`cache_write` is irrelevant anyway; leaving out `cache_read` would make cached
-tokens free.
+**One formula prices every provider.** Every adapter reports `input` as the
+uncached remainder, with cache reads and writes counted separately. A rate left
+out is zero — for OpenAI, DeepSeek or GLM, which cache implicitly and report no
+writes, `cache_write` is irrelevant anyway; leaving out `cache_read` would make
+cached tokens free.
 
 **Shipped prices**, all in USD:
 
-- The three catalogued Claude models, at Anthropic's first-party list rates
-  (mid-2026), with `cache_write` at the 5-minute-TTL premium. Bedrock and
-  Vertex bill differently.
+- Claude, at Anthropic's first-party list rates (mid-2026; Fable 5 from
+  2026-10), with `cache_write` at the 5-minute-TTL premium. Bedrock and Vertex
+  bill differently.
+- The GPT-6 models, at OpenAI's standard-tier rates (2026-10). A request over
+  272K input tokens bills at OpenAI's long-context rates instead, which one
+  rate cannot follow, so a cost shown for one runs low. `cache_write` is zero:
+  the Responses adapter reports no cache writes, so those tokens count as
+  `input`.
 - `deepseek-flash` and `deepseek-v4-pro`, at DeepSeek's **peak** rates.
   DeepSeek halves its prices outside 01:00–04:00 and 06:00–10:00 UTC on
   weekdays, and one rate cannot follow the clock, so the higher one is shipped:
   a cost shown for DeepSeek may run high, never low. `input` is its cache-miss
   rate, and `cache_write` is zero — it charges nothing to fill the cache.
-- Every id the `glm` profile lists, at **Z.ai's international** rates. The
-  shipped profile points at the *mainland* endpoint, which bills in CNY at its
-  own rates — override the entries if that is the one you use. `cache_write`
-  is zero: Z.ai lists cache storage as "limited-time free".
+- GLM, at **Z.ai's international** rates. The shipped profile points at the
+  *mainland* endpoint, which bills in CNY at its own rates — override the
+  prices if that is the one you use. `cache_write` is zero: Z.ai lists cache
+  storage as "limited-time free".
 
-OpenAI models are unpriced: the shipped `openai` profile lists no ids, since
-they change too often to keep up with.
-
-Like profiles, a config file merges over them —
-`[pricing.claude-sonnet-5] input = 2.5` keeps the other three rates — so to
-switch one off, set all four rates to zero; an all-zero entry counts as no
-entry.
+A config file merges over them — `[models.claude-sonnet-5.price] input = 2.5`
+keeps the other three rates — so to switch one off, set all four to zero; an
+all-zero price counts as none.
 
 Amounts are labelled with `terminal.currency_symbol` (default `$`). It is only a
 label: write every rate in the same currency, because a session that switches

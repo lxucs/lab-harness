@@ -21,7 +21,9 @@ parts that earn their keep.
   training data. See [trajectories](docs/sessions.md#trajectories).
 - **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any
   OpenAI-compatible endpoint, with reasoning carried across tool calls the way
-  each vendor requires. A new vendor is a config section, not code.
+  each vendor requires. Every endpoint and model is a table in
+  [`llm/catalog.toml`](lab_harness/llm/catalog.toml), so a new vendor or model
+  is a few lines of TOML, not code.
 - **Observable.** Every step is a typed event of plain JSON data. `--json`
   streams them as JSONL, and `--log-level debug` traces each request, response
   and tool call by shape and id.
@@ -133,7 +135,7 @@ for training. Configuration and every environment variable:
 | [tools.md](docs/tools.md) | Tool contract, built-ins, adding a tool |
 | [sessions.md](docs/sessions.md) | Transcript format, resume, rebuilding trajectories |
 | [cli.md](docs/cli.md) | Terminal, flags, keybindings, the usage and cost readout |
-| [configuration.md](docs/configuration.md) | Config files, environment variables, pricing |
+| [configuration.md](docs/configuration.md) | Config files, environment variables, models and prices |
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
 
 The full design rationale — including what was cut and why — is in

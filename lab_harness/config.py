@@ -2,7 +2,9 @@
 
 This module is the single list of every tunable in the system. Code reads
 values from a resolved `Config`; it never hardcodes them. See
-docs/contributing.md.
+docs/contributing.md. The one exception is data rather than tunables: the LLM
+endpoints and models the harness ships, which live in llm/catalog.toml and are
+read here as the defaults of `providers.openai` and `models`.
 
 `load_config()` layers TOML files over these defaults, lowest precedence
 first: `<home>/config.toml`, `./.lab-harness/config.toml`, then
@@ -24,6 +26,7 @@ import os
 import tomllib
 from collections.abc import Mapping
 from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
+from functools import cache
 from pathlib import Path
 from typing import Any, get_args
 
@@ -38,15 +41,15 @@ class AgentConfig:
     #: Run independent tool calls from one message concurrently.
     parallel_tools: bool = True
     #: Model used when neither `--model` nor the env override names one. An
-    #: id absent from the catalog in llm/registry.py still works; it is
-    #: assumed current and given conservative limits.
+    #: id absent from `models` still works; it is assumed current and given
+    #: conservative limits.
     model: str = "claude-sonnet-5"
     #: Env var that overrides `model`, named here for the same reason
     #: `session.home_env` is — so a deployment using a different variable
     #: changes config rather than code.
     model_env: str = "LAB_HARNESS_MODEL"
-    #: Provider used for a model id nothing else routes — not in any profile's
-    #: `models` list and not in the catalog. The last rung of the ladder in
+    #: Provider used for a model id nothing else routes — one with no `models`
+    #: entry, or an entry naming no provider. The last rung of the ladder in
     #: llm/providers/select_provider; `--provider` is the first.
     provider: str = "anthropic"
 
@@ -219,8 +222,8 @@ class AnthropicConfig:
     base_url_env: str = "ANTHROPIC_BASE_URL"
     #: Sampling ceiling when the model declares none.
     default_max_tokens: int = 8_192
-    #: What comes back in a thinking block: "summarized" or "omitted". Opus 5
-    #: and Sonnet 5 think whether asked to or not, but default to omitted —
+    #: What comes back in a thinking block: "summarized" or "omitted". The
+    #: 5-series models think whether asked to or not, but default to omitted —
     #: the blocks arrive empty, and a terminal has nothing to show. Billing is
     #: the same either way. Empty sends no preference, for a model that
     #: rejects the field.
@@ -269,10 +272,6 @@ class OpenAIConfig:
     #: Empty means "not configured here"; look in the environment instead.
     #: Only ever set this in config.local.toml, never a committed file.
     api_key: str = ""
-    #: Model ids this profile serves. An id listed here routes to this profile,
-    #: which is how `--model deepseek-flash` finds DeepSeek with no flag and how
-    #: a new vendor needs no code — only config.
-    models: tuple[str, ...] = ()
     #: Sampling ceiling when the model declares none.
     default_max_tokens: int = 8_192
     #: Wall-clock limit for one streamed request. Generous next to the web
@@ -309,54 +308,6 @@ class OpenAIConfig:
     store: bool = False
 
 
-def _default_openai_profiles() -> dict[str, OpenAIConfig]:
-    """Endpoints shipped as defaults. All public, documented vendor URLs.
-
-    A profile here is a starting point, not a restriction — adding a key to
-    `[providers.openai]` in a config file creates a new one.
-    """
-    return {
-        "openai": OpenAIConfig(api="responses"),
-        "deepseek": OpenAIConfig(
-            base_url="https://api.deepseek.com/v1",
-            api_key_env="DEEPSEEK_API_KEY",
-            base_url_env="DEEPSEEK_BASE_URL",
-            models=("deepseek-flash", "deepseek-v4-pro"),
-            replay_reasoning_field="reasoning_content",
-        ),
-        "glm": OpenAIConfig(
-            # The mainland endpoint. The international one is
-            # https://api.z.ai/api/paas/v4 — override base_url to use it.
-            base_url="https://open.bigmodel.cn/api/paas/v4",
-            api_key_env="ZHIPUAI_API_KEY",
-            base_url_env="ZHIPUAI_BASE_URL",
-            # Z.ai's current lineup (2026-10), flagship first.
-            models=(
-                "glm-5.3",
-                "glm-5.3-flash",
-                "glm-5.3-flashx",
-                "glm-5.2",
-                "glm-5.1",
-                "glm-5",
-                "glm-4.7",
-                "glm-4.6",
-            ),
-            replay_reasoning_field="reasoning_content",
-            preserve_thinking=True,
-        ),
-    }
-
-
-@dataclass(frozen=True, slots=True)
-class ProvidersConfig:
-    anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
-    #: OpenAI-compatible endpoints, keyed by profile name. Like `pricing`, and
-    #: unlike every other section, *new keys here are allowed* — that is the
-    #: whole point, since it is how a vendor is added without touching code.
-    #: Keys *inside* a profile are still checked.
-    openai: dict[str, OpenAIConfig] = field(default_factory=_default_openai_profiles)
-
-
 @dataclass(frozen=True, slots=True)
 class PricingConfig:
     """What one model costs, per million tokens.
@@ -378,43 +329,78 @@ class PricingConfig:
     cache_write: float = 0.0
 
 
-def _default_pricing() -> dict[str, PricingConfig]:
-    """USD list prices: the catalogued Claude models, and every id a shipped
-    profile lists in its `models`.
+@dataclass(frozen=True, slots=True)
+class ModelConfig:
+    """One model: who serves it, its limits and capabilities, and its price.
 
-    Prices change — override an entry in config rather than trusting these.
-    Every other model starts unpriced and shows no cost.
+    Keyed by model id under `models`. The defaults describe an id nobody
+    listed, which still works: it is assumed current, so it reasons, and its
+    limits are floors across the current Anthropic line, so guessing them
+    cannot exceed what a model accepts.
     """
-    return {
-        # Anthropic's first-party API rates as published mid-2026, with
-        # `cache_write` at the 5-minute-TTL premium (1.25x input). Bedrock and
-        # Vertex bill separately.
-        "claude-opus-5": PricingConfig(input=5.0, output=25.0, cache_read=0.5, cache_write=6.25),
-        "claude-sonnet-5": PricingConfig(input=2.0, output=10.0, cache_read=0.2, cache_write=2.5),
-        "claude-haiku-4-5-20251001": PricingConfig(
-            input=1.0, output=5.0, cache_read=0.1, cache_write=1.25
-        ),
-        # DeepSeek's PEAK rates (2026-10), which apply 01:00-04:00 and
-        # 06:00-10:00 UTC on weekdays other than Chinese public holidays.
-        # Every other hour costs half. One rate
-        # per model cannot follow the clock, so this takes the higher one: a
-        # shown cost may run high, never low. `input` is the cache-miss rate,
-        # and there is no cache_write — DeepSeek charges nothing to fill it.
-        "deepseek-flash": PricingConfig(input=0.3, output=1.2, cache_read=0.006),
-        "deepseek-v4-pro": PricingConfig(input=1.32, output=3.96, cache_read=0.044),
-        # Z.ai's international list rates (2026-10). The shipped `glm` profile
-        # points at the mainland endpoint, which bills in CNY at its own rates
-        # — override these if that is the one you use. Z.ai's cache storage is
-        # "limited-time free", so there is no cache_write.
-        "glm-5.3": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
-        "glm-5.3-flash": PricingConfig(input=0.15, output=0.5, cache_read=0.03),
-        "glm-5.3-flashx": PricingConfig(input=0.37, output=1.25, cache_read=0.075),
-        "glm-5.2": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
-        "glm-5.1": PricingConfig(input=1.4, output=4.4, cache_read=0.26),
-        "glm-5": PricingConfig(input=1.0, output=3.2, cache_read=0.2),
-        "glm-4.7": PricingConfig(input=0.6, output=2.2, cache_read=0.11),
-        "glm-4.6": PricingConfig(input=0.6, output=2.2, cache_read=0.11),
-    }
+
+    #: Display name. Empty shows the id.
+    name: str = ""
+    #: "anthropic", or the name of a `providers.openai` profile. This is what
+    #: routes `--model <id>` with no `--provider`; empty leaves it to
+    #: `agent.provider`.
+    provider: str = ""
+    context_window: int = 200_000
+    max_tokens: int = 8_192
+    #: Gates the thinking request an adapter sends.
+    supports_reasoning: bool = True
+    #: Recorded, not acted on: nothing checks either before sending.
+    supports_images: bool = False
+    supports_server_tools: bool = False
+    #: An all-zero price — the default — shows no cost rather than a free one.
+    price: PricingConfig = field(default_factory=PricingConfig)
+
+
+#: The LLMs the harness ships knowing about — OpenAI-family endpoints and the
+#: model catalog — as data, in config-file format. It is the default of
+#: `providers.openai` and of `models`, so a config file extends or overrides it
+#: with the same tables.
+CATALOG_FILE = Path(__file__).parent / "llm" / "catalog.toml"
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogProviders:
+    openai: dict[str, OpenAIConfig] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class _Catalog:
+    """What the catalog may hold: the two sections it is the default of. Read
+    through `_apply` like any config file, so anything else is an error."""
+
+    providers: _CatalogProviders = field(default_factory=_CatalogProviders)
+    models: dict[str, ModelConfig] = field(default_factory=dict)
+
+
+@cache
+def _catalog() -> _Catalog:
+    data = _read_toml(CATALOG_FILE)
+    if data is None:
+        raise ConfigError(f"{CATALOG_FILE}: missing, so the package is incomplete")
+    return _apply(_Catalog(), data, source=CATALOG_FILE, trail=())
+
+
+def _shipped_profiles() -> dict[str, OpenAIConfig]:
+    return dict(_catalog().providers.openai)
+
+
+def _shipped_models() -> dict[str, ModelConfig]:
+    return dict(_catalog().models)
+
+
+@dataclass(frozen=True, slots=True)
+class ProvidersConfig:
+    anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
+    #: OpenAI-compatible endpoints, keyed by profile name; the shipped ones are
+    #: in llm/catalog.toml. Like `models`, and unlike every other section, *new
+    #: keys here are allowed* — that is how a vendor is added without touching
+    #: code. Keys *inside* a profile are still checked.
+    openai: dict[str, OpenAIConfig] = field(default_factory=_shipped_profiles)
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,8 +485,9 @@ class TerminalConfig:
     #: Print one line of token, cache and cost figures after each run.
     #: `:status` shows the session's totals either way.
     show_usage: bool = True
-    #: Label for amounts computed from `pricing`. Only a label — nothing is
-    #: converted, so it has to match the currency the rates are quoted in.
+    #: Label for amounts computed from each model's `price`. Only a label —
+    #: nothing is converted, so it has to match the currency the rates are
+    #: quoted in.
     currency_symbol: str = "$"
     theme: ThemeConfig = field(default_factory=ThemeConfig)
 
@@ -532,11 +519,10 @@ class Config:
     project: ProjectConfig = field(default_factory=ProjectConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
-    #: Per-million-token rates, keyed by model id. Like `providers.openai`, a
-    #: new key is allowed — it prices one more model. A model with no entry
-    #: shows no cost; an entry with every rate at zero counts as no entry,
-    #: which is how a config file switches off a shipped one.
-    pricing: dict[str, PricingConfig] = field(default_factory=_default_pricing)
+    #: Every model the harness knows, keyed by id; the shipped ones are in
+    #: llm/catalog.toml. Like `providers.openai`, a new key is allowed — it
+    #: adds a model.
+    models: dict[str, ModelConfig] = field(default_factory=_shipped_models)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -695,7 +681,7 @@ def _apply_named(
 
     The only tables where an unknown key is not an error. Everywhere else a
     name the schema does not know is a typo; here it is a new entry — a vendor
-    profile, or a model's price — which is how a deployment adds one without
+    profile, or a model — which is how a deployment adds one without
     code. Keys *inside* a section are checked as strictly as anywhere else.
     """
     where = ".".join(trail)

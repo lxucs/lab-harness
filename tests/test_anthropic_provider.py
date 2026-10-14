@@ -538,9 +538,9 @@ async def _request_for(
     return client.messages.requests[0]
 
 
-@pytest.mark.parametrize("model_id", ["claude-opus-5", "claude-sonnet-5"])
+@pytest.mark.parametrize("model_id", ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"])
 async def test_adaptive_models_ask_for_summarized_thinking(model_id: str) -> None:
-    """Both think unasked, but return empty thinking text unless asked for it."""
+    """All think unasked, but return empty thinking text unless asked for it."""
     request = await _request_for(model_id)
 
     assert request["thinking"] == {"type": "adaptive", "display": "summarized"}
