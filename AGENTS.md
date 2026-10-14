@@ -9,8 +9,10 @@ configuration hygiene, testing, and git.
 
 ## What this project is
 
-A lightweight agent harness. Python runtime, terminal frontend, modeled on
-[pi](https://github.com/earendil-works/pi).
+A minimal agent harness in Python, built for research. Terminal frontend,
+modeled on [pi](https://github.com/earendil-works/pi). Researchers read and
+change the code, so keep it small and readable: a new feature that fits a hook
+or a subscriber does not belong in the loop.
 
 - Design spec: [`docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)

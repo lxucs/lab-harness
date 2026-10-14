@@ -1,7 +1,10 @@
 # lab-harness Documentation
 
-A lightweight agent harness. Python runtime, terminal frontend, modeled on
-[pi](https://github.com/earendil-works/pi).
+A minimal agent harness in Python, built for research — every request
+reproducible from its transcript, one loop across Claude, OpenAI, DeepSeek and
+GLM, every step a typed event. Modeled on
+[pi](https://github.com/earendil-works/pi). The [README](../README.md) has the
+pitch and a quick start; these pages have the details.
 
 ## Reading order
 

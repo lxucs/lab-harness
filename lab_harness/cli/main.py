@@ -64,7 +64,9 @@ def build_system_prompt(context: ProjectContext | None) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="lab-harness", description="A lightweight agent harness.")
+    parser = argparse.ArgumentParser(
+        prog="lab-harness", description="A minimal agent harness in Python, built for research."
+    )
     parser.add_argument("-p", "--prompt", help="Run one prompt and exit.")
     parser.add_argument("--json", action="store_true", help="Emit the raw event stream as JSONL.")
     parser.add_argument(

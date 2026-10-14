@@ -1,7 +1,7 @@
 [project]
 name = "lab-harness"
 version = "0.1.0"
-description = "A lightweight agent harness"
+description = "A minimal agent harness in Python, built for research"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.40",
