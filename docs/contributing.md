@@ -106,7 +106,7 @@ the prompts, docs, tests, or examples.
 |---|---|---|
 | `config.toml` | yes | Non-sensitive defaults |
 | `config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
-| `config.toml.example` | yes | Template with placeholders |
+| `config.example.toml` | yes | Template with placeholders |
 | `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
 | `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 

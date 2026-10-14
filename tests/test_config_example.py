@@ -15,7 +15,7 @@ import pytest
 
 from lab_harness.config import Config, _apply, _member_type
 
-EXAMPLE = Path(__file__).resolve().parent.parent / ".lab-harness" / "config.toml.example"
+EXAMPLE = Path(__file__).resolve().parent.parent / ".lab-harness" / "config.example.toml"
 
 #: Stands in for the entry name in a table of named sections, whose keys are
 #: schema while the names are data: one documented entry covers them all.

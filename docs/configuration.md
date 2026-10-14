@@ -55,7 +55,7 @@ picks up that project's `.lab-harness/`, not this one's.
 |---|---|---|
 | `config.toml` | yes | Non-sensitive defaults — tool lists, feature flags, limits |
 | `config.local.toml` | **no** | Keys, absolute paths, private endpoints |
-| `config.toml.example` | yes | Template documenting every key, placeholders only |
+| `config.example.toml` | yes | Template documenting every key, placeholders only |
 
 ### `config.toml` — safe to commit
 
@@ -178,7 +178,7 @@ format = "%(levelname)s %(name)s: %(message)s"
 ```
 
 Every key, with its default, is in
-[`.lab-harness/config.toml.example`](../.lab-harness/config.toml.example); the
+[`.lab-harness/config.example.toml`](../.lab-harness/config.example.toml); the
 endpoints and models that ship are in
 [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
 

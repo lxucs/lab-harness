@@ -49,7 +49,7 @@ ids — in config, the model catalog, the prompts, docs, tests, or examples.
 |---|---|---|
 | `.lab-harness/config.toml` | yes | Non-sensitive defaults |
 | `.lab-harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
-| `.lab-harness/config.toml.example` | yes | Template, placeholders only |
+| `.lab-harness/config.example.toml` | yes | Template, placeholders only |
 | `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
 | `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 

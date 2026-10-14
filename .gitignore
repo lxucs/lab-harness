@@ -230,7 +230,7 @@ __marimo__/
 # negation under `.lab-harness/` would never match.
 .lab-harness/*
 !.lab-harness/config.toml
-!.lab-harness/config.toml.example
+!.lab-harness/config.example.toml
 
 *.local.toml
 config.local.toml
