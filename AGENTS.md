@@ -16,6 +16,7 @@ or a subscriber does not belong in the loop.
 
 - Design spec: [`docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
+- Usage, terminal and Python: [`examples/`](examples/)
 - What is built and what is not: [`README.md`](README.md#status)
 
 ## Environment
@@ -84,6 +85,10 @@ CI, which exports none.
 - Search backends are tested at the tool layer by registering a fake in
   `BACKENDS` under a config name, so the real selection path runs.
 - Filesystem tools are tested against pytest's `tmp_path`.
+- The scripts in `examples/` are run by `tests/test_examples.py`, with each
+  one's `route` swapped for a `FakeProvider`. An example is documentation that
+  executes: change one and its test together, and keep each a single file a
+  reader can follow top to bottom.
 
 Canned API payloads should be **shapes a live API actually returned**, not
 invented ones, and should say so in a comment. A fixture invented from memory

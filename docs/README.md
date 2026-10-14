@@ -4,7 +4,8 @@ A minimal agent harness in Python, built for research — every request
 reproducible from its transcript, one loop across Claude, OpenAI, DeepSeek and
 GLM, every step a typed event. Modeled on
 [pi](https://github.com/earendil-works/pi). The [README](../README.md) has the
-pitch and a quick start; these pages have the details.
+pitch and a quick start, [examples/](../examples/) has runnable usage from the
+terminal and from Python, and these pages have the details.
 
 ## Reading order
 

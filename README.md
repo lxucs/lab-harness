@@ -9,12 +9,12 @@ or your own Python. Architecturally it follows
 [pi](https://github.com/earendil-works/pi): the same layering, trimmed to the
 parts that earn their keep.
 
-- **Minimal.** The stateless agent loop is ~470 lines of code, in
+- **Minimal.** The stateless agent loop is under 500 lines of code, in
   [`agent/loop.py`](lab_harness/agent/loop.py); the stateful `Agent` that wraps
-  it — transcript, subscribers, abort — is ~130, in
+  it — transcript, subscribers, abort — is under 150, in
   [`agent/agent.py`](lab_harness/agent/agent.py). Not counting comments and
-  docstrings, which explain the why. Five runtime dependencies, no agent
-  framework.
+  docstrings, which explain the why. A handful of runtime dependencies, no
+  agent framework.
 - **Every request reproducible.** A session records the system prompt, tools,
   model and config each invocation ran with, so every request it made can be
   rebuilt exactly as the provider received it — for replay, analysis, or
@@ -27,13 +27,12 @@ parts that earn their keep.
   and tool call by shape and id.
 - **Hackable at two seams.** Four hooks and the event stream. A new tool is one
   file and one registry entry.
-- **Tested offline.** A scripted provider drives the real loop with no network
-  — 872 tests, sockets blocked.
+- **Tested offline.** A scripted provider drives the real loop with no network,
+  and the suite blocks sockets so no test can reach one by accident.
 
 > **Status: usable, and feature-complete against its design.** Three provider
 > adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions — 872 tests, all offline. Details in
-> [Status](#status).
+> durable sessions, all tested offline. Details in [Status](#status).
 
 ## Why
 
@@ -89,39 +88,14 @@ Details in [docs/architecture.md](docs/architecture.md).
 ```bash
 uv sync
 export ANTHROPIC_API_KEY=sk-...
-export TAVILY_API_KEY=tvly-...       # optional, for web_search
-uv run lab-harness                   # interactive
-```
-
-```bash
+export TAVILY_API_KEY=tvly-...                        # optional, for web_search
+uv run lab-harness                                    # interactive
 uv run lab-harness -p "summarize the config module"   # one-shot
-uv run lab-harness -p "..." --json                    # JSONL event stream
-uv run lab-harness --resume                           # continue where you left off
-uv run lab-harness --sessions                         # list saved sessions here
-uv run lab-harness -p "..." --model claude-opus-5
-uv run lab-harness --cwd ../other-project
-uv run lab-harness --log-level debug             # diagnostics on stderr
-uv run lab-harness --model deepseek-flash        # routed to DeepSeek by config
-uv run lab-harness --model gpt-5                 # OpenAI, via the Responses API
 ```
 
-In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
-session, `Ctrl-O` expands or collapses the model's thinking, and `Ctrl-D`
-exits. Reasoning streams live — DeepSeek's and GLM's raw chain, OpenAI's and
-Claude's summaries — and collapses to one line when its answer starts. Edits
-show as red and green diffs, Claude Code style, both when they ask for approval
-and once they land. Mutating tools (`bash`, `write`, `edit`) ask before
-running. Conversations are saved per project under `~/.lab-harness/sessions/` and
-`--resume` picks the last one back up; `--no-save` skips persistence. A saved
-session records the system prompt, tools, model and config each invocation ran
-with, so every request it made can be rebuilt — for replay or training. Exit
-status is `0` on a clean run, `1` when the final turn errored or was aborted.
-
-A `HARNESS.md` or `AGENTS.md` in the working directory is appended to the
-system prompt, so a project's conventions do not have to be rediscovered every
-run. Nothing to configure — if the file is there, it is used.
-
-Configuration and every environment variable: [docs/configuration.md](docs/configuration.md).
+Interactive mode asks before `bash`, `write` or `edit` runs; `-p` has nobody to
+ask, so they run unprompted. Sessions, JSONL events, other models and debug
+logs: [examples/terminal.md](examples/terminal.md).
 
 ## From Python
 
@@ -137,31 +111,22 @@ from lab_harness.llm.providers import route
 from lab_harness.tools import default_registry
 
 config = load_config()
-model, provider = route("claude-sonnet-5", config)
-agent = Agent(model=model, provider=provider, tools=tuple(default_registry()), config=config)
-
-
-async def on_event(event):  # every delta, tool call and result, as it happens
-    print(event.type)
-
-
-agent.subscribe(on_event)
+model, provider = route(None, config)  # $LAB_HARNESS_MODEL, else agent.model
+tools = default_registry().select(["read", "ls", "grep", "glob"])
+agent = Agent(model=model, provider=provider, tools=tools, config=config)
 messages = asyncio.run(agent.prompt("What does this project do?"))
 ```
 
-`agent.state.messages` is the whole transcript. Nothing is written to disk
-unless you subscribe a recorder — `lab_harness.session.start_recorder`, as
-`cli/main.py` does — after which
-[`recorded_requests`](docs/sessions.md#trajectories) rebuilds every request
-from the file. To script the model instead, `lab_harness.llm.fake.FakeProvider`
-replays canned responses through the same loop; that is how the test suite runs
-offline. Events: [docs/events.md](docs/events.md). Hooks:
-[docs/architecture.md](docs/architecture.md).
+[examples/](examples/) goes further: streaming events, a custom tool, all four
+hooks, a scripted model that needs no key, and exporting a session's requests
+for training. Configuration and every environment variable:
+[docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
 | Page | Covers |
 |---|---|
+| [examples/](examples/) | Runnable usage, from the terminal and from Python |
 | [architecture.md](docs/architecture.md) | Layering, module boundaries, deviations from pi |
 | [events.md](docs/events.md) | The event protocol between runtime and frontend |
 | [providers.md](docs/providers.md) | Provider contract, profiles, adding a vendor |
@@ -222,4 +187,4 @@ tool-execution path only one of the three adapters could ever use.
 
 ## License
 
-Not yet chosen.
+[MIT](LICENSE).
