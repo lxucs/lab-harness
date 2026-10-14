@@ -7,6 +7,7 @@ approval prompt, exit conditions — is the production code path.
 
 import asyncio
 import io
+import logging
 import re
 import signal
 import threading
@@ -18,8 +19,10 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from harness.agent import Agent
-from harness.agent.types import AgentStart
+from harness.agent.types import AgentStart, MessageStart
+from harness.cli.renderers import EventRenderer
 from harness.cli.terminal import (
+    LogStream,
     Terminal,
     _bindings,
     _ctrl_c_calls,
@@ -29,6 +32,7 @@ from harness.cli.terminal import (
 from harness.config import Config, ConfigError, PricingConfig, TerminalConfig, ThemeConfig
 from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from harness.llm.types import AssistantMessage, TextBlock, ToolCallBlock, Usage, UserMessage, text
+from harness.logs import configure_logging
 
 
 class ScriptedSession:
@@ -582,3 +586,39 @@ def test_running_without_an_attached_agent_is_a_clear_error() -> None:
 
     with pytest.raises(RuntimeError, match="attach"):
         _ = terminal.agent
+
+
+# --- log records ----------------------------------------------------------
+
+
+async def test_a_log_record_prints_above_the_live_region_and_leaves_it_whole() -> None:
+    """Written straight to the terminal, a record lands inside the region: the
+    next redraw overwrites it and leaves a stale line of the region behind."""
+    from tests.screen import screen
+
+    out = io.StringIO()
+    console = Console(file=out, width=60, height=20, force_terminal=True, no_color=True)
+    renderer = EventRenderer(console, TerminalConfig(), clock=lambda: 0.0)
+    configure_logging("debug", stream=LogStream(console, "dim"))
+    message = AssistantMessage(content=(), model=FAKE_MODEL.id, provider="fake")
+
+    await renderer(AgentStart())
+    try:
+        logging.getLogger("harness.sample").debug("a record")
+        await renderer(MessageStart(message=message))  # anything that redraws
+        shown = [line for line in screen(out.getvalue()) if line]
+    finally:
+        renderer.close()
+
+    assert len(shown) == 2, shown
+    assert shown[0] == "DEBUG harness.sample: a record"
+    assert shown[1].endswith("Working… (0s · Ctrl-C to cancel)")
+
+
+def test_a_log_record_is_printed_in_the_style_given() -> None:
+    out = io.StringIO()
+    console = Console(file=out, force_terminal=True, color_system="standard")
+
+    LogStream(console, "dim").write("DEBUG harness.sample: quiet\n")
+
+    assert out.getvalue() == "\x1b[2mDEBUG harness.sample: quiet\x1b[0m\n"

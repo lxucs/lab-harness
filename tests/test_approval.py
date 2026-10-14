@@ -1,6 +1,7 @@
 """The approval gate: fail closed, remember only within a session."""
 
 import asyncio
+import logging
 
 import pytest
 from pydantic import BaseModel
@@ -237,3 +238,15 @@ async def test_a_crashing_asker_denies_rather_than_falling_open() -> None:
 async def test_the_default_required_set_covers_the_mutating_tools() -> None:
     defaults = ApprovalConfig()
     assert set(defaults.required) == {"bash", "write", "edit"}
+
+
+# --- what is logged -------------------------------------------------------
+
+
+async def test_each_answer_is_logged_against_its_call(caplog: pytest.LogCaptureFixture) -> None:
+    gate, _ = _gate(["always"])
+
+    with caplog.at_level(logging.DEBUG, logger="harness.cli.approval"):
+        await gate(_ctx("dangerous"))
+
+    assert "Tool call c1: approval answered 'always'" in caplog.text

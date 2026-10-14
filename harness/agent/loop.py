@@ -58,6 +58,7 @@ from harness.agent.types import (
 from harness.llm.events import (
     StreamDone,
     StreamError,
+    StreamStart,
     TextDelta,
     ThinkingDelta,
 )
@@ -67,6 +68,8 @@ from harness.llm.types import (
     Context,
     Message,
     Model,
+    TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultMessage,
     UserMessage,
@@ -105,7 +108,11 @@ async def run_agent_loop(
     produced: list[Message] = []
     tools_by_name = {t.name: t for t in ctx.tools}
     declarations = declarations_for(ctx.tools)
+    limit = cfg.config.agent.max_turns
+    started = time.monotonic()
+    requests = 0
 
+    _log.debug("Run started with %d message(s) and %d tool(s)", len(transcript), len(ctx.tools))
     await _safe_emit(emit, AgentStart())
 
     # Messages the caller already holds but no subscriber has seen — normally
@@ -115,12 +122,11 @@ async def run_agent_loop(
         await _safe_emit(emit, MessageStart(message=message))
         await _safe_emit(emit, MessageEnd(message=message))
 
-    for turn in range(cfg.config.agent.max_turns):
+    for turn in range(limit):
         if _aborted(cfg):
             produced.append(await _emit_aborted(cfg, emit))
             break
 
-        _log.debug("Turn %d of at most %d", turn + 1, cfg.config.agent.max_turns)
         await _safe_emit(emit, TurnStart())
 
         # `prepare_request` transforms the *view* sent to the provider, never
@@ -136,7 +142,10 @@ async def run_agent_loop(
                 messages = update.messages if update.messages is not None else messages
                 model = update.model if update.model is not None else model
 
+        # After the hook, so the line says what was actually sent.
+        _log.debug("Turn %d/%d: %d message(s) to %s", turn + 1, limit, len(messages), model.id)
         request = Context(system_prompt=ctx.system_prompt, messages=messages, tools=declarations)
+        requests += 1
         assistant = await _stream_turn(request, model, cfg, emit)
 
         transcript.append(assistant)
@@ -191,11 +200,9 @@ async def run_agent_loop(
         # `for/else` runs only when the range was exhausted without a break —
         # the model was still calling tools when the budget ran out. Nothing in
         # the returned messages says so, so without this the run just stops.
-        _log.warning(
-            "Stopped after agent.max_turns=%d with the model still working",
-            cfg.config.agent.max_turns,
-        )
+        _log.warning("Stopped at agent.max_turns=%d with the model still working", limit)
 
+    _log.info("Run finished: %s", _summary(produced, requests, time.monotonic() - started))
     await _safe_emit(emit, AgentEnd(messages=tuple(produced)))
     return produced
 
@@ -214,6 +221,10 @@ async def _stream_turn(
     opts = StreamOptions(signal=cfg.signal)
     final: AssistantMessage | None = None
     started = False
+    sent = time.monotonic()
+    # Seconds until the first event past StreamStart — text, thinking or a
+    # call. The wait a user feels, apart from the whole response's.
+    first: float | None = None
 
     async def start_message() -> None:
         """Open the message before any delta can reference it.
@@ -240,6 +251,8 @@ async def _stream_turn(
     # setup fails before generation starts, so nothing here may assume a
     # preceding StreamStart — every branch opens the message if it is not open.
     async for event in cfg.provider.stream(model, request, opts):
+        if first is None and not isinstance(event, StreamStart):
+            first = time.monotonic() - sent
         await start_message()
         if isinstance(event, TextDelta):
             await _safe_emit(
@@ -263,6 +276,10 @@ async def _stream_turn(
             stop_reason="error",
             error_message="Provider stream ended without a terminal event",
         )
+
+    elapsed = time.monotonic() - sent
+    first = elapsed if first is None else first
+    _log.debug("Response %s time=%.1fs first_token=%.1fs", _shape(final), elapsed, first)
 
     # A stream that yielded nothing at all never opened the message.
     await start_message()
@@ -304,6 +321,7 @@ async def _execute_tool_calls(
         # may be cut off mid-object. None of them run: arguments that parse but
         # are missing a field would have the tool do the wrong thing silently,
         # which is worse than asking the model to re-issue the call.
+        _log.debug("Not running %d tool call(s): the response hit its output limit", len(calls))
         truncated_results: list[ToolResultMessage] = []
         for call in calls:
             await _safe_emit(
@@ -338,8 +356,12 @@ async def _execute_tool_calls(
             emit,
             ToolExecutionStart(tool_call_id=call.id, tool_name=call.name, arguments=call.arguments),
         )
+        # Argument names, not values: those are the conversation's, and the
+        # transcript has them under the same call id.
+        _log.debug("Tool call %s: %s(%s)", call.id, call.name, ", ".join(call.arguments))
         tool = tools_by_name.get(call.name)
         if tool is None:
+            _log.debug("Tool call %s: no tool named %r", call.id, call.name)
             # Phrased for the model, which may be able to pick another tool.
             error_result = ToolResult(content=text(f"Tool {call.name!r} not found"), is_error=True)
             prepared.append((call, None, error_result))
@@ -357,6 +379,9 @@ async def _execute_tool_calls(
     run_serially = not cfg.config.agent.parallel_tools or any(
         tool is not None and tool.execution_mode == "sequential" for _, tool, _ in prepared
     )
+    if (runnable_count := sum(tool is not None for _, tool, _ in prepared)) > 1:
+        mode = "one at a time" if run_serially else "concurrently"
+        _log.debug("Running %d tool call(s) %s", runnable_count, mode)
 
     # Strong references to in-flight update emits, so nothing is garbage
     # collected mid-flight. Each call awaits its own before its end event.
@@ -371,6 +396,9 @@ async def _execute_tool_calls(
         this emit outside would collapse both orderings into one.
         """
         start = time.monotonic()
+        # Per-call drain: only this call's own updates. Drained below before
+        # `end`, so `update` stays ahead of `end`. Distinct from `update_tasks`
+        # (the shared set) which is the GC guard / abandonment backstop.
         pending: list[asyncio.Task[None]] = []
 
         def on_update(partial: ToolResult) -> None:
@@ -386,6 +414,9 @@ async def _execute_tool_calls(
                     ),
                 )
             )
+            # When `pending`'s gather completes a task, its done-callback discards
+            # it from `update_tasks`, so the two never double-process the same task -
+            # the `finally` only ever catches tasks a cancelled/abandoned child left behind.
             pending.append(task)
             update_tasks.add(task)
             task.add_done_callback(update_tasks.discard)
@@ -414,12 +445,6 @@ async def _execute_tool_calls(
             await asyncio.gather(*pending)
 
         duration_ms = int((time.monotonic() - start) * 1000)
-        _log.debug(
-            "Tool %r finished in %dms%s",
-            call.name,
-            duration_ms,
-            " (error)" if result.is_error else "",
-        )
         final = await _finish(call, result, duration_ms, cfg, emit)
         return final, duration_ms
 
@@ -468,11 +493,7 @@ async def _execute_tool_calls(
                         # run_one already converts tool failures, so reaching here
                         # means the loop's own machinery failed. Report it as an
                         # error result rather than losing the call entirely.
-                        _log.error(
-                            "Tool %r failed outside its own error handling",
-                            call.name,
-                            exc_info=outcome,
-                        )
+                        _log.error("Loop failed running tool %r", call.name, exc_info=outcome)
                         failed = ToolResult(content=text(str(outcome)), is_error=True)
                         outcomes[index] = (await _finish(call, failed, 0, cfg, emit), 0)
                     else:
@@ -525,6 +546,7 @@ async def _before_call(
             is_error=True,
         )
     if decision is not None and decision.block:
+        _log.debug("Tool call %s blocked by before_tool_call: %s", call.id, decision.reason)
         return ToolResult(
             content=text(decision.reason or "Tool execution was blocked"), is_error=True
         )
@@ -563,6 +585,7 @@ async def _finish_turn(
         # Empty content would be an empty user message, which providers reject.
         _log.warning("finish_turn returned empty content; ending the run")
         return None
+    _log.debug("finish_turn continued the run with %d block(s)", len(decision.continue_with))
     return UserMessage(content=decision.continue_with)
 
 
@@ -598,6 +621,7 @@ async def _finish(
             )
         else:
             if override is not None:
+                _log.debug("Tool call %s: result replaced by after_tool_call", call.id)
                 result = ToolResult(
                     content=override.content if override.content is not None else result.content,
                     is_error=(
@@ -606,6 +630,7 @@ async def _finish(
                     details=override.details if override.details is not None else result.details,
                 )
 
+    _log.debug("Tool call %s: %s", call.id, _outcome(result, duration_ms))
     await _safe_emit(
         emit,
         ToolExecutionEnd(
@@ -642,10 +667,49 @@ async def _emit_aborted(cfg: LoopConfig, emit: EventSink) -> AssistantMessage:
     Without the start/end pair a sink rendering from message events shows
     nothing for a message the run still returns.
     """
+    _log.debug("Run aborted")
     message = _aborted_message(cfg)
     await _safe_emit(emit, MessageStart(message=message))
     await _safe_emit(emit, MessageEnd(message=message))
     return message
+
+
+def _shape(message: AssistantMessage) -> str:
+    """A response by size: `stop=tool_use thinking=1204 text=88 tool_calls=2 in=… out=…`."""
+    parts = [f"stop={message.stop_reason}"]
+    thoughts = [b for b in message.content if isinstance(b, ThinkingBlock)]
+    if thoughts:
+        # Characters, so a thinking block that came back empty reads as 0.
+        parts.append(f"thinking={sum(len(b.thinking) for b in thoughts)}")
+    if written := sum(len(b.text) for b in message.content if isinstance(b, TextBlock)):
+        parts.append(f"text={written}")
+    if message.tool_calls:
+        parts.append(f"tool_calls={len(message.tool_calls)}")
+    usage = message.usage
+    parts.append(f"in={usage.input} cache_read={usage.cache_read}")
+    parts.append(f"cache_write={usage.cache_write} out={usage.output}")
+    return " ".join(parts)
+
+
+def _outcome(result: ToolResult, duration_ms: int) -> str:
+    """`failed in 12ms exit_code=1 truncated=False` — plus the details that are
+    numbers or flags. Strings are left out: a command, a path and a diff are
+    the conversation's content."""
+    facts = [f"{'failed' if result.is_error else 'ok'} in {duration_ms}ms"]
+    facts += [f"{k}={v}" for k, v in result.details.items() if isinstance(v, bool | int | float)]
+    return " ".join(facts)
+
+
+def _summary(produced: list[Message], requests: int, seconds: float) -> str:
+    """A run by count: `requests=3 tool_calls=4 failed=1 stop=stop in=… out=… time=…`."""
+    replies = [m for m in produced if isinstance(m, AssistantMessage)]
+    results = [m for m in produced if isinstance(m, ToolResultMessage)]
+    prompt = sum(m.usage.input + m.usage.cache_read + m.usage.cache_write for m in replies)
+    output = sum(m.usage.output for m in replies)
+    stop = replies[-1].stop_reason if replies else "none"
+    failed = sum(r.is_error for r in results)
+    calls = f"tool_calls={len(results)} failed={failed}"
+    return f"requests={requests} {calls} stop={stop} in={prompt} out={output} time={seconds:.1f}s"
 
 
 def _aborted(cfg: LoopConfig) -> bool:

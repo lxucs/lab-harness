@@ -401,12 +401,27 @@ the event stream under `--json`, so a log line on stdout would corrupt a
 pipeline rather than inform one. `harness -p "…" > answer.txt` still captures
 the answer alone with logging turned all the way up.
 
+The one exception is the interactive terminal when stderr *is* that terminal:
+records are printed through the console, dimmed, above the live region. Written
+to the terminal directly they would land inside the region and break its next
+redraw. Redirect stderr — `harness --log-level debug 2> harness.log` — and they
+go to the file as usual, out of the conversation.
+
 | Level | What you get |
 |---|---|
 | `error` | Only failures the run could not absorb |
 | `warning` *(default)* | …plus a model id not in the catalog, project instructions truncated, `max_turns` exhausted, a provider request that failed, and a resumed session's warnings in `-p` mode |
-| `info` | …plus one line per significant decision: the model in use, the transcript being written, a `-p` resume |
-| `debug` | …plus a trace: every config file read or skipped, request shape per turn, tool durations, outbound web requests |
+| `info` | …plus one line per significant decision — the model and where its id came from, which rule picked the provider, the project instructions used, the transcript being written, approval being off, a `-p` resume — and one summary line per run |
+| `debug` | …plus a trace: every config file read or skipped, the tools and prompt size, each request's shape and reasoning settings, each response's vendor id, stop reason as sent, sizes, tokens and timing, each tool call's argument names, approval answer, outcome and duration, and outbound web requests |
+
+[cli.md](cli.md#diagnostics) has what a run looks like at `debug`.
+
+**No conversation either.** A request is logged by shape: settings by value,
+everything else — messages, the system prompt, tool declarations — by size. A
+tool call is logged by its argument *names*, and its result by the details that
+are numbers or flags; a command, a path or a diff stays out. What ties a line
+to the rest is an id: a tool call's id finds its arguments in the transcript
+and in `--json`, and a response id is what a vendor's support will ask for.
 
 The default is `warning` because a run that works should print nothing beyond
 its answer. The warnings are the ones with no other channel: interactive mode
@@ -433,8 +448,10 @@ library installs no handler at all — only the CLI calls `configure_logging`.
 **Credential values are never logged.** The provider logs the *name* of the
 variable a credential came from, which is the useful fact when two are set, and
 the same applies to `ANTHROPIC_BASE_URL` — a private endpoint often enough to
-treat as sensitive. There is a test asserting a key set in the environment does
-not appear in debug output.
+treat as sensitive. A profile says where both came from the same way:
+`Profile deepseek: key from DEEPSEEK_API_KEY, endpoint from base_url`. There are
+tests asserting a key and an endpoint set in the environment do not appear in
+debug output.
 
 ## Reading config in code
 

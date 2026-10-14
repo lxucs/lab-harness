@@ -71,14 +71,8 @@ def load_project_context(
             _log.debug("%s is empty: treating the project as having no instructions", path)
             return None
         if truncated:
-            _log.warning(
-                "%s is larger than project.max_bytes (%d); instructions were truncated",
-                path,
-                config.max_bytes,
-            )
-        _log.debug("Loaded project instructions from %s (%d characters)", path, len(text))
+            _log.warning("%s truncated to project.max_bytes=%d", path, config.max_bytes)
+        _log.info("Project instructions from %s (%d characters)", path, len(text))
         return ProjectContext(path=path, text=text, truncated=truncated)
-    _log.debug(
-        "No project instructions in %s (looked for %s)", root, ", ".join(config.context_files)
-    )
+    _log.debug("No project instructions in %s (tried %s)", root, ", ".join(config.context_files))
     return None

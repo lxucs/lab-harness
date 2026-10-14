@@ -5,6 +5,8 @@ because nothing calls `stream()` — construction alone makes no request.
 """
 
 import argparse
+import logging
+import sys
 from io import StringIO
 from pathlib import Path
 
@@ -23,6 +25,7 @@ from harness.cli.main import (
     main,
     run_interactive,
 )
+from harness.cli.terminal import LogStream
 from harness.config import (
     AgentConfig,
     ApprovalConfig,
@@ -38,6 +41,7 @@ from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
 from harness.llm.providers.anthropic import AnthropicProvider
 from harness.llm.providers.chat_completions import ChatCompletionsProvider
 from harness.llm.registry import resolve_model
+from harness.logs import ROOT_LOGGER
 from harness.project import ProjectContext
 from harness.session import list_sessions, read_transcript, recorded_requests
 from harness.tools import default_registry
@@ -503,3 +507,43 @@ def test_one_shot_resume_warnings_go_to_stderr(
     captured = capsys.readouterr()
     assert "system prompt has changed" in captured.err
     assert captured.out == "two\n"
+
+
+# --- where log records go -------------------------------------------------
+
+
+class _Tty(StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def _streams() -> list[object]:
+    handlers = logging.getLogger(ROOT_LOGGER).handlers
+    return [h.stream for h in handlers if isinstance(h, logging.StreamHandler)]
+
+
+async def _interactive(monkeypatch: pytest.MonkeyPatch, *, stderr: StringIO) -> None:
+    class _FakeTerminal(_StubTerminal):
+        def __init__(self, console: object, config: Config) -> None:
+            super().__init__({})
+
+    monkeypatch.setattr("harness.cli.main.Terminal", _FakeTerminal)
+    monkeypatch.setattr("harness.cli.main.Console", lambda: Console(file=_Tty()))
+    monkeypatch.setattr(sys, "stderr", stderr)
+    await run_interactive(_args(log_level=None), Config())
+
+
+async def test_records_go_through_the_console_when_stderr_is_its_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Written to the terminal directly, they would break the live region."""
+    await _interactive(monkeypatch, stderr=_Tty())
+
+    assert [type(s) for s in _streams()] == [LogStream]
+
+
+async def test_a_redirected_stderr_keeps_the_records(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`harness 2> debug.log` is how to keep a trace out of the conversation."""
+    await _interactive(monkeypatch, stderr=StringIO())
+
+    assert not any(isinstance(s, LogStream) for s in _streams())

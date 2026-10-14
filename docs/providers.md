@@ -367,7 +367,8 @@ setting `replay_reasoning_field` — see [Profiles](#profiles).
    Name it for the protocol, not the vendor — the mapping is not one-to-one.
 2. Translate core `Message` objects to the wire format, and the stream back to
    `StreamEvent`s. Reuse `_http.py` for credentials, the client, SSE framing
-   and failures.
+   and failures. Log the request with `_trace.request_shape`, and the
+   response's id and stop reason as the vendor sent them, at `debug`.
 3. Map failures to an `error` event through `_http.failure`. Never raise.
 4. Decide the reasoning regime from the table above, and say so in the module
    docstring. Replaying something the server cannot decrypt is a 400; dropping

@@ -57,6 +57,7 @@ from harness.llm.events import (
 )
 from harness.llm.provider import StreamOptions
 from harness.llm.providers import _http
+from harness.llm.providers._trace import request_shape
 from harness.llm.types import (
     AssistantMessage,
     ContentBlock,
@@ -100,6 +101,7 @@ class ResponsesProvider:
         self._config = config if config is not None else OpenAIConfig()
         self._client = client
         self.name = name
+        _http.log_sources(name, self._config)
 
     async def stream(
         self,
@@ -122,13 +124,7 @@ class ResponsesProvider:
 
         url = _http.endpoint(cfg, "responses")
 
-        _log.debug(
-            "Streaming from %s via %s: %d item(s), %d tool(s)",
-            model.id,
-            self.name,
-            len(request["input"]),
-            len(request.get("tools", ())),
-        )
+        _log.debug("Request to %s via %s: %s", model.id, self.name, request_shape(request))
 
         accumulator = _Accumulator(model=model, provider=self.name)
         try:
@@ -423,6 +419,12 @@ class _Accumulator:
         if not isinstance(kind, str):
             return []
 
+        if kind == "response.created":
+            # The id is what OpenAI support asks for; the model is the one
+            # that answered, which an alias can make different.
+            if isinstance(created := payload.get("response"), dict):
+                _log.debug("Response %s from %s", created.get("id"), created.get("model"))
+            return []
         if kind == "response.output_item.added":
             return self._item_added(payload)
         if kind == "response.output_text.delta":
@@ -553,9 +555,11 @@ class _Accumulator:
         usage = response.get("usage")
         if isinstance(usage, dict):
             self.usage = _to_usage(usage)
+        details = response.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, dict) else None
+        # As sent: the mapping folds content_filter into "stop".
+        _log.debug("Response status=%s reason=%s", response.get("status"), reason)
         if incomplete:
-            details = response.get("incomplete_details")
-            reason = details.get("reason") if isinstance(details, dict) else None
             self.stop_reason = _INCOMPLETE_REASONS.get(str(reason), "stop")
         elif any(isinstance(s.state, _PartialToolCall) for s in self._slots.values()):
             # The protocol has no "stop because tools" status; the presence of

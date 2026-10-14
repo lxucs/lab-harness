@@ -144,6 +144,8 @@ _UNKNOWN_MODEL_TEMPLATE = "claude-sonnet-5"
 #: Anthropic line, so guessing them cannot exceed what the model accepts.
 _UNKNOWN_CONTEXT_WINDOW = _CONTEXT_200K
 _UNKNOWN_MAX_TOKENS = 8_192
+#: The same two, as the warning for an unlisted id states them.
+_UNKNOWN_LIMITS = f"{_UNKNOWN_CONTEXT_WINDOW}-token context, {_UNKNOWN_MAX_TOKENS} output tokens"
 
 
 def resolve_model(model_id: str | None = None, config: AgentConfig | None = None) -> Model:
@@ -162,21 +164,17 @@ def resolve_model(model_id: str | None = None, config: AgentConfig | None = None
     the real one. See `llm/providers/route`.
     """
     config = config or AgentConfig()
-    wanted = model_id or os.environ.get(config.model_env) or config.model
-    _log.info("Using model %r", wanted)
+    from_env = os.environ.get(config.model_env)
+    wanted = model_id or from_env or config.model
+    source = "--model" if model_id else config.model_env if from_env else "agent.model"
+    _log.info("Using model %r, from %s", wanted, source)
     known = MODELS.get(wanted)
     if known is not None:
         return known
     # A typo looks identical to a model newer than the catalog, so this says
     # only what is certain: the limits are a guess. Which vendor serves the id
     # is decided later, by routing.
-    _log.warning(
-        "Model %r is not in the catalog; assuming conservative limits "
-        "(%d-token context, %d max output tokens)",
-        wanted,
-        _UNKNOWN_CONTEXT_WINDOW,
-        _UNKNOWN_MAX_TOKENS,
-    )
+    _log.warning("Model %r is not in the catalog; assuming %s", wanted, _UNKNOWN_LIMITS)
     return replace(
         MODELS[_UNKNOWN_MODEL_TEMPLATE],
         id=wanted,

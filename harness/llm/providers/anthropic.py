@@ -53,6 +53,7 @@ from harness.llm.events import (
     ToolCallStart,
 )
 from harness.llm.provider import StreamOptions
+from harness.llm.providers._trace import request_shape
 from harness.llm.types import (
     AssistantMessage,
     ContentBlock,
@@ -160,13 +161,7 @@ class AnthropicProvider:
             return
 
         # Shape, not content — the transcript already holds the conversation.
-        _log.debug(
-            "Streaming from %s: %d message(s), %d tool(s), max_tokens=%s",
-            model.id,
-            len(request.get("messages", ())),
-            len(request.get("tools", ())),
-            request.get("max_tokens"),
-        )
+        _log.debug("Request to %s: %s", model.id, request_shape(request))
 
         accumulator = _Accumulator(model=model, provider=self.name)
         try:
@@ -393,6 +388,9 @@ class _Accumulator:
 
     def feed(self, event: object) -> list[StreamEvent]:
         if isinstance(event, RawMessageStartEvent):
+            # The id is what Anthropic support asks for; the model is the one
+            # that answered, which an alias or a gateway can make different.
+            _log.debug("Response %s from %s", event.message.id, event.message.model)
             self.usage = _to_usage(event.message.usage)
             return []
         if isinstance(event, RawContentBlockStartEvent):
@@ -403,6 +401,8 @@ class _Accumulator:
             return self._stop_block(event.index)
         if isinstance(event, RawMessageDeltaEvent):
             if event.delta.stop_reason:
+                # As sent: the mapping folds refusal and pause_turn into "stop".
+                _log.debug("Response stop_reason=%s", event.delta.stop_reason)
                 self.stop_reason = _STOP_REASONS.get(event.delta.stop_reason, "stop")
             # The final usage arrives here; input counts came with message_start.
             self.usage = Usage(
@@ -430,6 +430,7 @@ class _Accumulator:
             return [ToolCallStart(block_index=index)]
         # Server-tool results and anything else the core does not model. Kept
         # verbatim so the next request can replay it.
+        _log.debug("Keeping a %s block verbatim", block.type)
         self._blocks[index] = _PartialProvider(provider_type=block.type, data=_dump(block))
         return []
 

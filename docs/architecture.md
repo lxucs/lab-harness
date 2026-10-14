@@ -34,7 +34,9 @@ unconditionally; only `cli/` calls `configure_logging`. That is the stdlib's
 library/application split, and it is why importing `harness` installs no
 handler on an embedding application's root logger — and why the module is
 `logs.py` rather than `logging.py`, which a reader would have to think about
-before trusting any `import logging` in the package.
+before trusting any `import logging` in the package. The interactive terminal
+hands it a stream of its own, `LogStream`, so records print above the live
+region instead of through it.
 
 ### What each layer knows
 

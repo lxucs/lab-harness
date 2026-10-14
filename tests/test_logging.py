@@ -10,17 +10,26 @@ using `caplog`. That runs the real handler and the real formatter, so these
 tests assert on the bytes a user would actually see.
 """
 
+import asyncio
 import io
 import logging
 from pathlib import Path
 
 import pytest
 
-from harness.config import ConfigError, LoggingConfig, ProjectConfig, load_config
+from harness.agent import Agent
+from harness.agent.types import ExecutionMode, ToolContext, ToolResult
+from harness.config import Config, ConfigError, LoggingConfig, ProjectConfig, load_config
+from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from harness.llm.providers import build_provider, select_provider
+from harness.llm.providers._trace import request_shape
 from harness.llm.providers.anthropic import AnthropicProvider
+from harness.llm.providers.chat_completions import ChatCompletionsProvider
 from harness.llm.registry import resolve_model
+from harness.llm.types import Context, ToolCallBlock, UserMessage, text
 from harness.logs import LEVELS, ROOT_LOGGER, configure_logging, resolve_level
 from harness.project import load_project_context
+from tests.http_fakes import Recorder
 
 
 def sink() -> io.StringIO:
@@ -296,3 +305,162 @@ def test_credential_values_never_reach_a_record(monkeypatch: pytest.MonkeyPatch)
     # The names are the point: they say which source won without exposing it.
     assert "ANTHROPIC_API_KEY" in written
     assert "ANTHROPIC_BASE_URL" in written
+
+
+def test_a_profile_names_where_its_key_and_endpoint_came_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same rule for an OpenAI-family profile, through a whole request."""
+    secret = "sk-not-a-real-deepseek-key-0123456789"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", secret)
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://private-gateway.internal.example/v1")
+    stream = sink()
+    configure_logging("debug", stream=stream)
+    profile = Config().providers.openai["deepseek"]
+    provider = ChatCompletionsProvider(
+        profile, "deepseek", client=Recorder("data: [DONE]").client()
+    )
+
+    asyncio.run(_drain(provider))
+
+    written = stream.getvalue()
+    assert "key from DEEPSEEK_API_KEY, endpoint from DEEPSEEK_BASE_URL" in written
+    assert "Request to" in written, "the request line ran, and it must not leak either"
+    assert secret not in written
+    assert "private-gateway" not in written
+
+
+async def _drain(provider: ChatCompletionsProvider) -> None:
+    context = Context(system_prompt="", messages=(UserMessage(content=text("hi")),), tools=())
+    async for _ in provider.stream(FAKE_MODEL, context):
+        pass
+
+
+def test_a_profile_with_no_key_says_so() -> None:
+    stream = sink()
+    configure_logging("debug", stream=stream)
+    build_provider("deepseek", Config())
+    assert "key from nowhere" in stream.getvalue()
+
+
+# --- routing --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("model_id", "override", "reason"),
+    [
+        ("claude-opus-5", "deepseek", "set by --provider"),
+        ("deepseek-flash", None, "listed in providers.openai.deepseek"),
+        ("claude-opus-5", None, "from the model catalog"),
+        ("not-a-catalogued-model", None, "agent.provider"),
+    ],
+)
+def test_info_says_which_rule_routed_the_model(
+    model_id: str, override: str | None, reason: str
+) -> None:
+    """Four rungs decide the provider; a wrong endpoint needs the one that fired."""
+    stream = sink()
+    configure_logging("info", stream=stream)
+    select_provider(model_id, Config(), override)
+    written = stream.getvalue()
+    assert repr(model_id) in written
+    assert reason in written
+
+
+def test_info_says_where_the_model_id_came_from(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = sink()
+    configure_logging("info", stream=stream)
+    resolve_model("claude-opus-5")
+    monkeypatch.setenv("HARNESS_MODEL", "claude-sonnet-5")
+    resolve_model()
+    monkeypatch.delenv("HARNESS_MODEL")
+    resolve_model()
+    sources = [line.rsplit("from ", 1)[1] for line in stream.getvalue().splitlines()]
+    assert sources == ["--model", "HARNESS_MODEL", "agent.model"]
+
+
+# --- what a run traces ----------------------------------------------------
+#
+# The trace has to answer "what happened" without becoming a second copy of
+# the conversation. Ids tie each line to the transcript, which has the rest.
+
+#: Planted in a tool's argument, output and details. None may reach a record.
+_ARGUMENT = "rm -rf /tmp/planted-argument"
+_OUTPUT = "planted-tool-output"
+
+
+class _Probe:
+    name = "probe"
+    description = "a tool with something private in every field"
+    parameters: dict[str, object] = {"type": "object", "properties": {}}  # noqa: RUF012
+    execution_mode: ExecutionMode = "parallel"
+
+    async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
+        details: dict[str, object] = {"command": _ARGUMENT, "exit_code": 3, "truncated": True}
+        return ToolResult(content=text(_OUTPUT), details=details)
+
+
+def _run(level: str) -> str:
+    stream = sink()
+    configure_logging(level, stream=stream)
+    call = ToolCallBlock(id="call_7", name="probe", arguments={"command": _ARGUMENT})
+    replies = [tool_call_response([call]), text_response("done", thinking="hmm")]
+    agent = Agent(
+        model=FAKE_MODEL, provider=FakeProvider(replies), tools=(_Probe(),), config=Config()
+    )
+    asyncio.run(agent.prompt("go"))
+    return stream.getvalue()
+
+
+def test_debug_traces_each_turn_response_and_tool_call() -> None:
+    written = _run("debug")
+
+    assert "Turn 1/50: 1 message(s) to fake-model" in written
+    assert "Turn 2/50: 3 message(s) to fake-model" in written
+    assert "Response stop=tool_use tool_calls=1 in=10" in written
+    assert "Response stop=stop thinking=3 text=4 in=10" in written
+    # Argument names, so a line says what kind of call it was.
+    assert "Tool call call_7: probe(command)" in written
+    # Numbers and flags from the details; their strings stay out.
+    assert "Tool call call_7: ok in" in written
+    assert "exit_code=3 truncated=True" in written
+
+
+def test_info_is_one_line_for_the_whole_run() -> None:
+    written = _run("info")
+
+    assert "Run finished: requests=2 tool_calls=1 failed=0 stop=stop in=20 out=10" in written
+    assert "Turn 1/" not in written
+    assert "Tool call" not in written
+
+
+def test_the_trace_carries_no_arguments_output_or_string_details() -> None:
+    written = _run("debug")
+
+    assert written, "nothing was traced, so this proves nothing"
+    assert _ARGUMENT not in written
+    assert _OUTPUT not in written
+
+
+def test_a_request_is_logged_by_shape_with_its_settings_spelled_out() -> None:
+    planted = "private conversation text"
+    request = {
+        "model": "m",
+        "stream": True,
+        "messages": [{"role": "user", "content": planted}] * 3,
+        "system": planted,
+        "tools": [],
+        "max_tokens": 8192,
+        "thinking": {"type": "adaptive", "display": "summarized"},
+    }
+
+    shape = request_shape(request)
+
+    settings = 'max_tokens=8192 thinking={"type":"adaptive","display":"summarized"}'
+    assert shape == f"messages=3 system={len(planted)} tools=0 {settings}"
+
+
+def test_a_request_key_nobody_classified_is_logged_by_size_alone() -> None:
+    """Private by default, so a key added to a request later cannot leak content."""
+    planted = "text in a field added after this was written"
+    assert request_shape({"prediction": planted}) == f"prediction={len(planted)}"

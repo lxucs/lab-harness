@@ -47,6 +47,7 @@ from harness.llm.events import (
 )
 from harness.llm.provider import StreamOptions
 from harness.llm.providers import _http
+from harness.llm.providers._trace import request_shape
 from harness.llm.types import (
     AssistantMessage,
     ContentBlock,
@@ -105,6 +106,7 @@ class ChatCompletionsProvider:
         self._config = config if config is not None else OpenAIConfig()
         self._client = client
         self.name = name
+        _http.log_sources(name, self._config)
 
     async def stream(
         self,
@@ -130,13 +132,10 @@ class ChatCompletionsProvider:
         url = _http.endpoint(cfg, "chat/completions")
         headers = _http.headers(_http.credential(cfg))
 
-        _log.debug(
-            "Streaming from %s via %s: %d message(s), %d tool(s)",
-            model.id,
-            self.name,
-            len(request["messages"]),
-            len(request.get("tools", ())),
-        )
+        _log.debug("Request to %s via %s: %s", model.id, self.name, request_shape(request))
+        if field := cfg.replay_reasoning_field:
+            replayed = sum(field in m for m in request["messages"])
+            _log.debug("Reasoning replayed on %d turn(s) as %s", replayed, field)
 
         accumulator = _Accumulator(model=model, provider=self.name)
         try:
@@ -378,6 +377,8 @@ class _Accumulator:
         #: the wire counts tool calls, we count blocks of every kind.
         self._tool_indices: dict[int, int] = {}
         self._closed = False
+        #: Logged on first sight. Every chunk repeats it.
+        self._response_id: str | None = None
         self.usage = Usage()
         self.stop_reason: StopReason = "stop"
 
@@ -390,6 +391,10 @@ class _Accumulator:
 
     def feed(self, chunk: dict[str, Any]) -> list[StreamEvent]:
         events: list[StreamEvent] = []
+
+        if self._response_id is None and isinstance(chunk.get("id"), str):
+            self._response_id = chunk["id"]
+            _log.debug("Response %s from %s", self._response_id, chunk.get("model"))
 
         usage = chunk.get("usage")
         if isinstance(usage, dict):
@@ -410,6 +415,8 @@ class _Accumulator:
 
         finish = choice.get("finish_reason")
         if isinstance(finish, str):
+            # As sent: the mapping folds content_filter into "stop".
+            _log.debug("Response finish_reason=%s", finish)
             self.stop_reason = _FINISH_REASONS.get(finish, "stop")
         return events
 

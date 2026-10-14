@@ -42,6 +42,20 @@ def credential(config: OpenAIConfig) -> str:
     return os.environ.get(config.api_key_env) or config.api_key
 
 
+def log_sources(name: str, config: OpenAIConfig) -> None:
+    """Which variable or config key the key and endpoint come from, at debug.
+
+    Names only. A key is a key, and an overridden endpoint is often a private
+    gateway — see docs/contributing.md.
+    """
+    if os.environ.get(config.api_key_env):
+        key = config.api_key_env
+    else:
+        key = "api_key" if config.api_key else "nowhere"
+    url = config.base_url_env if os.environ.get(config.base_url_env) else "base_url"
+    _log.debug("Profile %s: key from %s, endpoint from %s", name, key, url)
+
+
 def endpoint(config: OpenAIConfig, path: str) -> str:
     base = os.environ.get(config.base_url_env) or config.base_url
     return f"{base.rstrip('/')}/{path.lstrip('/')}"

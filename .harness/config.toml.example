@@ -409,8 +409,11 @@ cache_write = 0.0
 
 [logging]
 # Diagnostics about the harness itself, written to stderr. One of:
-# debug, info, warning, error. A level set here cannot report the loading of
-# this file — use $HARNESS_LOG_LEVEL or --log-level to debug config itself.
+# debug, info, warning, error. "info" adds the decisions -- model, provider,
+# transcript -- and a line per run; "debug" traces every request, response and
+# tool call, by shape and id, never by content. A level set here cannot report
+# the loading of this file — use $HARNESS_LOG_LEVEL or --log-level to debug
+# config itself.
 level = "warning"
 level_env = "HARNESS_LOG_LEVEL"
 # Format for one record.

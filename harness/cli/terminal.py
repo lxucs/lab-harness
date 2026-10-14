@@ -23,6 +23,9 @@ refuses a second concurrent `prompt()` by design (see `agent.py`), so the
 terminal holds the text and submits it when the run returns. That keeps the
 "one run at a time" rule in one place rather than spread across layers.
 
+**Log records print through the console** when stderr is this terminal, so
+they land above the live region rather than inside it — see `LogStream`.
+
 **Usage is read from the transcript, not tracked.** The footer after a run
 and `:status` both fold over messages that already carry their `Usage` — see
 `usage.py` — so there is no counter here to fall out of step with history.
@@ -197,6 +200,28 @@ class Terminal:
                 # Interrupting the question is a refusal, not an approval.
                 return "no"
         return _ANSWERS.get(answer.strip().lower()[:1], "no")
+
+
+class LogStream:
+    """Where log records go when stderr is the terminal the console draws on.
+
+    Written there directly, a record lands inside the live region: the next
+    redraw overwrites it and leaves a stale line of the region behind. Printed
+    through the console, it goes above the region like any other output.
+    """
+
+    def __init__(self, console: Console, style: str) -> None:
+        self._console = console
+        self._style = style
+
+    def write(self, text: str) -> int:
+        if record := text.rstrip("\n"):
+            # Soft-wrapped: folded at the edge, not broken and indented by rich.
+            self._console.print(Text(record, style=self._style), soft_wrap=True)
+        return len(text)
+
+    def flush(self) -> None:
+        """Nothing to flush: each record is printed as it is written."""
 
 
 def _bindings(toggle_thinking: Callable[[], object]) -> KeyBindings:

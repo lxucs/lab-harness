@@ -12,6 +12,7 @@ decision made in one run should not silently authorize the next one.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 from harness.agent.types import BeforeToolCallContext, BeforeToolCallResult
@@ -22,6 +23,8 @@ Answer = str
 Asker = Callable[[str, dict[str, object]], Awaitable[Answer]]
 
 DENIED_NOTICE = "The user denied permission to run this tool."
+
+_log = logging.getLogger(__name__)
 
 
 class ApprovalGate:
@@ -49,6 +52,7 @@ class ApprovalGate:
             if not self.requires_approval(name):
                 return None
             answer = await self._ask(name, ctx.tool_call.arguments)
+        _log.debug("Tool call %s: approval answered %r", ctx.tool_call.id, answer)
 
         if answer == "always":
             if self._config.allow_remember:

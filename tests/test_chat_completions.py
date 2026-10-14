@@ -12,6 +12,7 @@ merges them, and getting this backwards is a 400 from every endpoint).
 
 import asyncio
 import json
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -961,3 +962,41 @@ async def test_the_shipped_deepseek_profile_survives_a_tool_loop() -> None:
     turn = next(m for m in transport.payloads[1]["messages"] if m["role"] == "assistant")
     assert turn["reasoning_content"] == "I should look first."
     assert turn["tool_calls"][0]["id"] == "c1"
+
+
+# --- what is logged -------------------------------------------------------
+
+
+async def test_the_log_names_the_response_and_its_finish_reason_as_sent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """content_filter maps to "stop", so the log is where the real reason survives."""
+    first = {"id": "chatcmpl-42", "model": "deepseek-v4-flash", **delta(content="hi")}
+    body = sse(first, {"id": "chatcmpl-42", **finish("content_filter")})
+
+    with caplog.at_level(logging.DEBUG, logger="harness.llm.providers.chat_completions"):
+        await collect(provider(Recorder(body)))
+
+    assert "Response chatcmpl-42 from deepseek-v4-flash" in caplog.text
+    # Every chunk repeats the id; the line is written once.
+    assert caplog.text.count("chatcmpl-42") == 1
+    assert "finish_reason=content_filter" in caplog.text
+
+
+async def test_the_log_counts_the_turns_whose_reasoning_goes_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """DeepSeek 400s a tool loop missing it, so how many carried it is the first question."""
+    config = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
+    reasoned = AssistantMessage(
+        content=(ThinkingBlock(thinking="because"), TextBlock(text="a")),
+        model=MODEL.id,
+        provider="deepseek",
+    )
+    plain = AssistantMessage(content=(TextBlock(text="b"),), model=MODEL.id, provider="deepseek")
+    user = UserMessage(content=text("go"))
+
+    with caplog.at_level(logging.DEBUG, logger="harness.llm.providers.chat_completions"):
+        await collect(provider(Recorder(sse(finish())), config), ctx((user, reasoned, plain, user)))
+
+    assert "Reasoning replayed on 1 turn(s) as reasoning_content" in caplog.text

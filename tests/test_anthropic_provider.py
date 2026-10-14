@@ -5,6 +5,7 @@ must not raise. Every failure path has to arrive as a StreamError.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -612,3 +613,23 @@ def _fake_response(status: int) -> Any:
     return httpx2.Response(
         status_code=status, request=httpx2.Request("POST", "https://example.test")
     )
+
+
+# --- what is logged -------------------------------------------------------
+
+
+async def test_the_log_names_the_response_and_its_stop_reason_as_sent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusal maps to "stop", so the log is where the real reason survives."""
+    provider = _provider([_msg_start(), _msg_delta("refusal")])
+
+    with caplog.at_level(logging.DEBUG, logger="harness.llm.providers.anthropic"):
+        await _collect(provider, _ctx())
+
+    assert (
+        f"Request to {MODEL.id}: max_tokens={MODEL.max_tokens} messages=1 system=3" in caplog.text
+    )
+    assert 'thinking={"type":"adaptive","display":"summarized"}' in caplog.text
+    assert f"Response msg_1 from {MODEL.id}" in caplog.text
+    assert "stop_reason=refusal" in caplog.text

@@ -12,6 +12,7 @@ reasoning model silently gets worse — nothing errors, the model just forgets.
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -797,3 +798,22 @@ async def test_a_block_is_closed_exactly_once() -> None:
     events = await collect(provider(recorder))
 
     assert len([e for e in events if isinstance(e, TextEnd)]) == 1
+
+
+# --- what is logged -------------------------------------------------------
+
+
+async def test_the_log_names_the_response_and_its_status_as_sent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """content_filter maps to "stop", so the log is where the real reason survives."""
+    created = {"type": "response.created", "response": {"id": "resp_9", "model": "gpt-5-0801"}}
+    details = {"reason": "content_filter"}
+    ended = {"status": "incomplete", "incomplete_details": details}
+    body = sse(created, {"type": "response.incomplete", "response": ended})
+
+    with caplog.at_level(logging.DEBUG, logger="harness.llm.providers.responses"):
+        await collect(provider(Recorder(body)))
+
+    assert "Response resp_9 from gpt-5-0801" in caplog.text
+    assert "status=incomplete reason=content_filter" in caplog.text

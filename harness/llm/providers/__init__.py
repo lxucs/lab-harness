@@ -14,6 +14,7 @@ dialect OpenAI invented. A new vendor is normally a profile in
 `providers.openai`, not a module.
 """
 
+import logging
 from dataclasses import replace
 
 from harness.config import Config, ConfigError, OpenAIConfig
@@ -22,6 +23,8 @@ from harness.llm.providers.anthropic import AnthropicProvider
 from harness.llm.providers.chat_completions import ChatCompletionsProvider
 from harness.llm.providers.responses import ResponsesProvider
 from harness.llm.registry import MODELS, Model, resolve_model
+
+_log = logging.getLogger(__name__)
 
 #: The one provider name that is not an OpenAI-family profile.
 ANTHROPIC = "anthropic"
@@ -49,14 +52,19 @@ def select_provider(model_id: str, config: Config, override: str | None = None) 
     same weights — without the catalog having to agree.
     """
     if override:
+        _log.info("Provider %s for %r: set by --provider", override, model_id)
         return override
     for name, profile in config.providers.openai.items():
         if model_id in profile.models:
+            _log.info("Provider %s for %r: listed in providers.openai.%s", name, model_id, name)
             return name
     known = MODELS.get(model_id)
     if known is not None:
+        _log.info("Provider %s for %r: from the model catalog", known.provider, model_id)
         return known.provider
-    return config.agent.provider
+    fallback = config.agent.provider
+    _log.info("Provider %s for %r: agent.provider, as nothing else claims it", fallback, model_id)
+    return fallback
 
 
 def build_provider(name: str, config: Config) -> Provider:

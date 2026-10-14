@@ -18,7 +18,7 @@ environment, and knows nothing about agents, tools, or the CLI.
 import logging
 import os
 import sys
-from typing import IO
+from typing import Protocol
 
 from harness.config import ConfigError, LoggingConfig
 
@@ -39,6 +39,13 @@ LEVELS: dict[str, int] = {
 #: screen when ours is turned on — `--log-level debug` should mean this
 #: program, not every library it imports.
 ROOT_LOGGER = __package__ or "harness"
+
+
+class Stream(Protocol):
+    """What records can be written to: a file, or anything with `write`."""
+
+    def write(self, text: str, /) -> object: ...
+
 
 #: Marks the handler this module installs. Repeated calls replace ours and
 #: leave alone any handler an embedding application attached itself.
@@ -71,13 +78,14 @@ def configure_logging(
     requested: str | None = None,
     config: LoggingConfig | None = None,
     *,
-    stream: IO[str] | None = None,
+    stream: Stream | None = None,
 ) -> str:
     """Install the handler for our logger tree. Returns the level applied.
 
     Idempotent: our previous handler is replaced rather than added to, so
-    calling this twice — which `cli/main.py` does, once before config is loaded
-    and once after — leaves one handler and one copy of each line.
+    calling this again — which `cli/main.py` does, once before config is loaded
+    and once after, and once more to hand the terminal its records — leaves
+    one handler and one copy of each line.
     """
     config = config or LoggingConfig()
     level = resolve_level(requested, config)

@@ -148,12 +148,36 @@ Pick the level by who needs the line:
 | Level | For |
 |---|---|
 | `warning` | A problem with no other channel. It prints by default, so it must be worth interrupting a working run |
-| `info` | One line per significant decision — the model in use, the transcript path |
-| `debug` | The trace: config files read, request shapes, durations, outbound URLs |
+| `info` | One line per significant decision — the model in use, which rule picked the provider, the transcript path — and one per run |
+| `debug` | The trace: config files read, request shapes, response ids, tool outcomes, durations, outbound URLs |
 
 Never log message content or tool output. The transcript holds the
 conversation; a log that duplicates it is both a privacy problem and unreadable.
-Log *shape* instead — counts, ids, durations.
+Log *shape* instead — counts, ids, durations. An id is what lets a line stand
+in for the content: a tool call's id finds its arguments in the transcript.
+A request goes through `llm/providers/_trace.py`, which logs the keys in
+`SETTINGS` by value and every other key by size, so a key added later stays
+private until someone decides it is a setting.
+
+**Keep each call on one line** where it fits in the 100 columns — a short
+message, `key=value` for several facts, and a helper that builds the facts when
+there are many (`request_shape`, or `_shape` and `_outcome` in the loop):
+
+```python
+# Right
+_log.debug("Tool call %s: %s", call.id, _outcome(result, duration_ms))
+
+# Wrong — five lines of logging for one fact
+_log.debug(
+    "Tool %r finished in %dms%s",
+    call.name,
+    duration_ms,
+    " (error)" if result.is_error else "",
+)
+```
+
+Several lines are fine when the message cannot get shorter without losing what
+it says.
 
 Levels are documented in [configuration.md](configuration.md#logging), so a new
 record at a level that page does not describe means one of the two is wrong.

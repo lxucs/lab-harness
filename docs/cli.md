@@ -268,17 +268,46 @@ the table.
 ```bash
 harness --log-level debug -p "…"     # trace this run
 HARNESS_LOG_LEVEL=debug harness      # trace this shell
+harness --log-level debug 2> harness.log   # interactive, trace kept apart
 ```
 
-Logs go to **stderr**, always, so they never mix into the answer on stdout or
-the JSONL stream. Nothing is printed by default beyond genuine problems: a
-model id missing from the catalog, project instructions truncated, `max_turns`
+Logs go to **stderr**, so they never mix into the answer on stdout or the JSONL
+stream. Nothing is printed by default beyond genuine problems: a model id
+missing from the catalog, project instructions truncated, `max_turns`
 exhausted with the model still working, a failed provider request, and — in
 `-p` mode, which has no terminal to show them in — a resumed session's
 warnings.
 
-`debug` adds the trace you need when a setting appears to do nothing — every
-config file read or skipped, in precedence order:
+In the interactive terminal they print in scrollback, dimmed, above the live
+region — straight to the terminal, a record would land inside the region and
+break its next redraw. To keep them out of the conversation, redirect stderr
+and `tail -f harness.log` in another pane.
+
+`info` adds the decisions — which model, from where, which provider and why —
+and one line per run. `debug` adds the trace: every request, response and tool
+call, with the ids that find each one in the transcript and in `--json`:
+
+```
+DEBUG harness.agent.loop: Turn 1/50: 1 message(s) to claude-sonnet-5
+DEBUG harness.llm.providers.anthropic: Request to claude-sonnet-5: max_tokens=64000 messages=1 system=429 tools=9 thinking={"type":"adaptive","display":"summarized"}
+DEBUG harness.llm.providers.anthropic: Response msg_01ExampleId from claude-sonnet-5
+DEBUG harness.llm.providers.anthropic: Response stop_reason=tool_use
+DEBUG harness.agent.loop: Response stop=tool_use thinking=212 text=31 tool_calls=1 in=1520 cache_read=0 cache_write=0 out=96 time=2.1s first_token=0.8s
+DEBUG harness.agent.loop: Tool call toolu_01ExampleId: bash(command)
+DEBUG harness.cli.approval: Tool call toolu_01ExampleId: approval answered 'yes'
+DEBUG harness.agent.loop: Tool call toolu_01ExampleId: ok in 1515ms exit_code=0 truncated=False
+DEBUG harness.agent.loop: Turn 2/50: 3 message(s) to claude-sonnet-5
+…
+INFO harness.agent.loop: Run finished: requests=2 tool_calls=1 failed=0 stop=stop in=3170 out=180 time=4.7s
+```
+
+The stop reason appears twice on purpose: the adapter's is what the vendor
+sent, the loop's is what it was mapped to — and a `refusal` or a
+`content_filter` maps to a plain `stop`. Content never appears: requests are
+logged by size, tool calls by their argument *names*.
+
+`debug` also traces config resolution, which is what you want when a setting
+appears to do nothing — every file read or skipped, in precedence order:
 
 ```
 DEBUG harness.config: No config file at /home/you/.harness/config.toml

@@ -98,6 +98,7 @@ class Agent:
         """
         if self.state.is_running:
             raise RuntimeError("Cannot restore while a run is in flight.")
+        _log.debug("Restored %d message(s)", len(messages))
         self.state.messages = list(messages)
 
     # --- subscriptions ----------------------------------------------------
@@ -193,4 +194,5 @@ class Agent:
         clean rather than being born aborted.
         """
         if self._signal is not None:
+            _log.debug("Abort requested")
             self._signal.set()

@@ -17,7 +17,7 @@ from rich.text import Text
 from harness.agent import Agent
 from harness.agent.types import AgentEvent, MessageEnd, declarations_for
 from harness.cli.json_sink import json_sink
-from harness.cli.terminal import Terminal, build_approval_gate
+from harness.cli.terminal import LogStream, Terminal, build_approval_gate
 from harness.config import Config, ConfigError, load_config
 from harness.llm.providers import route
 from harness.llm.types import AssistantMessage, TextBlock
@@ -127,10 +127,13 @@ def _build_agent(
             note += f" (truncated to {config.project.max_bytes} bytes)"
         console.print(Text(note, style=config.terminal.theme.muted))
     model, provider = route(args.model, config, args.provider)
+    system_prompt = build_system_prompt(context)
+    _log.debug("Tools: %s", ", ".join(t.name for t in tools))
+    _log.debug("System prompt: %d characters", len(system_prompt))
     return Agent(
         model=model,
         provider=provider,
-        system_prompt=build_system_prompt(context),
+        system_prompt=system_prompt,
         tools=tools,
         config=config,
         cwd=args.cwd,
@@ -187,6 +190,7 @@ def _attach_session(
 
 async def run_once(args: argparse.Namespace, config: Config) -> int:
     """One-shot mode. No approval gate — there is nobody at the keyboard."""
+    _log.info("One-shot mode: tools run without approval")
     agent = _build_agent(args, config)
     agent.subscribe(json_sink() if args.json else _text_sink())
     recorder = _attach_session(agent, args, config)
@@ -207,7 +211,14 @@ async def run_once(args: argparse.Namespace, config: Config) -> int:
 
 async def run_interactive(args: argparse.Namespace, config: Config) -> int:
     console = Console()
+    if console.is_terminal and sys.stderr.isatty():
+        # One screen for both, so records go through the console — above the
+        # live region rather than through it. A redirected stderr keeps them.
+        stream = LogStream(console, config.terminal.theme.muted)
+        configure_logging(args.log_level, config.logging, stream=stream)
     terminal = Terminal(console=console, config=config)
+    if args.yes:
+        _log.info("Tool approval off: --yes")
     gate = None if args.yes else build_approval_gate(terminal, config)
     agent = _build_agent(
         args,

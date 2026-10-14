@@ -30,6 +30,7 @@ class SessionRecorder:
 
     def __init__(self, writer: TranscriptWriter) -> None:
         self._writer = writer
+        self._written = 0
 
     @property
     def path(self) -> Path:
@@ -44,6 +45,7 @@ class SessionRecorder:
             return
         try:
             self._writer.append_message(event.message)
+            self._written += 1
             if isinstance(event.message, AssistantMessage):
                 # Usage is per-request, so it rides alongside the assistant
                 # message that carries it rather than being derived later.
@@ -55,6 +57,7 @@ class SessionRecorder:
             _log.exception("Could not write to session %s", self._writer.path)
 
     def close(self) -> None:
+        _log.debug("Closing transcript %s after %d new message(s)", self.path.name, self._written)
         self._writer.close()
 
 
