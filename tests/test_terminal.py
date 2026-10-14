@@ -18,10 +18,10 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
-from harness.agent import Agent
-from harness.agent.types import AgentStart, MessageStart
-from harness.cli.renderers import EventRenderer
-from harness.cli.terminal import (
+from lab_harness.agent import Agent
+from lab_harness.agent.types import AgentStart, MessageStart
+from lab_harness.cli.renderers import EventRenderer
+from lab_harness.cli.terminal import (
     LogStream,
     Terminal,
     _bindings,
@@ -29,10 +29,17 @@ from harness.cli.terminal import (
     _ctrl_o_passes_through,
     build_approval_gate,
 )
-from harness.config import Config, ConfigError, PricingConfig, TerminalConfig, ThemeConfig
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import AssistantMessage, TextBlock, ToolCallBlock, Usage, UserMessage, text
-from harness.logs import configure_logging
+from lab_harness.config import Config, ConfigError, PricingConfig, TerminalConfig, ThemeConfig
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import (
+    AssistantMessage,
+    TextBlock,
+    ToolCallBlock,
+    Usage,
+    UserMessage,
+    text,
+)
+from lab_harness.logs import configure_logging
 
 
 class ScriptedSession:
@@ -159,7 +166,7 @@ async def test_ctrl_c_during_a_run_cancels_the_turn_and_keeps_the_session() -> N
     """
     from pydantic import BaseModel
 
-    from harness.tools.base import ToolContext, ToolResult, ok, tool
+    from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
 
     class _P(BaseModel):
         pass
@@ -419,7 +426,7 @@ async def test_the_question_is_asked_with_the_live_region_down() -> None:
 
 async def test_a_denied_tool_does_not_run_through_the_terminal(tmp_path) -> None:
     """End to end: terminal answer -> gate -> loop -> tool never executes."""
-    from harness.tools import default_registry
+    from lab_harness.tools import default_registry
 
     config = Config()
     terminal, buffer = _terminal(["write a file", "n"], config)
@@ -441,7 +448,7 @@ async def test_a_denied_tool_does_not_run_through_the_terminal(tmp_path) -> None
 
 
 async def test_an_approved_tool_runs_through_the_terminal(tmp_path) -> None:
-    from harness.tools import default_registry
+    from lab_harness.tools import default_registry
 
     config = Config()
     terminal, _ = _terminal(["write a file", "y"], config)
@@ -532,7 +539,7 @@ async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -
 
     from pydantic import BaseModel
 
-    from harness.tools.base import ToolContext, ToolResult, ok, tool
+    from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
 
     class _P(BaseModel):
         pass
@@ -546,7 +553,7 @@ async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -
         during.append(termios.tcgetattr(slave)[6][termios.VDISCARD])
         return ok("probed")
 
-    monkeypatch.setattr("harness.cli.terminal._stdin_fd", lambda: slave)
+    monkeypatch.setattr("lab_harness.cli.terminal._stdin_fd", lambda: slave)
     call = ToolCallBlock(id="c1", name="probe", arguments={})
     terminal, _ = _terminal(["go"])
     _attach(
@@ -604,14 +611,14 @@ async def test_a_log_record_prints_above_the_live_region_and_leaves_it_whole() -
 
     await renderer(AgentStart())
     try:
-        logging.getLogger("harness.sample").debug("a record")
+        logging.getLogger("lab_harness.sample").debug("a record")
         await renderer(MessageStart(message=message))  # anything that redraws
         shown = [line for line in screen(out.getvalue()) if line]
     finally:
         renderer.close()
 
     assert len(shown) == 2, shown
-    assert shown[0] == "DEBUG harness.sample: a record"
+    assert shown[0] == "DEBUG lab_harness.sample: a record"
     assert shown[1].endswith("Working… (0s · Ctrl-C to cancel)")
 
 
@@ -619,6 +626,6 @@ def test_a_log_record_is_printed_in_the_style_given() -> None:
     out = io.StringIO()
     console = Console(file=out, force_terminal=True, color_system="standard")
 
-    LogStream(console, "dim").write("DEBUG harness.sample: quiet\n")
+    LogStream(console, "dim").write("DEBUG lab_harness.sample: quiet\n")
 
-    assert out.getvalue() == "\x1b[2mDEBUG harness.sample: quiet\x1b[0m\n"
+    assert out.getvalue() == "\x1b[2mDEBUG lab_harness.sample: quiet\x1b[0m\n"

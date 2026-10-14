@@ -11,8 +11,8 @@ from typing import Any
 
 import httpx
 
-from harness.llm.events import StreamDone, StreamError, StreamEvent
-from harness.llm.types import AssistantMessage
+from lab_harness.llm.events import StreamDone, StreamError, StreamEvent
+from lab_harness.llm.types import AssistantMessage
 
 #: Obviously fake. Real keys never appear in this repository.
 TEST_KEY = "test-key-not-real"
@@ -61,7 +61,7 @@ def assert_blocks_open_before_deltas(events: list[StreamEvent]) -> None:
     "exists" while leaving a renderer holding deltas for a block it was never
     told about — which is exactly the bug this catches.
     """
-    from harness.llm.events import (
+    from lab_harness.llm.events import (
         TextDelta,
         TextStart,
         ThinkingDelta,

@@ -73,7 +73,7 @@ A new vendor is still normally a *profile*, not a module. See
 
 ## The Anthropic adapter
 
-`harness/llm/providers/anthropic.py`. Credentials come from the environment,
+`lab_harness/llm/providers/anthropic.py`. Credentials come from the environment,
 never from a config file or a constructor argument; config holds only the env
 var *names*.
 
@@ -211,7 +211,7 @@ reasoning.
 
 ## The Chat Completions adapter
 
-`harness/llm/providers/chat_completions.py`. Raw `httpx` rather than the
+`lab_harness/llm/providers/chat_completions.py`. Raw `httpx` rather than the
 `openai` SDK: httpx is already a dependency for the web tools, the SSE framing
 is forty lines, and `reasoning_content` sits outside the SDK's types anyway.
 
@@ -236,7 +236,7 @@ Reasoning deltas are read from `reasoning_content` (DeepSeek's name) or
 
 ## The Responses adapter
 
-`harness/llm/providers/responses.py`. Opt in with `api = "responses"`.
+`lab_harness/llm/providers/responses.py`. Opt in with `api = "responses"`.
 
 Not a tweak of Chat Completions — a different shape:
 
@@ -312,7 +312,7 @@ model id at a different endpoint — a gateway, or a local server running the
 same weights — without the catalog having to agree.
 
 `select_provider`, `build_provider` and `route` live in
-`harness/llm/providers/__init__.py`. `route` is the one the CLI calls; it
+`lab_harness/llm/providers/__init__.py`. `route` is the one the CLI calls; it
 resolves the id, picks the provider, and rewrites `Model.provider` to match —
 which matters because an uncatalogued id is cloned from an Anthropic entry for
 its limits and would otherwise claim to be Anthropic's whatever served it.
@@ -322,8 +322,8 @@ A profile's credential resolves from the environment first, then
 
 ## Model registry
 
-`harness/llm/registry.py` holds the catalog and `resolve_model()`. Precedence:
-explicit argument, then `HARNESS_MODEL`, then the configured default.
+`lab_harness/llm/registry.py` holds the catalog and `resolve_model()`. Precedence:
+explicit argument, then `LAB_HARNESS_MODEL`, then the configured default.
 
 An **unknown model id is not an error**. Model names ship faster than this
 catalog does, so an unlisted id is given conservative limits rather than
@@ -355,7 +355,7 @@ api_key_env = "MYVENDOR_API_KEY"
 models = ["their-model-v1"]
 ```
 
-`harness --model their-model-v1` now routes there. Add a catalog entry in
+`lab-harness --model their-model-v1` now routes there. Add a catalog entry in
 `llm/registry.py` only if you want its real limits and capability flags, and a
 [`[pricing]`](configuration.md#pricing) entry if you want a cost shown. For a
 reasoning model, check the vendor's docs on sending reasoning back before

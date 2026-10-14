@@ -75,7 +75,7 @@ if len(output) > config.tools.bash.max_output_bytes:
     output = output[: config.tools.bash.max_output_bytes]
 ```
 
-Defaults live in one place — the schema in `harness/config.py` — so reading the
+Defaults live in one place — the schema in `lab_harness/config.py` — so reading the
 schema tells you every knob the system has. Adding a tunable means adding it to
 the schema with a default in the same change.
 
@@ -140,7 +140,7 @@ _log = logging.getLogger(__name__)
 ```
 
 Name it `_log`, and never call `basicConfig` or add a handler — only `cli/`
-configures logging, through `harness/logs.py`. A library that configures
+configures logging, through `lab_harness/logs.py`. A library that configures
 logging hijacks the application embedding it.
 
 Pick the level by who needs the line:

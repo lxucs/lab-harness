@@ -13,8 +13,8 @@ import re
 import pytest
 from rich.console import Console
 
-from harness.agent import Agent
-from harness.agent.types import (
+from lab_harness.agent import Agent
+from lab_harness.agent.types import (
     AgentEnd,
     AgentStart,
     MessageEnd,
@@ -24,12 +24,12 @@ from harness.agent.types import (
     ToolExecutionStart,
     ToolExecutionUpdate,
 )
-from harness.cli.renderers import EventRenderer, headline
-from harness.config import Config, ConfigError, TerminalConfig, ThemeConfig
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import AssistantMessage, TextBlock, ThinkingBlock, ToolCallBlock, text
-from harness.tools import ToolRegistry
-from harness.tools.fs import FILESYSTEM_TOOLS
+from lab_harness.cli.renderers import EventRenderer, headline
+from lab_harness.config import Config, ConfigError, TerminalConfig, ThemeConfig
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import AssistantMessage, TextBlock, ThinkingBlock, ToolCallBlock, text
+from lab_harness.tools import ToolRegistry
+from lab_harness.tools.fs import FILESYSTEM_TOOLS
 from tests.screen import visible
 
 
@@ -130,7 +130,7 @@ async def test_markdown_mode_renders_the_final_message() -> None:
 
 
 async def test_an_error_message_is_shown() -> None:
-    from harness.llm.fake import error_response
+    from lab_harness.llm.fake import error_response
 
     buffer = io.StringIO()
     await _run(buffer, FakeProvider([error_response("rate limited")]))

@@ -1,4 +1,4 @@
-# harness
+# lab-harness
 
 A lightweight agent harness. Python runtime, terminal frontend.
 
@@ -64,19 +64,19 @@ Details in [docs/architecture.md](docs/architecture.md).
 uv sync
 export ANTHROPIC_API_KEY=sk-...
 export TAVILY_API_KEY=tvly-...       # optional, for web_search
-uv run harness                       # interactive
+uv run lab-harness                       # interactive
 ```
 
 ```bash
-uv run harness -p "summarize the config module"   # one-shot
-uv run harness -p "..." --json                    # JSONL event stream
-uv run harness --resume                           # continue where you left off
-uv run harness --sessions                         # list saved sessions here
-uv run harness -p "..." --model claude-opus-5
-uv run harness --cwd ../other-project
-uv run harness --log-level debug             # diagnostics on stderr
-uv run harness --model deepseek-flash        # routed to DeepSeek by config
-uv run harness --model gpt-5                 # OpenAI, via the Responses API
+uv run lab-harness -p "summarize the config module"   # one-shot
+uv run lab-harness -p "..." --json                    # JSONL event stream
+uv run lab-harness --resume                           # continue where you left off
+uv run lab-harness --sessions                         # list saved sessions here
+uv run lab-harness -p "..." --model claude-opus-5
+uv run lab-harness --cwd ../other-project
+uv run lab-harness --log-level debug             # diagnostics on stderr
+uv run lab-harness --model deepseek-flash        # routed to DeepSeek by config
+uv run lab-harness --model gpt-5                 # OpenAI, via the Responses API
 ```
 
 In interactive mode, `Ctrl-C` cancels the turn in flight without ending the
@@ -85,7 +85,7 @@ exits. Reasoning streams live — DeepSeek's and GLM's raw chain, OpenAI's and
 Claude's summaries — and collapses to one line when its answer starts. Edits
 show as red and green diffs, Claude Code style, both when they ask for approval
 and once they land. Mutating tools (`bash`, `write`, `edit`) ask before
-running. Conversations are saved per project under `~/.harness/sessions/` and
+running. Conversations are saved per project under `~/.lab-harness/sessions/` and
 `--resume` picks the last one back up; `--no-save` skips persistence. A saved
 session records the system prompt, tools, model and config each invocation ran
 with, so every request it made can be rebuilt — for replay or training. Exit
@@ -111,7 +111,7 @@ Configuration and every environment variable: [docs/configuration.md](docs/confi
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
 
 The full design rationale — including what was cut and why — is in
-[the design spec](docs/superpowers/specs/2026-10-09-harness-runtime-design.md).
+[the design spec](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md).
 
 Contributing: [docs/contributing.md](docs/contributing.md). AI coding agents
 should also read [AGENTS.md](AGENTS.md).

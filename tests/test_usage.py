@@ -6,7 +6,7 @@ rather than through a run. The terminal tests cover the wiring.
 
 import pytest
 
-from harness.cli.usage import (
+from lab_harness.cli.usage import (
     cache_hit_rate,
     cost_of,
     format_cost,
@@ -16,9 +16,9 @@ from harness.cli.usage import (
     price_for,
     summarize,
 )
-from harness.config import Config, PricingConfig
-from harness.llm.fake import FAKE_MODEL
-from harness.llm.types import AssistantMessage, Usage, UserMessage, text
+from lab_harness.config import Config, PricingConfig
+from lab_harness.llm.fake import FAKE_MODEL
+from lab_harness.llm.types import AssistantMessage, Usage, UserMessage, text
 
 PRICED = "priced-model"
 UNPRICED = "unpriced-model"

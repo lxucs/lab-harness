@@ -1,14 +1,14 @@
-# Harness Runtime Core — Implementation Plan (Milestone 1a)
+# lab-harness Runtime Core — Implementation Plan (Milestone 1a)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a fully tested agentic loop driven by scripted model responses — core types, event protocol, provider protocol, the loop, and the stateful `Agent`.
 
-**Architecture:** Three source packages. `harness/llm/` holds provider-neutral message/event types and the `Provider` protocol. `harness/agent/` holds a pure `run_agent_loop()` function and an `Agent` class that wraps it with transcript state, subscribers, abort, and a message queue. Everything is exercised through `FakeProvider`, which replays scripted stream events — no network, no tools, no CLI in this milestone.
+**Architecture:** Three source packages. `lab_harness/llm/` holds provider-neutral message/event types and the `Provider` protocol. `lab_harness/agent/` holds a pure `run_agent_loop()` function and an `Agent` class that wraps it with transcript state, subscribers, abort, and a message queue. Everything is exercised through `FakeProvider`, which replays scripted stream events — no network, no tools, no CLI in this milestone.
 
 **Tech Stack:** Python 3.12+, asyncio, frozen dataclasses (protocol types), pytest 9 + pytest-asyncio 1.4 (`asyncio_mode = "auto"`), ruff, pyright, uv.
 
-**Scope:** Build-order steps 1–4 from [the design spec](../specs/2026-10-09-harness-runtime-design.md). Tools, providers, session persistence, and the terminal are later milestones. At the end of this plan nothing is user-facing; the deliverable is a tested loop.
+**Scope:** Build-order steps 1–4 from [the design spec](../specs/2026-10-09-lab-harness-runtime-design.md). Tools, providers, session persistence, and the terminal are later milestones. At the end of this plan nothing is user-facing; the deliverable is a tested loop.
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - **Offline tests.** `tests/conftest.py` blocks outbound sockets. Never call a real API in a test.
 - **Events are frozen dataclasses of JSON primitives.** No live objects, file handles, SDK types, or callables on any event or message. Enforced by `tests/test_serialization.py`.
 - **Providers never raise** for request/model/runtime failures — they terminate the stream with an `error` event.
-- **No hardcoded tunables.** Anything configurable lives in `harness/config.py`. Protocol constants (schema versions, API version headers) are exempt.
+- **No hardcoded tunables.** Anything configurable lives in `lab_harness/config.py`. Protocol constants (schema versions, API version headers) are exempt.
 - **No secrets in committed files.** No keys, absolute paths, private URLs.
 - **Mutable containers on frozen dataclasses are `tuple`, not `list`** — hashability and accidental-mutation safety.
 - **Do not commit unless the user explicitly asks.** Each task ends with a *proposed* commit command; run it only on instruction. See [AGENTS.md](../../../AGENTS.md).
@@ -28,15 +28,15 @@
 | File | Responsibility |
 |---|---|
 | `pyproject.toml` | Package metadata, deps, ruff/pyright/pytest config |
-| `harness/config.py` | Config schema + defaults — the single list of tunables |
-| `harness/llm/types.py` | Content blocks, messages, `Usage`, `StopReason`, `Model`, `Context` |
-| `harness/llm/events.py` | `StreamEvent` union — the provider wire protocol |
-| `harness/llm/serde.py` | `to_dict` / `from_dict` for the tagged unions |
-| `harness/llm/provider.py` | `Provider` protocol, `StreamOptions` |
-| `harness/llm/fake.py` | `FakeProvider` — replays scripted events |
-| `harness/agent/types.py` | `AgentEvent` union, `AgentTool`, `AgentContext`, hook protocols |
-| `harness/agent/loop.py` | `run_agent_loop()` — pure async, no state |
-| `harness/agent/agent.py` | `Agent` — transcript, subscribers, abort, queue |
+| `lab_harness/config.py` | Config schema + defaults — the single list of tunables |
+| `lab_harness/llm/types.py` | Content blocks, messages, `Usage`, `StopReason`, `Model`, `Context` |
+| `lab_harness/llm/events.py` | `StreamEvent` union — the provider wire protocol |
+| `lab_harness/llm/serde.py` | `to_dict` / `from_dict` for the tagged unions |
+| `lab_harness/llm/provider.py` | `Provider` protocol, `StreamOptions` |
+| `lab_harness/llm/fake.py` | `FakeProvider` — replays scripted events |
+| `lab_harness/agent/types.py` | `AgentEvent` union, `AgentTool`, `AgentContext`, hook protocols |
+| `lab_harness/agent/loop.py` | `run_agent_loop()` — pure async, no state |
+| `lab_harness/agent/agent.py` | `Agent` — transcript, subscribers, abort, queue |
 | `tests/conftest.py` | Autouse socket blocker + shared fixtures |
 
 Task 1 creates the first four rows, Task 2 the next two, Task 3 the loop, Task 4 the `Agent`.
@@ -49,8 +49,8 @@ Sets up the package and defines the types every later task consumes. Ends with t
 
 **Files:**
 - Create: `pyproject.toml`, `.python-version`
-- Create: `harness/__init__.py`, `harness/config.py`
-- Create: `harness/llm/__init__.py`, `harness/llm/types.py`, `harness/llm/events.py`, `harness/llm/serde.py`
+- Create: `lab_harness/__init__.py`, `lab_harness/config.py`
+- Create: `lab_harness/llm/__init__.py`, `lab_harness/llm/types.py`, `lab_harness/llm/events.py`, `lab_harness/llm/serde.py`
 - Create: `tests/conftest.py`, `tests/test_serialization.py`
 
 **Interfaces:**
@@ -73,24 +73,24 @@ Sets up the package and defines the types every later task consumes. Ends with t
 
 ```bash
 cd /path/to/lab-harness
-uv init --name harness --python 3.12 --no-readme --bare
+uv init --name lab-harness --python 3.12 --no-readme --bare
 uv add --dev pytest pytest-asyncio ruff pyright
-mkdir -p harness/llm harness/agent tests
-touch harness/__init__.py harness/llm/__init__.py harness/agent/__init__.py
+mkdir -p lab_harness/llm lab_harness/agent tests
+touch lab_harness/__init__.py lab_harness/llm/__init__.py lab_harness/agent/__init__.py
 ```
 
 Then replace `pyproject.toml` entirely with:
 
 ```toml
 [project]
-name = "harness"
+name = "lab-harness"
 version = "0.1.0"
 description = "A lightweight agent harness"
 requires-python = ">=3.12"
 dependencies = []
 
 [project.scripts]
-harness = "harness.cli.main:main"
+lab-harness = "lab_harness.cli.main:main"
 
 [dependency-groups]
 dev = ["pytest>=9.1", "pytest-asyncio>=1.4", "ruff>=0.14", "pyright>=1.1.400"]
@@ -100,7 +100,7 @@ requires = ["uv_build>=0.9,<0.10"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "harness"
+module-name = "lab_harness"
 module-root = ""
 
 [tool.pytest.ini_options]
@@ -115,7 +115,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["harness", "tests"]
+include = ["lab_harness", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 ```
@@ -184,7 +184,7 @@ Expected: 2 passed. If either fails, stop — the offline guarantee is broken an
 
 - [ ] **Step 4: Write the core types**
 
-Create `harness/llm/types.py`:
+Create `lab_harness/llm/types.py`:
 
 ```python
 """Provider-neutral message and model types.
@@ -351,7 +351,7 @@ def text(value: str) -> tuple[TextBlock]:
 
 - [ ] **Step 5: Write the stream event protocol**
 
-Create `harness/llm/events.py`:
+Create `lab_harness/llm/events.py`:
 
 ```python
 """Provider stream protocol.
@@ -365,7 +365,7 @@ when request setup fails. Updates and `done` never appear before `start`.
 from dataclasses import dataclass
 from typing import Literal
 
-from harness.llm.types import AssistantMessage, StopReason, ToolCallBlock
+from lab_harness.llm.types import AssistantMessage, StopReason, ToolCallBlock
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,7 +478,7 @@ import json
 
 import pytest
 
-from harness.llm.events import (
+from lab_harness.llm.events import (
     StreamDone,
     StreamError,
     StreamStart,
@@ -492,8 +492,8 @@ from harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from harness.llm.serde import block_from_dict, event_from_dict, message_from_dict, to_dict
-from harness.llm.types import (
+from lab_harness.llm.serde import block_from_dict, event_from_dict, message_from_dict, to_dict
+from lab_harness.llm.types import (
     AssistantMessage,
     ImageBlock,
     ProviderBlock,
@@ -578,7 +578,7 @@ def test_every_event_type_is_covered() -> None:
     """
     from typing import get_args
 
-    from harness.llm import events as events_module
+    from lab_harness.llm import events as events_module
 
     union_members = set(get_args(events_module.StreamEvent))
     covered = {type(e) for e in EVENTS}
@@ -588,11 +588,11 @@ def test_every_event_type_is_covered() -> None:
 - [ ] **Step 7: Run the test to verify it fails**
 
 Run: `uv run pytest tests/test_serialization.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness.llm.serde'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lab_harness.llm.serde'`
 
 - [ ] **Step 8: Implement serde**
 
-Create `harness/llm/serde.py`:
+Create `lab_harness/llm/serde.py`:
 
 ```python
 """Tagged-union serialization.
@@ -604,8 +604,8 @@ dispatches on the `type` / `role` discriminator each type carries.
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from harness.llm import events as _events
-from harness.llm import types as _types
+from lab_harness.llm import events as _events
+from lab_harness.llm import types as _types
 
 _BLOCKS: dict[str, type] = {
     "text": _types.TextBlock,
@@ -699,7 +699,7 @@ mismatch, that is the expected shape of the bug: JSON has no tuples, so
 
 - [ ] **Step 10: Write the config schema**
 
-Create `harness/config.py`:
+Create `lab_harness/config.py`:
 
 ```python
 """Configuration schema and defaults.
@@ -752,7 +752,7 @@ typed without a large amount of overload boilerplate. Leave it.
 - [ ] **Step 12: Update docs and propose a commit**
 
 Update `docs/events.md`: replace the "Not yet implemented" banner with a note
-that the stream protocol in `harness/llm/events.py` is implemented, and that
+that the stream protocol in `lab_harness/llm/events.py` is implemented, and that
 agent-level events arrive in Task 3.
 
 Update the build-order table in `docs/architecture.md` and the checklist in
@@ -761,7 +761,7 @@ Update the build-order table in `docs/architecture.md` and the checklist in
 Proposed commit — **run only if the user asks**:
 
 ```bash
-git add pyproject.toml uv.lock .python-version harness/ tests/ docs/ README.md
+git add pyproject.toml uv.lock .python-version lab_harness/ tests/ docs/ README.md
 git commit -m "feat: core LLM types, stream protocol, and serialization"
 ```
 
@@ -772,7 +772,7 @@ git commit -m "feat: core LLM types, stream protocol, and serialization"
 The seam every later test depends on. `FakeProvider` replays scripted events so the loop can be tested without a network.
 
 **Files:**
-- Create: `harness/llm/provider.py`, `harness/llm/fake.py`
+- Create: `lab_harness/llm/provider.py`, `lab_harness/llm/fake.py`
 - Create: `tests/test_fake_provider.py`
 
 **Interfaces:**
@@ -789,7 +789,7 @@ The seam every later test depends on. `FakeProvider` replays scripted events so 
 
 - [ ] **Step 1: Write the provider protocol**
 
-Create `harness/llm/provider.py`:
+Create `lab_harness/llm/provider.py`:
 
 ```python
 """The provider contract.
@@ -808,8 +808,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
-from harness.llm.events import StreamEvent
-from harness.llm.types import Context, Model
+from lab_harness.llm.events import StreamEvent
+from lab_harness.llm.types import Context, Model
 
 
 @dataclass(frozen=True, slots=True)
@@ -843,15 +843,15 @@ Create `tests/test_fake_provider.py`:
 ```python
 import pytest
 
-from harness.llm.events import StreamDone, StreamStart, TextDelta
-from harness.llm.fake import (
+from lab_harness.llm.events import StreamDone, StreamStart, TextDelta
+from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
     error_response,
     text_response,
     tool_call_response,
 )
-from harness.llm.types import Context, ToolCallBlock, text
+from lab_harness.llm.types import Context, ToolCallBlock, text
 
 
 async def _drain(provider: FakeProvider, ctx: Context) -> list[object]:
@@ -919,11 +919,11 @@ async def test_raises_when_script_is_exhausted() -> None:
 - [ ] **Step 3: Run the test to verify it fails**
 
 Run: `uv run pytest tests/test_fake_provider.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness.llm.fake'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lab_harness.llm.fake'`
 
 - [ ] **Step 4: Implement FakeProvider**
 
-Create `harness/llm/fake.py`:
+Create `lab_harness/llm/fake.py`:
 
 ```python
 """A provider that replays scripted events. The backbone of the offline suite.
@@ -936,7 +936,7 @@ testing the loop, not a malformed script.
 from collections.abc import AsyncIterator, Sequence
 from itertools import count
 
-from harness.llm.events import (
+from lab_harness.llm.events import (
     StreamDone,
     StreamError,
     StreamEvent,
@@ -947,8 +947,8 @@ from harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from harness.llm.provider import StreamOptions
-from harness.llm.types import (
+from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.types import (
     AssistantMessage,
     Context,
     Model,
@@ -1142,7 +1142,7 @@ exist, and that real adapters arrive in a later milestone.
 Proposed commit — **run only if the user asks**:
 
 ```bash
-git add harness/llm/ tests/ docs/
+git add lab_harness/llm/ tests/ docs/
 git commit -m "feat: provider protocol and FakeProvider"
 ```
 
@@ -1153,7 +1153,7 @@ git commit -m "feat: provider protocol and FakeProvider"
 A pure async function: stream a response, execute tool calls, repeat until the model stops. No state, no persistence, no UI.
 
 **Files:**
-- Create: `harness/agent/types.py`, `harness/agent/loop.py`
+- Create: `lab_harness/agent/types.py`, `lab_harness/agent/loop.py`
 - Create: `tests/test_agent_loop.py`
 
 **Interfaces:**
@@ -1169,7 +1169,7 @@ A pure async function: stream a response, execute tool calls, repeat until the m
 
 - [ ] **Step 1: Write the agent types**
 
-Create `harness/agent/types.py`:
+Create `lab_harness/agent/types.py`:
 
 ```python
 """Agent-level events, tool contracts, and hook signatures.
@@ -1184,9 +1184,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from harness.config import Config
-from harness.llm.provider import Provider
-from harness.llm.types import (
+from lab_harness.config import Config
+from lab_harness.llm.provider import Provider
+from lab_harness.llm.types import (
     AssistantMessage,
     ContentBlock,
     Message,
@@ -1405,8 +1405,8 @@ import asyncio
 
 import pytest
 
-from harness.agent.loop import run_agent_loop
-from harness.agent.types import (
+from lab_harness.agent.loop import run_agent_loop
+from lab_harness.agent.types import (
     AgentContext,
     AgentEnd,
     AgentEvent,
@@ -1421,8 +1421,8 @@ from harness.agent.types import (
     TurnEnd,
     TurnStart,
 )
-from harness.config import Config
-from harness.llm.fake import (
+from lab_harness.config import Config
+from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
     error_response,
@@ -1430,7 +1430,7 @@ from harness.llm.fake import (
     tool_call_response,
     truncated_tool_call_response,
 )
-from harness.llm.types import (
+from lab_harness.llm.types import (
     AssistantMessage,
     ToolCallBlock,
     ToolResultMessage,
@@ -1683,7 +1683,7 @@ async def test_prepare_request_can_replace_messages() -> None:
     replacement = (UserMessage(content=text("replaced")),)
 
     async def replace(ctx: object) -> object:
-        from harness.agent.types import RequestUpdate
+        from lab_harness.agent.types import RequestUpdate
 
         return RequestUpdate(messages=replacement)
 
@@ -1701,7 +1701,7 @@ async def test_max_turns_stops_a_runaway_loop() -> None:
 
     from dataclasses import replace as dc_replace
 
-    from harness.config import AgentConfig
+    from lab_harness.config import AgentConfig
 
     cfg = LoopConfig(
         model=FAKE_MODEL,
@@ -1730,11 +1730,11 @@ async def test_abort_signal_stops_the_run() -> None:
 - [ ] **Step 3: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_agent_loop.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness.agent.loop'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lab_harness.agent.loop'`
 
 - [ ] **Step 4: Implement the loop**
 
-Create `harness/agent/loop.py` with this module docstring and imports:
+Create `lab_harness/agent/loop.py` with this module docstring and imports:
 
 ```python
 """The agentic loop: stream a response, run its tool calls, repeat.
@@ -1751,7 +1751,7 @@ import asyncio
 import time
 from collections.abc import Sequence
 
-from harness.agent.types import (
+from lab_harness.agent.types import (
     AfterToolCallContext,
     AgentContext,
     AgentEnd,
@@ -1774,14 +1774,14 @@ from harness.agent.types import (
     TurnStart,
     declarations_for,
 )
-from harness.llm.events import (
+from lab_harness.llm.events import (
     StreamDone,
     StreamError,
     TextDelta,
     ThinkingDelta,
 )
-from harness.llm.provider import StreamOptions
-from harness.llm.types import (
+from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.types import (
     AssistantMessage,
     Context,
     Message,
@@ -2120,7 +2120,7 @@ Expected: 14 passed.
 Add to `tests/test_serialization.py`:
 
 ```python
-from harness.agent.types import (
+from lab_harness.agent.types import (
     AgentEnd,
     AgentStart,
     MessageEnd,
@@ -2159,7 +2159,7 @@ def test_agent_event_is_json_serializable(event: object) -> None:
 def test_every_agent_event_type_is_covered() -> None:
     from typing import get_args
 
-    from harness.agent import types as agent_types
+    from lab_harness.agent import types as agent_types
 
     union_members = set(get_args(agent_types.AgentEvent))
     assert {type(e) for e in AGENT_EVENTS} == union_members
@@ -2182,7 +2182,7 @@ Update `docs/events.md` with the implemented agent event table, and
 Proposed commit — **run only if the user asks**:
 
 ```bash
-git add harness/agent/ tests/ docs/ README.md
+git add lab_harness/agent/ tests/ docs/ README.md
 git commit -m "feat: agent loop with tool execution and hooks"
 ```
 
@@ -2193,9 +2193,9 @@ git commit -m "feat: agent loop with tool execution and hooks"
 Wraps the loop with a transcript, subscribers, abort, and a message queue — the object a frontend talks to.
 
 **Files:**
-- Create: `harness/agent/agent.py`
+- Create: `lab_harness/agent/agent.py`
 - Create: `tests/test_agent.py`
-- Modify: `harness/agent/__init__.py` (public exports)
+- Modify: `lab_harness/agent/__init__.py` (public exports)
 
 **Interfaces:**
 - Consumes: everything from Tasks 1–3.
@@ -2218,10 +2218,10 @@ import asyncio
 
 import pytest
 
-from harness.agent.agent import Agent
-from harness.agent.types import AgentEvent, ToolContext, ToolResult
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import AssistantMessage, ToolCallBlock, UserMessage, text
+from lab_harness.agent.agent import Agent
+from lab_harness.agent.types import AgentEvent, ToolContext, ToolResult
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import AssistantMessage, ToolCallBlock, UserMessage, text
 
 
 def _agent(provider: FakeProvider, **kwargs: object) -> Agent:
@@ -2392,11 +2392,11 @@ async def test_wait_for_idle_returns_after_the_run() -> None:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_agent.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'harness.agent.agent'`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lab_harness.agent.agent'`
 
 - [ ] **Step 3: Implement Agent**
 
-Create `harness/agent/agent.py`:
+Create `lab_harness/agent/agent.py`:
 
 ```python
 """Stateful wrapper around the agent loop.
@@ -2411,8 +2411,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from harness.agent.loop import run_agent_loop
-from harness.agent.types import (
+from lab_harness.agent.loop import run_agent_loop
+from lab_harness.agent.types import (
     AfterToolCallContext,
     AfterToolCallResult,
     AgentContext,
@@ -2426,9 +2426,9 @@ from harness.agent.types import (
     PrepareRequestContext,
     RequestUpdate,
 )
-from harness.config import Config, load_config
-from harness.llm.provider import Provider
-from harness.llm.types import AssistantMessage, Message, Model, UserMessage, text
+from lab_harness.config import Config, load_config
+from lab_harness.llm.provider import Provider
+from lab_harness.llm.types import AssistantMessage, Message, Model, UserMessage, text
 
 logger = logging.getLogger(__name__)
 
@@ -2628,14 +2628,14 @@ messages it produced, which the Task 3 implementation already does.
 
 - [ ] **Step 5: Export the public API**
 
-Replace `harness/agent/__init__.py`:
+Replace `lab_harness/agent/__init__.py`:
 
 ```python
 """The agent runtime: a pure loop and a stateful wrapper around it."""
 
-from harness.agent.agent import Agent, AgentState
-from harness.agent.loop import run_agent_loop
-from harness.agent.types import (
+from lab_harness.agent.agent import Agent, AgentState
+from lab_harness.agent.loop import run_agent_loop
+from lab_harness.agent.types import (
     AgentContext,
     AgentEvent,
     AgentTool,
@@ -2657,13 +2657,13 @@ __all__ = [
 ]
 ```
 
-And `harness/llm/__init__.py`:
+And `lab_harness/llm/__init__.py`:
 
 ```python
 """Provider-neutral LLM access."""
 
-from harness.llm.provider import Provider, StreamOptions
-from harness.llm.types import (
+from lab_harness.llm.provider import Provider, StreamOptions
+from lab_harness.llm.types import (
     AssistantMessage,
     Context,
     Message,
@@ -2703,10 +2703,10 @@ Create `tests/test_integration.py`:
 ```python
 """End-to-end through the public API: a scripted model drives a real tool."""
 
-from harness.agent import Agent, ToolContext, ToolResult
-from harness.agent.types import AgentEvent
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import ToolCallBlock, text
+from lab_harness.agent import Agent, ToolContext, ToolResult
+from lab_harness.agent.types import AgentEvent
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import ToolCallBlock, text
 
 
 class CounterTool:
@@ -2785,7 +2785,7 @@ Expected: ruff clean, pyright clean, roughly 55 tests passing.
 Proposed commit — **run only if the user asks**:
 
 ```bash
-git add harness/ tests/ docs/ README.md
+git add lab_harness/ tests/ docs/ README.md
 git commit -m "feat: stateful Agent with subscribers, queue, and abort"
 ```
 

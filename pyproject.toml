@@ -1,5 +1,5 @@
 [project]
-name = "harness"
+name = "lab-harness"
 version = "0.1.0"
 description = "A lightweight agent harness"
 requires-python = ">=3.12"
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-harness = "harness.cli.main:main"
+lab-harness = "lab_harness.cli.main:main"
 
 [project.optional-dependencies]
 ddgs = [
@@ -27,7 +27,7 @@ requires = ["uv_build>=0.9,<0.10"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = "harness"
+module-name = "lab_harness"
 module-root = ""
 
 [tool.pytest.ini_options]
@@ -42,6 +42,6 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["harness", "tests"]
+include = ["lab_harness", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

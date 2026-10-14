@@ -2,7 +2,7 @@
 
 Two autouse guards make the suite safe by construction rather than by
 convention: it cannot reach the network, and it cannot write to the real
-`~/.harness`.
+`~/.lab-harness`.
 """
 
 import logging
@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from harness.config import SessionConfig
-from harness.logs import ROOT_LOGGER
+from lab_harness.config import SessionConfig
+from lab_harness.logs import ROOT_LOGGER
 
 
 class NetworkBlockedError(AssertionError):
@@ -38,14 +38,14 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_harness_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point HARNESS_HOME at a per-test directory.
+def _isolate_lab_harness_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point LAB_HARNESS_HOME at a per-test directory.
 
     A test that persists a session must not touch the developer's real
-    `~/.harness`. Setting the env var every test makes that impossible rather
+    `~/.lab-harness`. Setting the env var every test makes that impossible rather
     than merely discouraged — `store.home()` reads it first.
     """
-    isolated = tmp_path / "harness-home"
+    isolated = tmp_path / "lab-harness-home"
     monkeypatch.setenv(SessionConfig().home_env, str(isolated))
     return isolated
 
@@ -68,9 +68,9 @@ _CLEARED_VARS = (
     "ZHIPUAI_BASE_URL",
     # Not a credential, but it outranks `agent.model`, so leaving it set would
     # make every default-model assertion depend on the developer's shell.
-    "HARNESS_MODEL",
+    "LAB_HARNESS_MODEL",
     # Same reasoning: it outranks `logging.level`.
-    "HARNESS_LOG_LEVEL",
+    "LAB_HARNESS_LOG_LEVEL",
 )
 
 

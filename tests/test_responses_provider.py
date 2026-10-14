@@ -17,8 +17,8 @@ from typing import Any
 
 import pytest
 
-from harness.config import OpenAIConfig
-from harness.llm.events import (
+from lab_harness.config import OpenAIConfig
+from lab_harness.llm.events import (
     StreamError,
     StreamEvent,
     StreamStart,
@@ -32,9 +32,9 @@ from harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from harness.llm.provider import StreamOptions
-from harness.llm.providers.responses import ResponsesProvider
-from harness.llm.types import (
+from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.providers.responses import ResponsesProvider
+from lab_harness.llm.types import (
     AssistantMessage,
     Context,
     ImageBlock,
@@ -812,7 +812,7 @@ async def test_the_log_names_the_response_and_its_status_as_sent(
     ended = {"status": "incomplete", "incomplete_details": details}
     body = sse(created, {"type": "response.incomplete", "response": ended})
 
-    with caplog.at_level(logging.DEBUG, logger="harness.llm.providers.responses"):
+    with caplog.at_level(logging.DEBUG, logger="lab_harness.llm.providers.responses"):
         await collect(provider(Recorder(body)))
 
     assert "Response resp_9 from gpt-5-0801" in caplog.text

@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from harness.agent.types import (
+from lab_harness.agent.types import (
     AgentEnd,
     AgentEvent,
     AgentStart,
@@ -21,7 +21,7 @@ from harness.agent.types import (
     TurnEnd,
     TurnStart,
 )
-from harness.llm.events import (
+from lab_harness.llm.events import (
     StreamDone,
     StreamError,
     StreamStart,
@@ -35,8 +35,8 @@ from harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from harness.llm.serde import block_from_dict, event_from_dict, message_from_dict, to_dict
-from harness.llm.types import (
+from lab_harness.llm.serde import block_from_dict, event_from_dict, message_from_dict, to_dict
+from lab_harness.llm.types import (
     AssistantMessage,
     ImageBlock,
     ProviderBlock,
@@ -123,7 +123,7 @@ def test_every_event_type_is_covered() -> None:
     """
     from typing import get_args
 
-    from harness.llm import events as events_module
+    from lab_harness.llm import events as events_module
 
     union_members = set(get_args(events_module.StreamEvent))
     covered = {type(e) for e in EVENTS}
@@ -134,7 +134,7 @@ def test_every_block_type_is_covered() -> None:
     """Guard against adding a content block without a round-trip test case."""
     from typing import get_args
 
-    from harness.llm import types as types_module
+    from lab_harness.llm import types as types_module
 
     union_members = set(get_args(types_module.ContentBlock))
     covered = {type(b) for b in BLOCKS}
@@ -145,7 +145,7 @@ def test_every_message_type_is_covered() -> None:
     """Guard against adding a message type without a round-trip test case."""
     from typing import get_args
 
-    from harness.llm import types as types_module
+    from lab_harness.llm import types as types_module
 
     union_members = set(get_args(types_module.Message))
     covered = {type(m) for m in MESSAGES}
@@ -183,7 +183,7 @@ def test_agent_event_is_json_serializable(event: AgentEvent) -> None:
 def test_every_agent_event_type_is_covered() -> None:
     from typing import get_args
 
-    from harness.agent import types as agent_types
+    from lab_harness.agent import types as agent_types
 
     union_members = set(get_args(agent_types.AgentEvent))
     assert {type(e) for e in AGENT_EVENTS} == union_members

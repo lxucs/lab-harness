@@ -2,7 +2,7 @@
 
 ## Layering
 
-Three layers, as subpackages of one installable `harness` package.
+Three layers, as subpackages of one installable `lab_harness` package.
 Dependencies point strictly downward.
 
 ```
@@ -17,7 +17,7 @@ Dependencies point strictly downward.
     └─────┴─────┴──→  config.py, project.py, logs.py   (leaf modules)
 ```
 
-`llm/` imports from no other *layer*. It does read `harness.config` — every
+`llm/` imports from no other *layer*. It does read `lab_harness.config` — every
 layer does. The leaf modules import nothing from the package except each other
 and `config.py`, so depending on one cannot create a cycle and does not make a
 layer less replaceable. Treat "no upward dependencies" as being about the
@@ -31,7 +31,7 @@ the filesystem layout.
 `logs.py` decides where diagnostics go and how loud they are. Every layer takes
 a logger the ordinary way (`logging.getLogger(__name__)`) and emits records
 unconditionally; only `cli/` calls `configure_logging`. That is the stdlib's
-library/application split, and it is why importing `harness` installs no
+library/application split, and it is why importing `lab_harness` installs no
 handler on an embedding application's root logger — and why the module is
 `logs.py` rather than `logging.py`, which a reader would have to think about
 before trusting any `import logging` in the package. The interactive terminal

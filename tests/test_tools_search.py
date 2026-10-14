@@ -4,10 +4,10 @@ import os
 import time
 from pathlib import Path
 
-from harness.config import Config, SearchConfig, ToolsConfig
-from harness.llm.types import TextBlock
-from harness.tools.base import ToolContext, ToolResult
-from harness.tools.search import glob, grep
+from lab_harness.config import Config, SearchConfig, ToolsConfig
+from lab_harness.llm.types import TextBlock
+from lab_harness.tools.base import ToolContext, ToolResult
+from lab_harness.tools.search import glob, grep
 
 
 def _ctx(tmp_path: Path, config: Config | None = None) -> ToolContext:

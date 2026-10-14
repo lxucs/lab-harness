@@ -17,18 +17,18 @@ from pathlib import Path
 
 import pytest
 
-from harness.agent import Agent
-from harness.agent.types import ExecutionMode, ToolContext, ToolResult
-from harness.config import Config, ConfigError, LoggingConfig, ProjectConfig, load_config
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.providers import build_provider, select_provider
-from harness.llm.providers._trace import request_shape
-from harness.llm.providers.anthropic import AnthropicProvider
-from harness.llm.providers.chat_completions import ChatCompletionsProvider
-from harness.llm.registry import resolve_model
-from harness.llm.types import Context, ToolCallBlock, UserMessage, text
-from harness.logs import LEVELS, ROOT_LOGGER, configure_logging, resolve_level
-from harness.project import load_project_context
+from lab_harness.agent import Agent
+from lab_harness.agent.types import ExecutionMode, ToolContext, ToolResult
+from lab_harness.config import Config, ConfigError, LoggingConfig, ProjectConfig, load_config
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.providers import build_provider, select_provider
+from lab_harness.llm.providers._trace import request_shape
+from lab_harness.llm.providers.anthropic import AnthropicProvider
+from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
+from lab_harness.llm.registry import resolve_model
+from lab_harness.llm.types import Context, ToolCallBlock, UserMessage, text
+from lab_harness.logs import LEVELS, ROOT_LOGGER, configure_logging, resolve_level
+from lab_harness.project import load_project_context
 from tests.http_fakes import Recorder
 
 
@@ -49,12 +49,12 @@ def test_the_default_level_is_warning() -> None:
 
 
 def test_an_explicit_argument_wins_over_everything(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "error")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "error")
     assert resolve_level("debug", LoggingConfig(level="info")) == "debug"
 
 
 def test_the_environment_beats_the_config_file(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "debug")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
     assert resolve_level(None, LoggingConfig(level="error")) == "debug"
 
 
@@ -69,18 +69,18 @@ def test_the_env_var_name_comes_from_config(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_the_default_env_var_is_ignored_once_renamed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "debug")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
     assert resolve_level(None, LoggingConfig(level_env="OTHER_LEVEL")) == "warning"
 
 
 def test_an_empty_env_var_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`HARNESS_LOG_LEVEL=` in a shell profile must not be a startup error."""
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "")
+    """`LAB_HARNESS_LOG_LEVEL=` in a shell profile must not be a startup error."""
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "")
     assert resolve_level(None, LoggingConfig(level="info")) == "info"
 
 
 def test_a_whitespace_env_var_counts_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "   ")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "   ")
     assert resolve_level(None, LoggingConfig(level="info")) == "info"
 
 
@@ -89,7 +89,7 @@ def test_level_names_are_case_and_space_insensitive(
     written: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Env vars get typed in caps; that should not be a failure."""
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", written)
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", written)
     assert resolve_level() == "debug"
 
 
@@ -207,7 +207,7 @@ def test_importing_the_package_installs_no_handler() -> None:
 
 def test_config_loading_is_traced_at_debug(tmp_path: Path) -> None:
     """The answer to "which config file won" has to be obtainable."""
-    project = tmp_path / ".harness"
+    project = tmp_path / ".lab-harness"
     project.mkdir()
     (project / "config.toml").write_text("[agent]\nmax_turns = 7\n")
     stream = sink()
@@ -371,12 +371,12 @@ def test_info_says_where_the_model_id_came_from(monkeypatch: pytest.MonkeyPatch)
     stream = sink()
     configure_logging("info", stream=stream)
     resolve_model("claude-opus-5")
-    monkeypatch.setenv("HARNESS_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("LAB_HARNESS_MODEL", "claude-sonnet-5")
     resolve_model()
-    monkeypatch.delenv("HARNESS_MODEL")
+    monkeypatch.delenv("LAB_HARNESS_MODEL")
     resolve_model()
     sources = [line.rsplit("from ", 1)[1] for line in stream.getvalue().splitlines()]
-    assert sources == ["--model", "HARNESS_MODEL", "agent.model"]
+    assert sources == ["--model", "LAB_HARNESS_MODEL", "agent.model"]
 
 
 # --- what a run traces ----------------------------------------------------

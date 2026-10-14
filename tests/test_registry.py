@@ -7,8 +7,8 @@ for the wrong model, so each link is asserted on its own and then together.
 
 import pytest
 
-from harness.config import AgentConfig
-from harness.llm.registry import MODELS, resolve_model
+from lab_harness.config import AgentConfig
+from lab_harness.llm.registry import MODELS, resolve_model
 
 
 def test_a_catalog_id_resolves_to_its_entry() -> None:
@@ -51,12 +51,12 @@ def test_the_env_var_name_comes_from_config(monkeypatch: pytest.MonkeyPatch) -> 
     """The *name* is a config key, so a deployment renames it without a patch."""
     config = AgentConfig(model_env="DEPLOYMENT_MODEL")
     monkeypatch.setenv("DEPLOYMENT_MODEL", "claude-opus-5")
-    monkeypatch.setenv("HARNESS_MODEL", "claude-haiku-4-5-20251001")
+    monkeypatch.setenv("LAB_HARNESS_MODEL", "claude-haiku-4-5-20251001")
     assert resolve_model(config=config).id == "claude-opus-5"
 
 
 def test_an_empty_env_var_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`HARNESS_MODEL=` is an unset variable, not a request for a nameless model."""
+    """`LAB_HARNESS_MODEL=` is an unset variable, not a request for a nameless model."""
     config = AgentConfig(model="claude-opus-5")
     monkeypatch.setenv(config.model_env, "")
     assert resolve_model(config=config).id == "claude-opus-5"

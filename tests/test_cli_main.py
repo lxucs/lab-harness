@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from harness.agent import Agent
-from harness.cli.approval import ApprovalGate
-from harness.cli.main import (
+from lab_harness.agent import Agent
+from lab_harness.cli.approval import ApprovalGate
+from lab_harness.cli.main import (
     SYSTEM_PROMPT,
     _attach_session,
     _brief,
@@ -25,8 +25,8 @@ from harness.cli.main import (
     main,
     run_interactive,
 )
-from harness.cli.terminal import LogStream
-from harness.config import (
+from lab_harness.cli.terminal import LogStream
+from lab_harness.config import (
     AgentConfig,
     ApprovalConfig,
     Config,
@@ -37,14 +37,14 @@ from harness.config import (
     ToolsConfig,
     snapshot,
 )
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
-from harness.llm.providers.anthropic import AnthropicProvider
-from harness.llm.providers.chat_completions import ChatCompletionsProvider
-from harness.llm.registry import resolve_model
-from harness.logs import ROOT_LOGGER
-from harness.project import ProjectContext
-from harness.session import list_sessions, read_transcript, recorded_requests
-from harness.tools import default_registry
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
+from lab_harness.llm.providers.anthropic import AnthropicProvider
+from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
+from lab_harness.llm.registry import resolve_model
+from lab_harness.logs import ROOT_LOGGER
+from lab_harness.project import ProjectContext
+from lab_harness.session import list_sessions, read_transcript, recorded_requests
+from lab_harness.tools import default_registry
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +69,7 @@ def _args(**kwargs: object) -> argparse.Namespace:
         "yes": False,
         "resume": None,
         "sessions": False,
-        # Tests must never write to the real ~/.harness.
+        # Tests must never write to the real ~/.lab-harness.
         "no_save": True,
     }
     return argparse.Namespace(**{**defaults, **kwargs})
@@ -99,7 +99,7 @@ class _StubTerminal:
 
 
 def test_prompt_is_optional_now_that_interactive_exists() -> None:
-    """Bare `harness` must parse — it starts the terminal."""
+    """Bare `lab-harness` must parse — it starts the terminal."""
     args = build_parser().parse_args([])
     assert args.prompt is None
 
@@ -214,7 +214,7 @@ def test_project_instructions_reach_the_system_prompt(_neutral_cwd: Path) -> Non
 def test_project_instructions_are_read_from_cwd_not_the_process_directory(
     tmp_path: Path,
 ) -> None:
-    """`harness --cwd other/` must pick up *that* project's conventions."""
+    """`lab-harness --cwd other/` must pick up *that* project's conventions."""
     elsewhere = tmp_path / "other"
     elsewhere.mkdir()
     (elsewhere / "HARNESS.md").write_text("Conventions of the other project.")
@@ -267,7 +267,7 @@ async def test_interactive_attaches_an_approval_gate(monkeypatch: pytest.MonkeyP
             super().__init__(captured)
             self.config = config
 
-    monkeypatch.setattr("harness.cli.main.Terminal", _FakeTerminal)
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
 
     code = await run_interactive(_args(), Config())
 
@@ -283,7 +283,7 @@ async def test_yes_disables_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, console: object, config: Config) -> None:
             super().__init__(captured)
 
-    monkeypatch.setattr("harness.cli.main.Terminal", _FakeTerminal)
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
 
     await run_interactive(_args(yes=True), Config())
 
@@ -297,7 +297,7 @@ async def test_the_gate_guards_the_configured_tools(monkeypatch: pytest.MonkeyPa
         def __init__(self, console: object, config: Config) -> None:
             super().__init__(captured)
 
-    monkeypatch.setattr("harness.cli.main.Terminal", _FakeTerminal)
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
     config = Config(tools=ToolsConfig(approval=ApprovalConfig(required=("bash",))))
 
     await run_interactive(_args(), config)
@@ -339,10 +339,10 @@ def test_debug_covers_the_loading_of_config_itself(
     A level set in a config file cannot report that same file being read, so
     the flag and the env var have to take effect first.
     """
-    project = tmp_path / ".harness"
+    project = tmp_path / ".lab-harness"
     project.mkdir()
     (project / "config.toml").write_text("[agent]\nmax_turns = 9\n")
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "debug")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
 
     main(["--sessions", "--cwd", str(tmp_path)])
 
@@ -353,7 +353,7 @@ def test_a_config_file_can_set_the_level(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """What the second configure_logging call buys."""
-    project = tmp_path / ".harness"
+    project = tmp_path / ".lab-harness"
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "debug"\n')
 
@@ -364,7 +364,7 @@ def test_a_config_file_can_set_the_level(
 
 
 def test_the_flag_beats_a_config_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    project = tmp_path / ".harness"
+    project = tmp_path / ".lab-harness"
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "debug"\n')
 
@@ -378,7 +378,7 @@ def test_logs_go_to_stderr_not_stdout(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """stdout carries the answer and the JSONL stream; a log line would corrupt both."""
-    monkeypatch.setenv("HARNESS_LOG_LEVEL", "debug")
+    monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
 
     main(["--sessions", "--cwd", str(tmp_path)])
 
@@ -391,7 +391,7 @@ def test_an_unusable_level_in_a_config_file_is_a_startup_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Same contract as any other bad config value: fail, do not guess."""
-    project = tmp_path / ".harness"
+    project = tmp_path / ".lab-harness"
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "loud"\n')
 
@@ -460,7 +460,7 @@ def test_a_saved_session_rebuilds_every_request_the_cli_sent(
     enough to rebuild each request — project instructions, tools and all —
     across a `--resume`."""
     provider = FakeProvider([text_response("one"), text_response("two")])
-    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
     (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
 
     assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
@@ -479,7 +479,7 @@ def test_resume_warns_when_the_project_instructions_changed(
 ) -> None:
     """Editing AGENTS.md changes the system prompt, which resume should say."""
     provider = FakeProvider([text_response("one")])
-    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
     (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
     assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
     (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
@@ -496,7 +496,7 @@ def test_one_shot_resume_warnings_go_to_stderr(
 ) -> None:
     """`-p` has no terminal to print them in, and must not mix them into the answer."""
     provider = FakeProvider([text_response("one"), text_response("two")])
-    monkeypatch.setattr("harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
     (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
     assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
     (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
@@ -527,8 +527,8 @@ async def _interactive(monkeypatch: pytest.MonkeyPatch, *, stderr: StringIO) -> 
         def __init__(self, console: object, config: Config) -> None:
             super().__init__({})
 
-    monkeypatch.setattr("harness.cli.main.Terminal", _FakeTerminal)
-    monkeypatch.setattr("harness.cli.main.Console", lambda: Console(file=_Tty()))
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
+    monkeypatch.setattr("lab_harness.cli.main.Console", lambda: Console(file=_Tty()))
     monkeypatch.setattr(sys, "stderr", stderr)
     await run_interactive(_args(log_level=None), Config())
 
@@ -543,7 +543,7 @@ async def test_records_go_through_the_console_when_stderr_is_its_terminal(
 
 
 async def test_a_redirected_stderr_keeps_the_records(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`harness 2> debug.log` is how to keep a trace out of the conversation."""
+    """`lab-harness 2> debug.log` is how to keep a trace out of the conversation."""
     await _interactive(monkeypatch, stderr=StringIO())
 
     assert not any(isinstance(s, LogStream) for s in _streams())

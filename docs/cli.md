@@ -3,10 +3,10 @@
 ## Modes
 
 ```bash
-harness                      # interactive
-harness -p "fix the lints"   # one-shot, plain text
-harness -p "..." --json      # one-shot, JSONL event stream
-harness --resume             # continue the most recent session
+lab-harness                      # interactive
+lab-harness -p "fix the lints"   # one-shot, plain text
+lab-harness -p "..." --json      # one-shot, JSONL event stream
+lab-harness --resume             # continue the most recent session
 ```
 
 All of these are **subscribers to the same event stream**. The interactive
@@ -19,10 +19,10 @@ what the runtime does.
 |---|---|
 | `-p`, `--prompt` | Run one prompt and exit. Omit it to start the interactive terminal. |
 | `--json` | Emit the raw event stream as JSONL instead of rendered text. |
-| `--model` | Model id. Beats `$HARNESS_MODEL`, which beats `agent.model` in config. |
+| `--model` | Model id. Beats `$LAB_HARNESS_MODEL`, which beats `agent.model` in config. |
 | `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
-| `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
+| `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
 | `--resume [ID]` | Continue a session. With no id, the most recent one here. |
 | `--sessions` | List saved sessions for this directory and exit. |
@@ -33,7 +33,7 @@ what the runtime does.
 piping this needs to tell a refusal from an outage.
 
 In plain-text mode, assistant text goes to **stdout** while tool-call notices
-and errors go to **stderr**, so `harness -p "…" > answer.txt` captures the
+and errors go to **stderr**, so `lab-harness -p "…" > answer.txt` captures the
 answer alone. Diagnostics follow the same rule — see
 [Diagnostics](#diagnostics) below.
 
@@ -61,8 +61,8 @@ the way it does with any other command.
 
 ⏺ The backoff cap is applied after the jitter. Moving it.
 
-⏺ edit(harness/llm/providers/_http.py)
-  ⎿  Replaced 1 occurrence(s) in harness/llm/providers/_http.py  +2 -1
+⏺ edit(lab_harness/llm/providers/_http.py)
+  ⎿  Replaced 1 occurrence(s) in lab_harness/llm/providers/_http.py  +2 -1
     41       for attempt in range(retries):
     42 -         delay = jitter(base * 2**attempt)
     42 +         delay = min(base * 2**attempt, cap)
@@ -193,7 +193,7 @@ figures are real. Another Chat Completions vendor counts only if it reports
 One event per line, flushed as it happens:
 
 ```bash
-$ harness -p "what files are here?" --json
+$ lab-harness -p "what files are here?" --json
 {"type": "agent_start"}
 {"type": "turn_start"}
 {"message": {"content": [], "model": "...", "stop_reason": "stop", ...}, "type": "message_start"}
@@ -207,18 +207,18 @@ Pipe it into `jq`, or use it as the assertion surface for end-to-end tests —
 checking a structured event stream beats scraping rendered terminal output.
 
 Every line round-trips back into real event objects through
-`harness.llm.serde`, which is what makes a consumer in another language
+`lab_harness.llm.serde`, which is what makes a consumer in another language
 possible. See [events.md](events.md).
 
 ## Sessions
 
-Every run is saved, per project, under `~/.harness/sessions/`:
+Every run is saved, per project, under `~/.lab-harness/sessions/`:
 
 ```bash
-harness --sessions            # what is saved for this directory
-harness --resume              # continue the most recent one
-harness --resume 20261010T11  # a specific one; a unique prefix works
-harness -p "…" --no-save      # run without persisting
+lab-harness --sessions            # what is saved for this directory
+lab-harness --resume              # continue the most recent one
+lab-harness --resume 20261010T11  # a specific one; a unique prefix works
+lab-harness -p "…" --no-save      # run without persisting
 ```
 
 Resume continues writing to the *same* file, so a conversation stays one
@@ -247,11 +247,11 @@ capped at `project.max_bytes`. Full behavior:
 ## Choosing a model
 
 ```bash
-harness --model claude-opus-5          # Anthropic, Messages API
-harness --model gpt-5                  # OpenAI, Responses API
-harness --model deepseek-flash         # DeepSeek, Chat Completions
-harness --model glm-5.3                # GLM, Chat Completions
-harness --model their-model --provider groq
+lab-harness --model claude-opus-5          # Anthropic, Messages API
+lab-harness --model gpt-5                  # OpenAI, Responses API
+lab-harness --model deepseek-flash         # DeepSeek, Chat Completions
+lab-harness --model glm-5.3                # GLM, Chat Completions
+lab-harness --model their-model --provider groq
 ```
 
 The provider is inferred from the model id, so `--provider` is only needed for
@@ -266,9 +266,9 @@ the table.
 ## Diagnostics
 
 ```bash
-harness --log-level debug -p "…"     # trace this run
-HARNESS_LOG_LEVEL=debug harness      # trace this shell
-harness --log-level debug 2> harness.log   # interactive, trace kept apart
+lab-harness --log-level debug -p "…"              # trace this run
+LAB_HARNESS_LOG_LEVEL=debug lab-harness           # trace this shell
+lab-harness --log-level debug 2> lab-harness.log  # interactive, trace kept apart
 ```
 
 Logs go to **stderr**, so they never mix into the answer on stdout or the JSONL
@@ -281,24 +281,24 @@ warnings.
 In the interactive terminal they print in scrollback, dimmed, above the live
 region — straight to the terminal, a record would land inside the region and
 break its next redraw. To keep them out of the conversation, redirect stderr
-and `tail -f harness.log` in another pane.
+and `tail -f lab-harness.log` in another pane.
 
 `info` adds the decisions — which model, from where, which provider and why —
 and one line per run. `debug` adds the trace: every request, response and tool
 call, with the ids that find each one in the transcript and in `--json`:
 
 ```
-DEBUG harness.agent.loop: Turn 1/50: 1 message(s) to claude-sonnet-5
-DEBUG harness.llm.providers.anthropic: Request to claude-sonnet-5: max_tokens=64000 messages=1 system=429 tools=9 thinking={"type":"adaptive","display":"summarized"}
-DEBUG harness.llm.providers.anthropic: Response msg_01ExampleId from claude-sonnet-5
-DEBUG harness.llm.providers.anthropic: Response stop_reason=tool_use
-DEBUG harness.agent.loop: Response stop=tool_use thinking=212 text=31 tool_calls=1 in=1520 cache_read=0 cache_write=0 out=96 time=2.1s first_token=0.8s
-DEBUG harness.agent.loop: Tool call toolu_01ExampleId: bash(command)
-DEBUG harness.cli.approval: Tool call toolu_01ExampleId: approval answered 'yes'
-DEBUG harness.agent.loop: Tool call toolu_01ExampleId: ok in 1515ms exit_code=0 truncated=False
-DEBUG harness.agent.loop: Turn 2/50: 3 message(s) to claude-sonnet-5
+DEBUG lab_harness.agent.loop: Turn 1/50: 1 message(s) to claude-sonnet-5
+DEBUG lab_harness.llm.providers.anthropic: Request to claude-sonnet-5: max_tokens=64000 messages=1 system=429 tools=9 thinking={"type":"adaptive","display":"summarized"}
+DEBUG lab_harness.llm.providers.anthropic: Response msg_01ExampleId from claude-sonnet-5
+DEBUG lab_harness.llm.providers.anthropic: Response stop_reason=tool_use
+DEBUG lab_harness.agent.loop: Response stop=tool_use thinking=212 text=31 tool_calls=1 in=1520 cache_read=0 cache_write=0 out=96 time=2.1s first_token=0.8s
+DEBUG lab_harness.agent.loop: Tool call toolu_01ExampleId: bash(command)
+DEBUG lab_harness.cli.approval: Tool call toolu_01ExampleId: approval answered 'yes'
+DEBUG lab_harness.agent.loop: Tool call toolu_01ExampleId: ok in 1515ms exit_code=0 truncated=False
+DEBUG lab_harness.agent.loop: Turn 2/50: 3 message(s) to claude-sonnet-5
 …
-INFO harness.agent.loop: Run finished: requests=2 tool_calls=1 failed=0 stop=stop in=3170 out=180 time=4.7s
+INFO lab_harness.agent.loop: Run finished: requests=2 tool_calls=1 failed=0 stop=stop in=3170 out=180 time=4.7s
 ```
 
 The stop reason appears twice on purpose: the adapter's is what the vendor
@@ -310,9 +310,9 @@ logged by size, tool calls by their argument *names*.
 appears to do nothing — every file read or skipped, in precedence order:
 
 ```
-DEBUG harness.config: No config file at /home/you/.harness/config.toml
-DEBUG harness.config: Applying config from /repo/.harness/config.toml
-DEBUG harness.config: No config file at /repo/.harness/config.local.toml
+DEBUG lab_harness.config: No config file at /home/you/.lab-harness/config.toml
+DEBUG lab_harness.config: Applying config from /repo/.lab-harness/config.toml
+DEBUG lab_harness.config: No config file at /repo/.lab-harness/config.local.toml
 ```
 
 Levels, what each one adds, and why a level set in a config file cannot report
@@ -347,7 +347,7 @@ unseen. For the same reason an `edit` shows the change it will make, and a
 `write` the content it will write:
 
 ```
-⏺ edit(harness/config.py)
+⏺ edit(lab_harness/config.py)
           max_turns: int = 50
     -     parallel_tools: bool = False
     +     parallel_tools: bool = True

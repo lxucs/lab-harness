@@ -221,16 +221,16 @@ __marimo__/
 
 .DS_Store
 
-# Harness local configuration — may contain API keys, absolute paths, private
+# lab-harness local configuration — may contain API keys, absolute paths, private
 # endpoints. Never commit. See AGENTS.md "Configuration hygiene".
 #
-# Ignore .harness/ contents by default, then re-admit the two committed files.
-# Note: this must list the directory's *contents* (.harness/*), not the
+# Ignore .lab-harness/ contents by default, then re-admit the two committed files.
+# Note: this must list the directory's *contents* (.lab-harness/*), not the
 # directory itself — git does not descend into an excluded directory, so a
-# negation under `.harness/` would never match.
-.harness/*
-!.harness/config.toml
-!.harness/config.toml.example
+# negation under `.lab-harness/` would never match.
+.lab-harness/*
+!.lab-harness/config.toml
+!.lab-harness/config.toml.example
 
 *.local.toml
 config.local.toml

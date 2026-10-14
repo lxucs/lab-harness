@@ -12,10 +12,10 @@ from typing import Any
 import httpx
 import pytest
 
-from harness.config import Config, DdgsConfig, TavilyConfig, WebConfig
-from harness.tools import web
-from harness.tools.base import ToolContext
-from harness.tools.web import (
+from lab_harness.config import Config, DdgsConfig, TavilyConfig, WebConfig
+from lab_harness.tools import web
+from lab_harness.tools.base import ToolContext
+from lab_harness.tools.web import (
     BACKENDS,
     DdgsBackend,
     SearchError,

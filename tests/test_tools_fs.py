@@ -3,10 +3,10 @@
 from dataclasses import replace
 from pathlib import Path
 
-from harness.config import Config, ListConfig, ReadConfig, ToolsConfig
-from harness.llm.types import TextBlock
-from harness.tools.base import ToolContext, ToolResult
-from harness.tools.fs import edit, ls, read, write
+from lab_harness.config import Config, ListConfig, ReadConfig, ToolsConfig
+from lab_harness.llm.types import TextBlock
+from lab_harness.tools.base import ToolContext, ToolResult
+from lab_harness.tools.fs import edit, ls, read, write
 
 
 def _ctx(tmp_path: Path, config: Config | None = None) -> ToolContext:
@@ -206,7 +206,7 @@ async def test_edit_reports_its_change_as_a_unified_diff(tmp_path: Path) -> None
 
 
 async def test_the_diff_context_comes_from_config(tmp_path: Path) -> None:
-    from harness.config import DiffConfig
+    from lab_harness.config import DiffConfig
 
     (tmp_path / "a.py").write_text("a\nb\nc\n")
     config = Config(tools=ToolsConfig(diff=DiffConfig(context_lines=0)))

@@ -9,18 +9,18 @@ from dataclasses import replace
 
 import pytest
 
-from harness.config import AgentConfig, Config, ConfigError, OpenAIConfig, ProvidersConfig
-from harness.llm.providers import (
+from lab_harness.config import AgentConfig, Config, ConfigError, OpenAIConfig, ProvidersConfig
+from lab_harness.llm.providers import (
     PROTOCOLS,
     build_protocol,
     build_provider,
     route,
     select_provider,
 )
-from harness.llm.providers.anthropic import AnthropicProvider
-from harness.llm.providers.chat_completions import ChatCompletionsProvider
-from harness.llm.providers.responses import ResponsesProvider
-from harness.llm.registry import MODELS
+from lab_harness.llm.providers.anthropic import AnthropicProvider
+from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
+from lab_harness.llm.providers.responses import ResponsesProvider
+from lab_harness.llm.registry import MODELS
 
 
 def with_profiles(**profiles: OpenAIConfig) -> Config:

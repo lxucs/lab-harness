@@ -12,7 +12,7 @@ configuration hygiene, testing, and git.
 A lightweight agent harness. Python runtime, terminal frontend, modeled on
 [pi](https://github.com/earendil-works/pi).
 
-- Design spec: [`docs/superpowers/specs/2026-10-09-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-harness-runtime-design.md)
+- Design spec: [`docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - What is built and what is not: [`README.md`](README.md#status)
 
@@ -26,7 +26,7 @@ root, created and managed by `uv sync`. There is no named or global environment
 uv sync                 # create/update .venv from pyproject.toml + uv.lock
 uv sync --extra ddgs    # ...plus the optional keyless search backend
 uv run pytest           # run tests
-uv run harness          # run the CLI
+uv run lab-harness          # run the CLI
 uv add <package>        # add a dependency
 ```
 
@@ -44,9 +44,9 @@ ids — in config, docs, tests, or examples.
 
 | File | Committed | Holds |
 |---|---|---|
-| `.harness/config.toml` | yes | Non-sensitive defaults |
-| `.harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
-| `.harness/config.toml.example` | yes | Template, placeholders only |
+| `.lab-harness/config.toml` | yes | Non-sensitive defaults |
+| `.lab-harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
+| `.lab-harness/config.toml.example` | yes | Template, placeholders only |
 
 Real runtime values belong in the `*.local.toml` layer, which `.gitignore`
 excludes; it merges over the committed file, so it only needs the keys that
@@ -67,13 +67,13 @@ configuration conventions, are in
 
 **The automated suite must never touch the network.** This is enforced:
 `tests/conftest.py` installs autouse fixtures that block outbound socket
-connections, redirect `HARNESS_HOME` to a temp directory, and unset every
+connections, redirect `LAB_HARNESS_HOME` to a temp directory, and unset every
 credential variable — so a test reaching a real API fails loudly rather than
 going flaky, and a developer who exports a key locally gets the same results as
 CI, which exports none.
 
 - Loop and agent tests get their model responses from
-  `harness.llm.fake.FakeProvider`, fed scripted stream events. Never call a
+  `lab_harness.llm.fake.FakeProvider`, fed scripted stream events. Never call a
   real provider.
 - The HTTP provider adapters (`chat_completions.py`, `responses.py`) and the web
   tools are tested through `httpx.MockTransport`, which exercises the real

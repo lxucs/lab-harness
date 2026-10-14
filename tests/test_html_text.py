@@ -4,7 +4,7 @@ What matters is not fidelity but signal per token: the prose and its structure
 survive, the chrome does not, and malformed markup still produces something.
 """
 
-from harness.tools.html_text import html_to_text
+from lab_harness.tools.html_text import html_to_text
 
 
 def text(html: str) -> str:

@@ -1,14 +1,14 @@
 import pytest
 
-from harness.llm.events import StreamDone, StreamError, StreamEvent, StreamStart, TextDelta
-from harness.llm.fake import (
+from lab_harness.llm.events import StreamDone, StreamError, StreamEvent, StreamStart, TextDelta
+from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
     error_response,
     text_response,
     tool_call_response,
 )
-from harness.llm.types import Context, TextBlock, ToolCallBlock
+from lab_harness.llm.types import Context, TextBlock, ToolCallBlock
 
 
 async def _drain(provider: FakeProvider, ctx: Context) -> list[StreamEvent]:

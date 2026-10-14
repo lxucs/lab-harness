@@ -1,7 +1,7 @@
 """Session persistence: the transcript format, the store, and resume.
 
-`HARNESS_HOME` is redirected per test by an autouse fixture in conftest, so
-nothing here can touch a real `~/.harness`.
+`LAB_HARNESS_HOME` is redirected per test by an autouse fixture in conftest, so
+nothing here can touch a real `~/.lab-harness`.
 """
 
 import asyncio
@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from harness.agent import Agent
-from harness.agent.types import declarations_for
-from harness.config import REDACTED, Config, OpenAIConfig, SessionConfig, TavilyConfig, snapshot
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import (
+from lab_harness.agent import Agent
+from lab_harness.agent.types import declarations_for
+from lab_harness.config import REDACTED, Config, OpenAIConfig, SessionConfig, TavilyConfig, snapshot
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import (
     AssistantMessage,
     Message,
     TextBlock,
@@ -26,9 +26,9 @@ from harness.llm.types import (
     UserMessage,
     text,
 )
-from harness.session.recorder import SessionRecorder, start_recorder
-from harness.session.resume import ResumeError, resume, trim_to_resumable
-from harness.session.store import (
+from lab_harness.session.recorder import SessionRecorder, start_recorder
+from lab_harness.session.resume import ResumeError, resume, trim_to_resumable
+from lab_harness.session.store import (
     find_session,
     latest_session,
     list_sessions,
@@ -36,15 +36,15 @@ from harness.session.store import (
     project_directory,
     project_slug,
 )
-from harness.session.transcript import (
+from lab_harness.session.transcript import (
     SessionHeader,
     TranscriptError,
     TranscriptWriter,
     read_transcript,
     recorded_requests,
 )
-from harness.tools import default_registry
-from harness.tools.base import ExecutionMode, ToolContext, ToolResult
+from lab_harness.tools import default_registry
+from lab_harness.tools.base import ExecutionMode, ToolContext, ToolResult
 
 CONFIG = SessionConfig()
 #: What a recorder snapshots. The session part of it is CONFIG.
@@ -105,10 +105,10 @@ def test_slug_is_stable_across_calls(tmp_path: Path) -> None:
 
 
 def test_slug_keeps_the_directory_name_readable(tmp_path: Path) -> None:
-    project = tmp_path / "harness"
+    project = tmp_path / "lab-harness"
     project.mkdir()
 
-    assert project_slug(project).startswith("harness-")
+    assert project_slug(project).startswith("lab-harness-")
 
 
 def test_home_honors_the_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

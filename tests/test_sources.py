@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-PACKAGE = Path(__file__).resolve().parent.parent / "harness"
+PACKAGE = Path(__file__).resolve().parent.parent / "lab_harness"
 
 
 def sources() -> list[Path]:

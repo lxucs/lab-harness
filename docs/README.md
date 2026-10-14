@@ -1,4 +1,4 @@
-# Harness Documentation
+# lab-harness Documentation
 
 A lightweight agent harness. Python runtime, terminal frontend, modeled on
 [pi](https://github.com/earendil-works/pi).
@@ -20,7 +20,7 @@ everything else assumes.
 | [contributing.md](contributing.md) | Code conventions, architectural invariants, config rules |
 
 Design rationale and the decisions behind v1 scope live in
-[superpowers/specs/2026-10-09-harness-runtime-design.md](superpowers/specs/2026-10-09-harness-runtime-design.md).
+[superpowers/specs/2026-10-09-lab-harness-runtime-design.md](superpowers/specs/2026-10-09-lab-harness-runtime-design.md).
 
 Working agreements for AI coding agents are in [`../AGENTS.md`](../AGENTS.md).
 

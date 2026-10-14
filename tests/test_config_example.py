@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
-from harness.config import Config, _apply
+from lab_harness.config import Config, _apply
 
-EXAMPLE = Path(__file__).resolve().parent.parent / ".harness" / "config.toml.example"
+EXAMPLE = Path(__file__).resolve().parent.parent / ".lab-harness" / "config.toml.example"
 
 #: Keys deliberately absent from the example, and why. Anything else missing is
 #: an undocumented setting.

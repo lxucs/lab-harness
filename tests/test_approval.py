@@ -6,13 +6,13 @@ import logging
 import pytest
 from pydantic import BaseModel
 
-from harness.agent import Agent
-from harness.agent.types import BeforeToolCallContext
-from harness.cli.approval import DENIED_NOTICE, ApprovalGate
-from harness.config import ApprovalConfig, Config
-from harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from harness.llm.types import TextBlock, ToolCallBlock, UserMessage, text
-from harness.tools.base import ToolContext, ToolResult, ok, tool
+from lab_harness.agent import Agent
+from lab_harness.agent.types import BeforeToolCallContext
+from lab_harness.cli.approval import DENIED_NOTICE, ApprovalGate
+from lab_harness.config import ApprovalConfig, Config
+from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
+from lab_harness.llm.types import TextBlock, ToolCallBlock, UserMessage, text
+from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
 
 
 class _Params(BaseModel):
@@ -246,7 +246,7 @@ async def test_the_default_required_set_covers_the_mutating_tools() -> None:
 async def test_each_answer_is_logged_against_its_call(caplog: pytest.LogCaptureFixture) -> None:
     gate, _ = _gate(["always"])
 
-    with caplog.at_level(logging.DEBUG, logger="harness.cli.approval"):
+    with caplog.at_level(logging.DEBUG, logger="lab_harness.cli.approval"):
         await gate(_ctx("dangerous"))
 
     assert "Tool call c1: approval answered 'always'" in caplog.text

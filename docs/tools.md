@@ -21,7 +21,7 @@ A `ToolResult` carries two things. `content` is what the model reads.
 paths in it relative to `cwd`, like output: it reaches `--json` logs too. See
 [events.md](events.md#tool_execution_end-carries-the-results-details).
 
-The contract lives in `harness/tools/base.py` rather than in `agent/`, because
+The contract lives in `lab_harness/tools/base.py` rather than in `agent/`, because
 dependencies point downward: `agent/` consumes tools, so `tools/` must never
 import from it. `agent/types.py` re-exports the names for callers.
 
@@ -33,7 +33,7 @@ so the schema and the implementation cannot drift apart.
 
 ```python
 from pydantic import BaseModel, Field
-from harness.tools.base import ToolContext, ToolResult, fail, ok, tool
+from lab_harness.tools.base import ToolContext, ToolResult, fail, ok, tool
 
 
 class ReadParams(BaseModel):
@@ -80,7 +80,7 @@ whole batch.
 ## The registry
 
 ```python
-from harness.tools import ToolRegistry, default_registry
+from lab_harness.tools import ToolRegistry, default_registry
 
 registry = default_registry()  # every built-in
 tools = registry.select(["read", "ls"])  # narrow, in order
@@ -133,9 +133,9 @@ is why one-shot and interactive modes differ without the loop branching.
 
 | Mode | Gate |
 |---|---|
-| `harness -p "…"` | **None.** Nobody is at the keyboard to answer. |
-| `harness` (interactive) | Prompts for `tools.approval.required` |
-| `harness --yes` | Disabled explicitly |
+| `lab-harness -p "…"` | **None.** Nobody is at the keyboard to answer. |
+| `lab-harness` (interactive) | Prompts for `tools.approval.required` |
+| `lab-harness --yes` | Disabled explicitly |
 
 **It fails closed.** Only `y`/`yes`, `a`/`always` proceed. A bare Enter, an
 unrecognized answer, Ctrl-C, and Ctrl-D all deny — pressing Enter is a reflex,
@@ -181,7 +181,7 @@ Every threshold is a config key, never a literal:
 | `tools.web.timeout_seconds` | 30.0 | Wall-clock limit per search or fetch |
 | `tools.web.max_bytes` | 2000000 | Largest response `web_fetch` downloads |
 | `tools.web.max_content_chars` | 50000 | Extracted text handed to the model |
-| `tools.web.user_agent` | `harness/0.1 …` | Sent on every outbound request |
+| `tools.web.user_agent` | `lab-harness/0.1 …` | Sent on every outbound request |
 
 `read`'s truncation note names the offset to resume from, so a follow-up call is
 mechanical rather than guesswork.

@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from harness.agent.loop import run_agent_loop
-from harness.agent.types import (
+from lab_harness.agent.loop import run_agent_loop
+from lab_harness.agent.types import (
     AfterToolCallContext,
     AfterToolCallResult,
     AgentContext,
@@ -30,8 +30,8 @@ from harness.agent.types import (
     ToolExecutionUpdate,
     ToolResult,
 )
-from harness.config import Config
-from harness.llm.fake import (
+from lab_harness.config import Config
+from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
     error_response,
@@ -39,7 +39,7 @@ from harness.llm.fake import (
     tool_call_response,
     truncated_tool_call_response,
 )
-from harness.llm.types import (
+from lab_harness.llm.types import (
     AssistantMessage,
     TextBlock,
     ToolCallBlock,
@@ -357,7 +357,7 @@ async def test_prepare_request_can_replace_messages() -> None:
     replacement = (UserMessage(content=text("replaced")),)
 
     async def replace(ctx: object) -> object:
-        from harness.agent.types import RequestUpdate
+        from lab_harness.agent.types import RequestUpdate
 
         return RequestUpdate(messages=replacement)
 
@@ -375,7 +375,7 @@ async def test_max_turns_stops_a_runaway_loop() -> None:
 
     from dataclasses import replace as dc_replace
 
-    from harness.config import AgentConfig
+    from lab_harness.config import AgentConfig
 
     cfg = LoopConfig(
         model=FAKE_MODEL,
@@ -397,7 +397,7 @@ async def test_exhausting_max_turns_is_reported(caplog: pytest.LogCaptureFixture
     """
     from dataclasses import replace as dc_replace
 
-    from harness.config import AgentConfig
+    from lab_harness.config import AgentConfig
 
     tool = RecordingTool()
     call = ToolCallBlock(id="c1", name="echo", arguments={})
@@ -409,7 +409,7 @@ async def test_exhausting_max_turns_is_reported(caplog: pytest.LogCaptureFixture
         config=dc_replace(Config(), agent=AgentConfig(max_turns=2)),
     )
 
-    with caplog.at_level(logging.WARNING, logger="harness.agent.loop"):
+    with caplog.at_level(logging.WARNING, logger="lab_harness.agent.loop"):
         await run_agent_loop(_ctx(tool), cfg, emit)
 
     assert any("max_turns=2" in record.message for record in caplog.records)
@@ -422,7 +422,7 @@ async def test_a_run_that_finishes_normally_does_not_report_the_limit(
     provider = FakeProvider([text_response("done")])
     _, emit = _collector()
 
-    with caplog.at_level(logging.WARNING, logger="harness.agent.loop"):
+    with caplog.at_level(logging.WARNING, logger="lab_harness.agent.loop"):
         await run_agent_loop(_ctx(), _cfg(provider), emit)
 
     assert not [r for r in caplog.records if "max_turns" in r.message]
@@ -552,7 +552,7 @@ async def test_raising_subscriber_does_not_break_the_run(
         seen.append(event.type)
         raise RuntimeError(f"subscriber exploded on {event.type}")
 
-    with caplog.at_level(logging.ERROR, logger="harness.agent.loop"):
+    with caplog.at_level(logging.ERROR, logger="lab_harness.agent.loop"):
         messages = await run_agent_loop(_ctx(tool), _cfg(provider), hostile)
 
     assert tool.calls == [{}]
@@ -613,7 +613,7 @@ async def test_abort_during_parallel_batch_is_reported_on_the_last_turn() -> Non
     the batch would go unreported."""
     from dataclasses import replace as dc_replace
 
-    from harness.config import AgentConfig
+    from lab_harness.config import AgentConfig
 
     signal = asyncio.Event()
 
@@ -740,7 +740,7 @@ async def test_failing_update_emit_is_observable_not_an_orphaned_task(
     # Attributed to the loop's own logger. A fire-and-forget task instead
     # surfaces this as asyncio's "Task exception was never retrieved" dump,
     # which lands on the `asyncio` logger at an unpredictable time.
-    ours = [r for r in caplog.records if r.name == "harness.agent.loop" and r.exc_info]
+    ours = [r for r in caplog.records if r.name == "lab_harness.agent.loop" and r.exc_info]
     assert ours, f"expected a loop-logged failure, got {[r.name for r in caplog.records]}"
     assert not any(r.name == "asyncio" for r in caplog.records)
     # The run survived.
@@ -950,7 +950,7 @@ async def test_auto_continue_is_bounded_by_max_turns() -> None:
     """A hook that always continues must not loop forever."""
     from dataclasses import replace as dc_replace
 
-    from harness.config import AgentConfig
+    from lab_harness.config import AgentConfig
 
     provider = FakeProvider([text_response(f"turn {i}") for i in range(20)])
     _, emit = _collector()

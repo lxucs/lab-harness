@@ -4,7 +4,7 @@
 
 **Nothing tunable is hardcoded.** Models, timeouts, retry counts, truncation
 limits, directory locations, default tool sets — all of it resolves from config.
-The schema in `harness/config.py` is the single list of every knob the system
+The schema in `lab_harness/config.py` is the single list of every knob the system
 has, and every default lives there.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
@@ -16,10 +16,10 @@ go in `config.local.toml` (gitignored) or environment variables — never in
 
 Lowest to highest precedence:
 
-1. Schema defaults in `harness/config.py`
-2. `~/.harness/config.toml` — user config
-3. `./.harness/config.toml` — project config, committed
-4. `./.harness/config.local.toml` — project-local, **gitignored**
+1. Schema defaults in `lab_harness/config.py`
+2. `~/.lab-harness/config.toml` — user config
+3. `./.lab-harness/config.toml` — project config, committed
+4. `./.lab-harness/config.local.toml` — project-local, **gitignored**
 5. Environment variables
 6. CLI flags
 
@@ -41,8 +41,8 @@ There is deliberately no generic environment-variable overlay. Each variable is
 read where it is used, and its *name* is itself a config key, so a deployment
 using different names changes config rather than code.
 
-Files are located relative to `--cwd`, so `harness --cwd ../other-project`
-picks up that project's `.harness/`, not this one's.
+Files are located relative to `--cwd`, so `lab-harness --cwd ../other-project`
+picks up that project's `.lab-harness/`, not this one's.
 
 ## Files
 
@@ -54,15 +54,15 @@ picks up that project's `.harness/`, not this one's.
 
 ### `config.toml` — safe to commit
 
-Keys mirror the dataclass fields in `harness/config.py`. Every value shown is
+Keys mirror the dataclass fields in `lab_harness/config.py`. Every value shown is
 the current default, so a key you do not set behaves exactly as written.
 
 ```toml
 [agent]
 max_turns = 50                  # ceiling on provider requests in one run
 parallel_tools = true           # run independent tool calls concurrently
-model = "claude-sonnet-5"       # used when --model and $HARNESS_MODEL are absent
-model_env = "HARNESS_MODEL"     # NAME of the variable that overrides `model`
+model = "claude-sonnet-5"       # used when --model and $LAB_HARNESS_MODEL are absent
+model_env = "LAB_HARNESS_MODEL"     # NAME of the variable that overrides `model`
 provider = "anthropic"          # for a model id nothing else routes
 
 [project]
@@ -124,7 +124,7 @@ accent = "#d77757"
 prompt = "bold #d77757"
 
 [session]
-home = "~/.harness"     # root for state; $HARNESS_HOME overrides
+home = "~/.lab-harness" # root for state; $LAB_HARNESS_HOME overrides
 enabled = true          # write transcripts at all
 version = 2             # transcript schema version
 
@@ -159,12 +159,12 @@ cache_write = 2.5
 
 [logging]
 level = "warning"             # debug | info | warning | error
-level_env = "HARNESS_LOG_LEVEL"  # NAME of the variable that overrides `level`
+level_env = "LAB_HARNESS_LOG_LEVEL"  # NAME of the variable that overrides `level`
 format = "%(levelname)s %(name)s: %(message)s"
 ```
 
 The full list, with every default, is in
-[`.harness/config.toml.example`](../.harness/config.toml.example).
+[`.lab-harness/config.toml.example`](../.lab-harness/config.toml.example).
 
 ### `config.local.toml` — never committed
 
@@ -218,16 +218,16 @@ The backend is chosen by `tools.web.backend` in config, not by an environment
 variable. Only Tavily needs a key; the `ddgs` backend needs none, and
 `web_fetch` never does. See [tools.md](tools.md#web-tools).
 
-### Harness
+### lab-harness
 
 | Variable | Purpose |
 |---|---|
-| `HARNESS_MODEL` | Override `agent.model`; `--model` still wins |
-| `HARNESS_HOME` | Override `session.home` |
-| `HARNESS_LOG_LEVEL` | Override `logging.level`; `--log-level` still wins |
+| `LAB_HARNESS_MODEL` | Override `agent.model`; `--model` still wins |
+| `LAB_HARNESS_HOME` | Override `session.home` |
+| `LAB_HARNESS_LOG_LEVEL` | Override `logging.level`; `--log-level` still wins |
 
 Model resolution is the general precedence rule in miniature: `--model`, then
-`$HARNESS_MODEL`, then `agent.model` from config, which defaults to
+`$LAB_HARNESS_MODEL`, then `agent.model` from config, which defaults to
 `claude-sonnet-5`. An id the catalog has never heard of is **not** an error —
 it is given conservative limits rather than refused, because being unable to
 use a model released last week is worse than a slightly wrong `context_window`.
@@ -274,8 +274,8 @@ replaying it there would buy nothing. The shipped `glm` profile turns this on;
 it sends GLM's own request shape, so leave it off for any other vendor.
 
 ```bash
-harness --model deepseek-flash           # routed by the models list, no flag
-harness --model their-new-model --provider groq
+lab-harness --model deepseek-flash           # routed by the models list, no flag
+lab-harness --model their-new-model --provider groq
 ```
 
 **Adding does not replace.** A profile named in a config file merges into the
@@ -387,8 +387,8 @@ Diagnostics about the harness itself — not about the conversation, which is
 what the transcript and `--json` are for.
 
 ```bash
-harness --log-level debug -p "…"     # this run
-HARNESS_LOG_LEVEL=debug harness      # this shell
+lab-harness --log-level debug -p "…"     # this run
+LAB_HARNESS_LOG_LEVEL=debug lab-harness  # this shell
 ```
 
 ```toml
@@ -398,13 +398,13 @@ level = "warning"
 
 **Everything goes to stderr.** stdout carries the answer in plain-text mode and
 the event stream under `--json`, so a log line on stdout would corrupt a
-pipeline rather than inform one. `harness -p "…" > answer.txt` still captures
+pipeline rather than inform one. `lab-harness -p "…" > answer.txt` still captures
 the answer alone with logging turned all the way up.
 
 The one exception is the interactive terminal when stderr *is* that terminal:
 records are printed through the console, dimmed, above the live region. Written
 to the terminal directly they would land inside the region and break its next
-redraw. Redirect stderr — `harness --log-level debug 2> harness.log` — and they
+redraw. Redirect stderr — `lab-harness --log-level debug 2> lab-harness.log` — and they
 go to the file as usual, out of the conversation.
 
 | Level | What you get |
@@ -432,7 +432,7 @@ opaque API error later.
 **A level set in a config file cannot report that file being read.** Logging is
 configured twice — once from the flag, the environment and the schema defaults
 before `load_config` runs, and again from the loaded config. So to debug config
-resolution itself, use `--log-level` or `HARNESS_LOG_LEVEL`; `[logging] level`
+resolution itself, use `--log-level` or `LAB_HARNESS_LOG_LEVEL`; `[logging] level`
 takes effect everywhere after loading.
 
 An unusable level name is a startup error, like any other bad config value:
@@ -441,8 +441,8 @@ An unusable level name is a startup error, like any other bad config value:
 error: Unknown log level 'loud'. Available: debug, info, warning, error.
 ```
 
-Only `harness.*` loggers are configured. `--log-level debug` means this
-program, not httpx and the Anthropic SDK as well. Importing `harness` as a
+Only `lab_harness.*` loggers are configured. `--log-level debug` means this
+program, not httpx and the Anthropic SDK as well. Importing `lab_harness` as a
 library installs no handler at all — only the CLI calls `configure_logging`.
 
 **Credential values are never logged.** The provider logs the *name* of the
@@ -497,7 +497,7 @@ rather than "fall through to `AGENTS.md`". That is one rule with no special
 case, and it doubles as the way to opt a project out of an `AGENTS.md` written
 for some other tool.
 
-The file is read from `--cwd`, like config, so `harness --cwd ../other-project`
+The file is read from `--cwd`, like config, so `lab-harness --cwd ../other-project`
 picks up that project's conventions.
 
 **It is capped.** These instructions ride in the system prompt on *every*

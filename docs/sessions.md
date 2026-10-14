@@ -5,7 +5,7 @@
 Append-only JSONL, one file per session:
 
 ```
-~/.harness/sessions/<project-slug>/<session-id>.jsonl
+~/.lab-harness/sessions/<project-slug>/<session-id>.jsonl
 ```
 
 Line 1 is the header; every subsequent line is one entry.
@@ -30,7 +30,7 @@ story — the cheap, boring format survives what a clever one would not.
 ### The project slug
 
 ```
-harness-3f9a2c01
+lab-harness-3f9a2c01
 └─┬───┘ └─┬─────┘
   │       └ first 8 hex of sha256(absolute path)
   └ directory name, sanitized
@@ -73,7 +73,7 @@ A transcript holds everything needed to rebuild every request the session made,
 exactly as the provider received it, alongside the response it got:
 
 ```python
-from harness.session import read_transcript, recorded_requests
+from lab_harness.session import read_transcript, recorded_requests
 
 for step in recorded_requests(read_transcript(path)):
     step.request  # Context: system_prompt, messages, tools — what was sent
@@ -158,10 +158,10 @@ nothing recorded what they were sent with. Their timestamps read as empty.
 ## Resume
 
 ```bash
-harness --resume              # most recent session for this cwd
-harness --resume <session-id> # a specific session; a unique prefix works
-harness --sessions            # list what is saved for this directory
-harness --no-save             # run without persisting anything
+lab-harness --resume              # most recent session for this cwd
+lab-harness --resume <session-id> # a specific session; a unique prefix works
+lab-harness --sessions            # list what is saved for this directory
+lab-harness --no-save             # run without persisting anything
 ```
 
 Resume reads the file, rebuilds the message list, and continues writing to the
@@ -209,11 +209,11 @@ the event stream would make the session re-record its own past.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `session.home` | `~/.harness` | Root for all harness state |
-| `session.home_env` | `HARNESS_HOME` | Env var that overrides it |
+| `session.home` | `~/.lab-harness` | Root for all harness state |
+| `session.home_env` | `LAB_HARNESS_HOME` | Env var that overrides it |
 | `session.directory_name` | `sessions` | Subdirectory holding projects |
 | `session.enabled` | `true` | Write transcripts at all |
 | `session.version` | `2` | Schema version written to each header |
 
-Tests redirect `HARNESS_HOME` through an autouse fixture, so the suite can never
-write to a real `~/.harness`.
+Tests redirect `LAB_HARNESS_HOME` through an autouse fixture, so the suite can never
+write to a real `~/.lab-harness`.

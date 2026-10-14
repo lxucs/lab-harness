@@ -11,10 +11,10 @@ import signal
 import time
 from pathlib import Path
 
-from harness.config import BashConfig, Config, ToolsConfig
-from harness.llm.types import TextBlock
-from harness.tools.base import ToolContext, ToolResult
-from harness.tools.shell import _Collector, bash
+from lab_harness.config import BashConfig, Config, ToolsConfig
+from lab_harness.llm.types import TextBlock
+from lab_harness.tools.base import ToolContext, ToolResult
+from lab_harness.tools.shell import _Collector, bash
 
 
 def _ctx(tmp_path: Path, config: Config | None = None, **kwargs: object) -> ToolContext:

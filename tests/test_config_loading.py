@@ -14,7 +14,7 @@ from typing import get_args, get_origin, get_type_hints
 
 import pytest
 
-from harness.config import (
+from lab_harness.config import (
     CONFIG_FILE,
     LOCAL_CONFIG_FILE,
     PROJECT_DIRECTORY,
@@ -24,7 +24,7 @@ from harness.config import (
     ConfigError,
     OpenAIConfig,
     config_paths,
-    harness_home,
+    lab_harness_home,
     load_config,
     snapshot,
 )
@@ -103,7 +103,7 @@ def test_an_integer_is_accepted_for_a_float(tmp_path: Path) -> None:
 
 
 def test_the_project_file_overrides_the_home_file(tmp_path: Path) -> None:
-    write(harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\n")
+    write(lab_harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\n")
     project(tmp_path, "[agent]\nmax_turns = 2\n")
     assert load_config(tmp_path).agent.max_turns == 2
 
@@ -117,7 +117,7 @@ def test_the_local_file_overrides_the_project_file(tmp_path: Path) -> None:
 
 def test_layers_merge_rather_than_replace(tmp_path: Path) -> None:
     """A later file overrides the keys it names and leaves the rest alone."""
-    write(harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\nparallel_tools = false\n")
+    write(lab_harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\nparallel_tools = false\n")
     project(tmp_path, "[agent]\nmax_turns = 2\n")
     config = load_config(tmp_path)
     assert config.agent.max_turns == 2
@@ -126,7 +126,7 @@ def test_layers_merge_rather_than_replace(tmp_path: Path) -> None:
 
 def test_config_paths_are_in_precedence_order(tmp_path: Path) -> None:
     paths = config_paths(tmp_path)
-    assert paths[0] == harness_home() / CONFIG_FILE
+    assert paths[0] == lab_harness_home() / CONFIG_FILE
     assert paths[1] == tmp_path / PROJECT_DIRECTORY / CONFIG_FILE
     assert paths[2] == tmp_path / PROJECT_DIRECTORY / LOCAL_CONFIG_FILE
 
@@ -206,14 +206,14 @@ def test_the_error_names_the_file_it_came_from(tmp_path: Path) -> None:
 # --- home resolution ------------------------------------------------------
 
 
-def test_harness_home_follows_the_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HARNESS_HOME", "/tmp/elsewhere")
-    assert harness_home() == Path("/tmp/elsewhere")
+def test_lab_harness_home_follows_the_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LAB_HARNESS_HOME", "/tmp/elsewhere")
+    assert lab_harness_home() == Path("/tmp/elsewhere")
 
 
-def test_harness_home_expands_a_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("HARNESS_HOME", raising=False)
-    assert "~" not in str(harness_home())
+def test_lab_harness_home_expands_a_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LAB_HARNESS_HOME", raising=False)
+    assert "~" not in str(lab_harness_home())
 
 
 # --- named provider profiles ----------------------------------------------
