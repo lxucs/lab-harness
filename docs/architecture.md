@@ -23,10 +23,11 @@ and `config.py`, so depending on one cannot create a cycle and does not make a
 layer less replaceable. Treat "no upward dependencies" as being about the
 boxes, not about these three.
 
-`project.py` loads a project's `HARNESS.md` or `AGENTS.md`. It lives beside
-`config.py` rather than inside `agent/` because it is the same kind of thing —
-read a directory, return data — and because `agent/` is not supposed to know
-the filesystem layout.
+`project.py` loads a project's `HARNESS.md` or `AGENTS.md` and joins it to the
+configured prompts as the system prompt. It lives beside `config.py` rather
+than inside `agent/` because it is the same kind of thing — read a directory,
+return data — and because `agent/` is not supposed to know the filesystem
+layout. The CLI and a Python caller build the prompt the same way.
 
 `logs.py` decides where diagnostics go and how loud they are. Every layer takes
 a logger the ordinary way (`logging.getLogger(__name__)`) and emits records
@@ -117,11 +118,18 @@ Deliberate deviations:
 **Prompt and tools are recorded, not replayed.** pi stores the system prompt
 and tool declarations as system messages inside the transcript, replaying them
 to derive current state. We pass `Context(system_prompt, messages, tools)` to
-the provider directly, and the session writes them down once per invocation as
-a `context` entry — a record, never read back into the agent. That keeps
-enough to rebuild every request (see [sessions.md](sessions.md#trajectories))
-while the core stays several hundred lines smaller. A tool set that changes
-*mid*-invocation would go unrecorded, but ours is fixed at startup.
+the provider directly, and the session writes them down as a `context` entry —
+a record, never read back into the agent. Each run's `agent_start` event
+carries all three, so the recorder writes a new entry whenever one changes
+between runs, and a `prepare_request` hook's rewrite of a single request is an
+event and an entry of its own. That keeps enough to rebuild every request (see
+[sessions.md](sessions.md#trajectories)) while the core stays several hundred
+lines smaller.
+
+**Prompts are data.** The system prompt pi assembles in code is
+`lab_harness/prompts.toml` here, the default of the `[prompts]` config section,
+and it names no tools: the declarations alone tell the model what it can call,
+so the prompt stays true for any tool set.
 
 **One run at a time, no queue.** pi has separate steering and follow-up queues,
 each with `all` and `one-at-a-time` drain modes, so a message can be injected
@@ -145,10 +153,10 @@ before every provider request. Compaction reads the context, decides whether to
 summarize, and returns a replacement; nothing in the loop changes when it
 arrives. The runtime already records `Usage` per assistant message, defines
 `Model.context_window`, and reserves a `compaction` entry type in the session
-schema, so the groundwork is laid. The entry is not optional when it lands:
-`prepare_request` rewrites what is sent without touching the transcript, so
-without a record of the summary, rebuilt
-[trajectories](sessions.md#trajectories) would show the uncompacted history.
+schema, so the groundwork is laid. Rebuilt
+[trajectories](sessions.md#trajectories) would already be right, since every
+rewrite `prepare_request` makes is recorded — but as the whole view, on every
+request. The `compaction` entry is for writing a summary once.
 
 See §7 of the design spec for the full plan.
 

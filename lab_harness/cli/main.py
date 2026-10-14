@@ -10,6 +10,8 @@ import asyncio
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
+from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
@@ -18,11 +20,11 @@ from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentEvent, MessageEnd, declarations_for
 from lab_harness.cli.json_sink import json_sink
 from lab_harness.cli.terminal import LogStream, Terminal, build_approval_gate
-from lab_harness.config import Config, ConfigError, load_config
+from lab_harness.config import Config, ConfigError, PromptsConfig, load_config
 from lab_harness.llm.providers import route
 from lab_harness.llm.types import AssistantMessage, TextBlock
 from lab_harness.logs import LEVELS, configure_logging
-from lab_harness.project import ProjectContext, load_project_context
+from lab_harness.project import build_system_prompt, load_project_context
 from lab_harness.session import (
     ResumeError,
     SessionRecorder,
@@ -32,35 +34,9 @@ from lab_harness.session import (
     resume,
     start_recorder,
 )
-from lab_harness.tools import default_registry
+from lab_harness.tools import AgentTool, default_registry
 
 _log = logging.getLogger(__name__)
-
-SYSTEM_PROMPT = (
-    "You are a helpful coding assistant running in a terminal. You have tools "
-    "for reading, writing, editing, and listing files, running shell commands, "
-    "searching by content or filename, and searching and fetching the web. "
-    "Prefer reading a file before editing it, and prefer grep/glob over "
-    "shelling out to find. web_search returns snippets, not pages — follow it "
-    "with web_fetch when you need the actual content. Keep responses concise."
-)
-
-
-def build_system_prompt(context: ProjectContext | None) -> str:
-    """The base prompt, plus the project's own instructions when it has any.
-
-    The file name is kept in the heading so the model can cite and edit the
-    source of a convention rather than treating it as an unattributable rule.
-    """
-    if context is None:
-        return SYSTEM_PROMPT
-    return (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"## Project instructions ({context.path.name})\n\n"
-        f"These come from the working directory and describe this project's "
-        f"own conventions. Follow them.\n\n"
-        f"{context.text}"
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,6 +57,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--cwd", default=".", help="Working directory for tools, config, and project instructions."
+    )
+    parser.add_argument(
+        "--tools",
+        type=parse_tool_names,
+        metavar="NAMES",
+        help=(
+            "Comma-separated tools to enable, e.g. read,ls,grep. Overrides "
+            "tools.enabled; an empty value enables none."
+        ),
+    )
+    prompt = parser.add_mutually_exclusive_group()
+    prompt.add_argument(
+        "--system-prompt",
+        metavar="TEXT",
+        help="Replaces prompts.system for this run. Project instructions are still appended.",
+    )
+    prompt.add_argument(
+        "--system-prompt-file",
+        metavar="PATH",
+        help="Like --system-prompt, with the text read from a file.",
     )
     parser.add_argument(
         "--log-level",
@@ -110,16 +106,59 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_tool_names(value: str) -> tuple[str, ...]:
+    """`--tools read, ls` as names. Blank entries are dropped, so "" is none."""
+    return tuple(name for part in value.split(",") if (name := part.strip()))
+
+
+def _select_tools(args: argparse.Namespace, config: Config) -> tuple[AgentTool, ...]:
+    """The tools this run gets: `--tools` if given, else `tools.enabled`.
+
+    The same rule in both modes. Leaving a tool out is the only thing that
+    stops it running in one-shot mode, which has no approval gate.
+    """
+    if args.tools is not None:
+        names, source = args.tools, "--tools"
+    else:
+        names, source = config.tools.enabled, "tools.enabled"
+    try:
+        tools = default_registry().select(names)
+    except ValueError as exc:
+        raise ConfigError(f"{source}: {exc}") from exc
+    _log.info("Tools from %s: %s", source, ", ".join(t.name for t in tools) or "none")
+    return tools
+
+
+def _prompts(args: argparse.Namespace, config: Config) -> PromptsConfig:
+    """`prompts`, with `system` replaced if a flag says so."""
+    if args.system_prompt is not None:
+        system, source = args.system_prompt, "--system-prompt"
+    elif args.system_prompt_file is not None:
+        source = "--system-prompt-file"
+        try:
+            # Stripped, as project instructions are: an editor's final newline
+            # is not part of the prompt.
+            system = Path(args.system_prompt_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(
+                f"{source}: cannot read {args.system_prompt_file} ({exc.strerror})"
+            ) from exc
+        except UnicodeDecodeError as exc:
+            raise ConfigError(f"{source}: {args.system_prompt_file} is not UTF-8 text") from exc
+    else:
+        system, source = config.prompts.system, "prompts.system"
+    _log.info("System prompt from %s (%d characters)", source, len(system))
+    return replace(config.prompts, system=system)
+
+
 def _build_agent(
     args: argparse.Namespace,
     config: Config,
     *,
-    tool_names: Sequence[str] | None = None,
     before_tool_call: Callable[..., Awaitable[object]] | None = None,
     console: Console | None = None,
 ) -> Agent:
-    registry = default_registry()
-    tools = registry.select(list(tool_names)) if tool_names is not None else tuple(registry)
+    tools = _select_tools(args, config)
     context = load_project_context(args.cwd, config.project)
     if context is not None and console is not None:
         # Project instructions change how the agent behaves; a silent feature
@@ -129,8 +168,7 @@ def _build_agent(
             note += f" (truncated to {config.project.max_bytes} bytes)"
         console.print(Text(note, style=config.terminal.theme.muted))
     model, provider = route(args.model, config, args.provider)
-    system_prompt = build_system_prompt(context)
-    _log.debug("Tools: %s", ", ".join(t.name for t in tools))
+    system_prompt = build_system_prompt(_prompts(args, config), context)
     _log.debug("System prompt: %d characters", len(system_prompt))
     return Agent(
         model=model,
@@ -222,13 +260,7 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
     if args.yes:
         _log.info("Tool approval off: --yes")
     gate = None if args.yes else build_approval_gate(terminal, config)
-    agent = _build_agent(
-        args,
-        config,
-        tool_names=config.terminal.enabled_tools,
-        before_tool_call=gate,
-        console=console,
-    )
+    agent = _build_agent(args, config, before_tool_call=gate, console=console)
     terminal.attach(agent)
     recorder = _attach_session(agent, args, config, console)
     try:

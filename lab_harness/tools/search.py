@@ -57,7 +57,8 @@ class GrepParams(BaseModel):
     name="grep",
     description=(
         "Search file contents with a regular expression. Returns matching lines "
-        "as path:line:text. Skips binary files and ignored directories."
+        "as path:line:text. Skips binary files and ignored directories. Prefer "
+        "this to running grep through a shell."
     ),
 )
 async def grep(p: GrepParams, ctx: ToolContext) -> ToolResult:
@@ -132,7 +133,8 @@ class GlobParams(BaseModel):
     name="glob",
     description=(
         "Find files by path pattern. Returns paths sorted by modification time, "
-        "newest first, so the files someone is working on surface first."
+        "newest first, so the files someone is working on surface first. Prefer "
+        "this to running find through a shell."
     ),
 )
 async def glob(p: GlobParams, ctx: ToolContext) -> ToolResult:

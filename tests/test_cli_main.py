@@ -16,12 +16,10 @@ from rich.console import Console
 from lab_harness.agent import Agent
 from lab_harness.cli.approval import ApprovalGate
 from lab_harness.cli.main import (
-    SYSTEM_PROMPT,
     _attach_session,
     _brief,
     _build_agent,
     build_parser,
-    build_system_prompt,
     main,
     run_interactive,
 )
@@ -32,8 +30,9 @@ from lab_harness.config import (
     AgentConfig,
     ApprovalConfig,
     Config,
+    ConfigError,
     ProjectConfig,
-    TerminalConfig,
+    PromptsConfig,
     ToolsConfig,
     load_config,
     snapshot,
@@ -43,7 +42,6 @@ from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.logs import ROOT_LOGGER
-from lab_harness.project import ProjectContext
 from lab_harness.session import list_sessions, read_transcript, recorded_requests
 from lab_harness.tools import default_registry
 
@@ -67,6 +65,9 @@ def _args(**kwargs: object) -> argparse.Namespace:
         "model": None,
         "provider": None,
         "cwd": ".",
+        "tools": None,
+        "system_prompt": None,
+        "system_prompt_file": None,
         "yes": False,
         "resume": None,
         "sessions": False,
@@ -124,6 +125,9 @@ def test_the_overriding_flags_default_to_unset() -> None:
     assert args.model is None
     assert args.provider is None
     assert args.log_level is None
+    assert args.tools is None
+    assert args.system_prompt is None
+    assert args.system_prompt_file is None
 
 
 def test_yes_flag_defaults_off() -> None:
@@ -135,27 +139,83 @@ def test_yes_flag_defaults_off() -> None:
 # --- agent construction ---------------------------------------------------
 
 
-def test_one_shot_gets_every_builtin_tool() -> None:
-    agent = _build_agent(_args(prompt="hi"), Config())
+def test_both_modes_get_the_configured_tools() -> None:
+    """Out of the box that is every built-in, in the configured order."""
+    for args in (_args(prompt="hi"), _args()):
+        agent = _build_agent(args, Config())
 
-    names = {t.name for t in agent.state.tools}
-    assert {"read", "write", "edit", "ls", "bash", "grep", "glob"} <= names
+        assert [t.name for t in agent.state.tools] == list(ToolsConfig().enabled)
+    assert {t.name for t in default_registry()} == set(ToolsConfig().enabled)
 
 
-def test_interactive_narrows_to_the_configured_tool_set() -> None:
-    config = Config(terminal=TerminalConfig(enabled_tools=("read", "ls")))
+@pytest.mark.parametrize("prompt", ["hi", None], ids=["one-shot", "interactive"])
+def test_the_configured_tool_set_narrows_either_mode(prompt: str | None) -> None:
+    """One-shot runs have no approval gate, so leaving a tool out is what stops it."""
+    config = Config(tools=ToolsConfig(enabled=("read", "ls")))
 
-    agent = _build_agent(_args(), config, tool_names=config.terminal.enabled_tools)
+    agent = _build_agent(_args(prompt=prompt), config)
 
     assert [t.name for t in agent.state.tools] == ["read", "ls"]
 
 
-def test_an_unknown_configured_tool_fails_loudly() -> None:
-    """A typo should fail at wiring, not silently disable a tool."""
-    config = Config(terminal=TerminalConfig(enabled_tools=("read", "typo")))
+def test_the_flag_replaces_the_configured_tool_set() -> None:
+    config = Config(tools=ToolsConfig(enabled=("read", "ls")))
 
-    with pytest.raises(ValueError, match="Unknown tool"):
-        _build_agent(_args(), config, tool_names=config.terminal.enabled_tools)
+    agent = _build_agent(_args(tools=("grep", "read")), config)
+
+    assert [t.name for t in agent.state.tools] == ["grep", "read"]
+
+
+def test_an_empty_tool_set_gives_the_model_none() -> None:
+    agent = _build_agent(_args(tools=()), Config())
+
+    assert agent.state.tools == ()
+
+
+def test_the_flag_takes_a_comma_separated_list() -> None:
+    parse = build_parser().parse_args
+
+    assert parse(["--tools", "read, ls,,grep"]).tools == ("read", "ls", "grep")
+    assert parse(["--tools", ""]).tools == ()
+    # Absent is not empty: absent defers to tools.enabled.
+    assert parse([]).tools is None
+
+
+@pytest.mark.parametrize(
+    ("args", "config", "source"),
+    [
+        (_args(), Config(tools=ToolsConfig(enabled=("read", "typo"))), "tools.enabled"),
+        (_args(tools=("read", "typo")), Config(), "--tools"),
+    ],
+    ids=["config", "flag"],
+)
+def test_an_unknown_tool_is_a_config_error_naming_its_source(
+    args: argparse.Namespace, config: Config, source: str
+) -> None:
+    """A typo should fail at wiring, not silently disable a tool."""
+    with pytest.raises(ConfigError) as caught:
+        _build_agent(args, config)
+
+    message = str(caught.value)
+    assert message.startswith(f"{source}: ")
+    assert "typo" in message
+    assert "bash" in message, "the message must list the way out"
+
+
+def test_an_unknown_tool_is_reported_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["-p", "hi", "--tools", "typo", "--cwd", str(tmp_path), "--no-save"]) == 1
+    assert "error: --tools: Unknown tool(s): typo" in capsys.readouterr().err
+
+
+def test_the_tools_and_their_source_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="lab_harness.cli.main"):
+        _build_agent(_args(tools=("read", "ls")), Config())
+        _build_agent(_args(tools=()), Config())
+
+    assert "Tools from --tools: read, ls" in caplog.messages
+    assert "Tools from --tools: none" in caplog.messages
 
 
 def test_one_shot_has_no_approval_gate() -> None:
@@ -197,10 +257,10 @@ def test_the_model_flag_beats_the_configured_model() -> None:
 # --- project instructions -------------------------------------------------
 
 
-def test_no_project_file_means_the_base_prompt() -> None:
+def test_no_project_file_means_the_configured_prompt() -> None:
     agent = _build_agent(_args(), Config())
 
-    assert agent.state.system_prompt == SYSTEM_PROMPT
+    assert agent.state.system_prompt == Config().prompts.system
 
 
 def test_project_instructions_reach_the_system_prompt(_neutral_cwd: Path) -> None:
@@ -209,7 +269,7 @@ def test_project_instructions_reach_the_system_prompt(_neutral_cwd: Path) -> Non
     agent = _build_agent(_args(), Config())
 
     assert "Always run `uv run pytest`." in agent.state.system_prompt
-    assert agent.state.system_prompt.startswith(SYSTEM_PROMPT)
+    assert agent.state.system_prompt.startswith(Config().prompts.system)
 
 
 def test_project_instructions_are_read_from_cwd_not_the_process_directory(
@@ -234,27 +294,80 @@ def test_the_configured_filename_is_honored(_neutral_cwd: Path) -> None:
     assert "house style" in agent.state.system_prompt
 
 
-def test_the_prompt_names_the_file_it_came_from() -> None:
-    """So the model can edit the source of a rule rather than just obey it."""
-    context = ProjectContext(path=Path("/repo/AGENTS.md"), text="Use tabs.")
-
-    prompt = build_system_prompt(context)
-
-    assert "AGENTS.md" in prompt
-    assert "Use tabs." in prompt
+# --- the system prompt flags ------------------------------------------------
 
 
-def test_the_prompt_does_not_leak_the_absolute_path() -> None:
-    """A transcript may be shared; the machine's layout should not ride along."""
-    context = ProjectContext(path=Path("/home/someone/secret-project/AGENTS.md"), text="x")
+def test_a_configured_prompt_is_the_one_sent() -> None:
+    config = Config(prompts=PromptsConfig(system="Answer in French."))
 
-    prompt = build_system_prompt(context)
-
-    assert "/home/someone" not in prompt
+    assert _build_agent(_args(), config).state.system_prompt == "Answer in French."
 
 
-def test_no_context_leaves_the_prompt_untouched() -> None:
-    assert build_system_prompt(None) == SYSTEM_PROMPT
+def test_the_flag_replaces_the_configured_prompt(_neutral_cwd: Path) -> None:
+    """Only `system`: the project's instructions are still the project's."""
+    (_neutral_cwd / "AGENTS.md").write_text("Indent with tabs.")
+
+    agent = _build_agent(_args(system_prompt="Be terse."), Config())
+
+    assert agent.state.system_prompt.startswith("Be terse.\n\n## Project instructions")
+    assert agent.state.system_prompt.endswith("Indent with tabs.")
+    assert Config().prompts.system not in agent.state.system_prompt
+
+
+def test_the_file_flag_reads_the_prompt_from_a_file(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "terse.md"
+    prompt_file.write_text("Be terse.\nAnswer in one line.\n")
+
+    agent = _build_agent(_args(system_prompt_file=str(prompt_file)), Config())
+
+    # Stripped, as project instructions are: the editor's final newline goes.
+    assert agent.state.system_prompt == "Be terse.\nAnswer in one line."
+
+
+def test_an_empty_prompt_sends_none() -> None:
+    assert _build_agent(_args(system_prompt=""), Config()).state.system_prompt == ""
+
+
+def test_the_two_prompt_flags_exclude_each_other(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--system-prompt", "a", "--system-prompt-file", "b"])
+    assert "not allowed with" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [(None, "cannot read"), (b"\xff\xfe", "not UTF-8 text")],
+    ids=["missing", "binary"],
+)
+def test_an_unusable_prompt_file_is_reported_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: bytes | None, expected: str
+) -> None:
+    prompt_file = tmp_path / "prompt.md"
+    if content is not None:
+        prompt_file.write_bytes(content)
+    argv = ["-p", "hi", "--system-prompt-file", str(prompt_file), "--cwd", str(tmp_path)]
+
+    assert main([*argv, "--no-save"]) == 1
+    err = capsys.readouterr().err
+    assert "error: --system-prompt-file: " in err
+    assert expected in err
+
+
+@pytest.mark.parametrize(
+    ("args", "source"),
+    [
+        (_args(), "prompts.system"),
+        (_args(system_prompt="x"), "--system-prompt"),
+    ],
+    ids=["config", "flag"],
+)
+def test_the_prompt_source_is_logged(
+    caplog: pytest.LogCaptureFixture, args: argparse.Namespace, source: str
+) -> None:
+    with caplog.at_level(logging.INFO, logger="lab_harness.cli.main"):
+        _build_agent(args, Config())
+
+    assert any(m.startswith(f"System prompt from {source} (") for m in caplog.messages)
 
 
 # --- interactive wiring ---------------------------------------------------

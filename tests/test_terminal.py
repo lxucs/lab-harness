@@ -422,7 +422,7 @@ async def test_the_question_is_asked_with_the_live_region_down() -> None:
             return "y"
 
     terminal._session = Watching([])  # type: ignore[assignment]
-    await terminal.renderer(AgentStart())
+    await terminal.renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
     assert terminal.renderer.active
 
     await terminal.ask_approval("bash", {"command": "ls"})
@@ -617,7 +617,7 @@ async def test_a_log_record_prints_above_the_live_region_and_leaves_it_whole() -
     configure_logging("debug", stream=LogStream(console, "dim"))
     message = AssistantMessage(content=(), model=FAKE_MODEL.id, provider="fake")
 
-    await renderer(AgentStart())
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
     try:
         logging.getLogger("lab_harness.sample").debug("a record")
         await renderer(MessageStart(message=message))  # anything that redraws

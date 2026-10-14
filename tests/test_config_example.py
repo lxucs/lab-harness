@@ -31,6 +31,10 @@ INTENTIONALLY_ABSENT = {
     "tools.web.tavily.base_url",
     # Same rule, for an OpenAI-compatible profile.
     f"providers.openai.{NAME}.api_key",
+    # Prose that ships in prompts.toml, where it is documented. A copy here
+    # would have to change with every edit to the default prompt.
+    "prompts.system",
+    "prompts.project_instructions",
 }
 
 #: Substrings that would mean a real secret leaked into a committed file.

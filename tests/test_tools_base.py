@@ -134,6 +134,13 @@ def test_select_rejects_unknown_names_loudly() -> None:
         registry.select(["greet", "typo"])
 
 
+def test_select_rejects_a_name_given_twice() -> None:
+    """`--tools read,read` would otherwise declare one tool twice."""
+    registry = ToolRegistry([greet])
+    with pytest.raises(ValueError, match="more than once: greet"):
+        registry.select(["greet", "greet"])
+
+
 def test_registry_supports_iteration_and_membership() -> None:
     registry = ToolRegistry([greet])
     assert [t.name for t in registry] == ["greet"]

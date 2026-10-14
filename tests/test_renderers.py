@@ -321,7 +321,7 @@ async def test_expand_prints_what_the_latest_run_collapsed() -> None:
     assert renderer.expand_thinking() is False, "a thought prints once"
     assert buffer.getvalue().count("deep thoughts") == 1
 
-    await renderer(AgentStart())
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
     renderer.close()
 
 
@@ -331,7 +331,7 @@ async def test_a_new_run_forgets_what_the_last_one_collapsed() -> None:
         buffer, FakeProvider([text_response("the answer", thinking="deep thoughts")])
     )
 
-    await renderer(AgentStart())
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
 
     assert renderer.expand_thinking() is False
     renderer.close()
@@ -629,7 +629,7 @@ async def test_the_spinner_runs_for_the_length_of_a_run() -> None:
     clock = Clock()
     renderer = _renderer(buffer, terminal=True, clock=clock)
 
-    await renderer(AgentStart())
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
     clock.now += 3
     await renderer(_started())
     shown = visible(buffer.getvalue())
@@ -646,7 +646,7 @@ async def test_suspending_takes_the_region_down_and_brings_it_back() -> None:
     """A prompt drawn under a live region would be redrawn over."""
     buffer = io.StringIO()
     renderer = _renderer(buffer, terminal=True)
-    await renderer(AgentStart())
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
 
     with renderer.suspended():
         assert not renderer.active

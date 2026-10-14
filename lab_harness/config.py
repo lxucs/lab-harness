@@ -2,9 +2,11 @@
 
 This module is the single list of every tunable in the system. Code reads
 values from a resolved `Config`; it never hardcodes them. See
-docs/contributing.md. The one exception is data rather than tunables: the LLM
-endpoints and models the harness ships, which live in llm/catalog.toml and are
-read here as the defaults of `providers.openai` and `models`.
+docs/contributing.md. The one exception is data rather than tunables, which
+the package ships as TOML in config-file format and reads here as defaults:
+the LLM endpoints and models in llm/catalog.toml, the defaults of
+`providers.openai` and `models`, and the prompts in prompts.toml, the default
+of `prompts`.
 
 `load_config()` layers TOML files over these defaults, lowest precedence
 first: `<home>/config.toml`, `./.lab-harness/config.toml`, then
@@ -204,6 +206,21 @@ class DiffConfig:
 
 @dataclass(frozen=True, slots=True)
 class ToolsConfig:
+    #: Tools the model is given, in this order, in interactive and one-shot
+    #: mode alike; `--tools` replaces the list for one run. A tool left out is
+    #: never declared, which is the only thing that keeps it from running in
+    #: one-shot mode, where there is no approval gate. Empty gives none.
+    enabled: tuple[str, ...] = (
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "bash",
+        "grep",
+        "glob",
+        "web_search",
+        "web_fetch",
+    )
     read: ReadConfig = field(default_factory=ReadConfig)
     list: ListConfig = field(default_factory=ListConfig)
     diff: DiffConfig = field(default_factory=DiffConfig)
@@ -379,10 +396,15 @@ class _Catalog:
 
 @cache
 def _catalog() -> _Catalog:
-    data = _read_toml(CATALOG_FILE)
+    return _load_shipped(CATALOG_FILE, _Catalog())
+
+
+def _load_shipped[T](path: Path, shape: T) -> T:
+    """Read a data file the package ships, as strictly as any config file."""
+    data = _read_toml(path)
     if data is None:
-        raise ConfigError(f"{CATALOG_FILE}: missing, so the package is incomplete")
-    return _apply(_Catalog(), data, source=CATALOG_FILE, trail=())
+        raise ConfigError(f"{path}: missing, so the package is incomplete")
+    return _apply(shape, data, source=path, trail=())
 
 
 def _shipped_profiles() -> dict[str, OpenAIConfig]:
@@ -404,6 +426,41 @@ class ProvidersConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PromptsConfig:
+    """What the model is told besides the conversation and the tool declarations.
+
+    The shipped text is in prompts.toml, read as this section's default. It
+    names no tools: the declarations say what the model can call, and a prompt
+    naming one that `--tools` left out would describe a tool that is not there.
+    """
+
+    #: Opens every request's system prompt. `--system-prompt` and
+    #: `--system-prompt-file` replace it for one run. Empty sends none.
+    system: str = ""
+    #: Appended to `system` when the working directory has project
+    #: instructions: `{name}` is the file's name and `{text}` its contents.
+    #: Those are the only placeholders, and `{text}` is required.
+    project_instructions: str = "{text}"
+
+
+#: The prompts the harness ships, as data in config-file format. It is the
+#: default of `prompts`, so a config file overrides one with the same table.
+PROMPTS_FILE = Path(__file__).parent / "prompts.toml"
+
+
+@dataclass(frozen=True, slots=True)
+class _Prompts:
+    """What prompts.toml may hold: the one section it is the default of."""
+
+    prompts: PromptsConfig = field(default_factory=PromptsConfig)
+
+
+@cache
+def _shipped_prompts() -> PromptsConfig:
+    return _load_shipped(PROMPTS_FILE, _Prompts()).prompts
+
+
+@dataclass(frozen=True, slots=True)
 class SessionConfig:
     #: Root for all harness state. `~` is expanded at use.
     home: str = "~/.lab-harness"
@@ -416,8 +473,9 @@ class SessionConfig:
     enabled: bool = True
     #: Schema version written into each file's header. Readers use it to refuse
     #: files they do not understand. A genuine protocol constant, not a knob.
-    #: Version 2 added the `context` entry; version 1 files still read.
-    version: int = 2
+    #: Version 2 added the `context` entry, version 3 the `rewrite` entry;
+    #: older files still read.
+    version: int = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,18 +513,6 @@ class ThemeConfig:
 
 @dataclass(frozen=True, slots=True)
 class TerminalConfig:
-    #: Tools whose default tool set the interactive terminal enables.
-    enabled_tools: tuple[str, ...] = (
-        "read",
-        "write",
-        "edit",
-        "ls",
-        "bash",
-        "grep",
-        "glob",
-        "web_search",
-        "web_fetch",
-    )
     #: Lines of tool output shown inline before collapsing to a summary.
     max_result_lines: int = 12
     #: Lines of an edit's diff shown before collapsing. More than plain
@@ -517,6 +563,7 @@ class LoggingConfig:
 class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     project: ProjectConfig = field(default_factory=ProjectConfig)
+    prompts: PromptsConfig = field(default_factory=_shipped_prompts)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
     #: Every model the harness knows, keyed by id; the shipped ones are in

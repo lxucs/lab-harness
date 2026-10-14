@@ -84,6 +84,14 @@ OpenAI-family endpoint is a table in `lab_harness/llm/catalog.toml`, in the
 same format a config file uses. Adding a model is one `[models.<id>]` table
 there, with its documented limits and price; no Python changes.
 
+Prompts are data too. Text the model is sent — the system prompt, the wrapper
+around project instructions — lives in `lab_harness/prompts.toml` and reaches
+code as `config.prompts`, never as a string literal in Python. The system
+prompt names no tools: tool guidance belongs in the tool's own description,
+which is only sent when the tool is. The one exception is text that belongs to
+a tool or an error — a tool's description, a tool result's message — which
+stays beside the code it describes.
+
 A literal is fine only for genuine protocol constants that would be wrong to
 change: an API version header, a JSONL schema version, the `"\n"` a line
 splitter splits on.
@@ -92,7 +100,7 @@ splitter splits on.
 
 No API keys, tokens, absolute paths (`/Users/...`, `/home/...`), private URLs,
 hostnames, org IDs, or personal identifiers — in config, the model catalog,
-docs, tests, or examples.
+the prompts, docs, tests, or examples.
 
 | File | Committed | Contents |
 |---|---|---|
@@ -100,6 +108,7 @@ docs, tests, or examples.
 | `config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `config.toml.example` | yes | Template with placeholders |
 | `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
+| `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 
 Prefer environment variables for secrets. If you add a config location, add its
 local variant to `.gitignore` in the same change.
@@ -136,6 +145,18 @@ fields named in `SECRET_FIELDS`. A new config field that holds a credential
 must be named like one (`api_key`, `*_token`, `*_secret`) and added there —
 `tests/test_config_loading.py` fails on a credential-shaped name the set is
 missing.
+
+### Everything a request carries is recorded
+
+A transcript rebuilds every request exactly, so anything that can change what
+a request sends — the system prompt, the tools, the model, the messages — has
+to reach the event stream when it changes: `agent_start` carries the first
+three for every run, and `request_rewritten` carries a hook's rewrite of one
+request. A new way to change one of them mid-session, such as a terminal
+command, needs no recorder change if it changes the agent's state between
+runs; anything subtler needs an event, or `recorded_requests` will rebuild the
+request wrong. `tests/test_session.py` compares rebuilt requests against what
+the provider was actually handed — extend it with the new case.
 
 ## Logging
 
@@ -201,6 +222,7 @@ updated is not finished.
 | Layering or module change | [architecture.md](architecture.md) |
 | Transcript format change | [sessions.md](sessions.md) |
 | New config key, env var, or log level | [configuration.md](configuration.md) |
+| New prompt, or a change to the default one | `lab_harness/prompts.toml` documents itself; a new key also goes in [configuration.md](configuration.md#prompts) |
 
 Keep [`../README.md`](../README.md)'s Status section honest when something
 lands or is abandoned.

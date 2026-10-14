@@ -23,9 +23,10 @@ A rule nobody executes decays. That test is the enforcement.
 ## Lifecycle
 
 ```
-agent_start
+agent_start                  ← the system prompt, tools and model it sends
   message_start/end          ← the user message that triggered this run
   turn_start
+    request_rewritten          ← only if a prepare_request hook changed the request
     message_start   (assistant)
     message_update  × N        ← streaming deltas
     message_end
@@ -42,16 +43,35 @@ agent_end
 
 | Event | Fields | Notes |
 |---|---|---|
-| `agent_start` | — | One per run |
+| `agent_start` | `system_prompt`, `tools`, `model`, `history` | One per run — see below |
 | `agent_end` | `messages` | Last event of a run |
 | `turn_start` | — | One assistant response + its tool calls |
 | `turn_end` | `message`, `tool_results` | |
+| `request_rewritten` | `messages`, `model` | What a `prepare_request` hook sent instead; a field is `null` if left alone |
 | `message_start` | `message` | user, assistant, or tool result — see the note below |
 | `message_update` | `block_index`, `delta`, `kind` | Assistant streaming only |
 | `message_end` | `message` | |
 | `tool_execution_start` | `tool_call_id`, `tool_name`, `arguments` | |
 | `tool_execution_update` | `tool_call_id`, `tool_name`, `content` | Streaming partial results |
 | `tool_execution_end` | `tool_call_id`, `tool_name`, `content`, `is_error`, `duration_ms`, `details` | `details` is the result's structured data for renderers — see below |
+
+### `agent_start` says what the run sends
+
+Everything a request carries besides the messages: the system prompt, the
+tool declarations in the order sent, and the model. `history` counts the
+messages carried in from before the run; the ones it announces, normally the
+prompt, come after them.
+
+Every run says so, not only the first, because all three can change between
+runs of one agent. That is what lets the session recorder stay a plain
+subscriber and still record a change before the first request it affects —
+see [sessions.md](sessions.md#changes-mid-session). A `--json` consumer gets
+the same record, at the cost of a longer first line per run.
+
+`request_rewritten` covers the change a run cannot announce up front: a
+`prepare_request` hook replacing one request's messages or model. The
+transcript keeps the history, so the event is the only record of what was
+actually sent — [sessions.md](sessions.md#rewritten-requests).
 
 ### `message_start` on an assistant message is a placeholder
 

@@ -90,11 +90,15 @@ class Agent:
         self._signal: asyncio.Event | None = None
 
     def restore(self, messages: Sequence[Message]) -> None:
-        """Seed the transcript from a saved session.
+        """Seed the transcript from a saved session, or rewind it.
 
         Deliberately silent: these messages are already on disk, so announcing
         them would make a resumed session re-record its own history on the
-        first write. Call before any `prompt()`.
+        first write. Call it before any `prompt()` to resume, or between runs
+        with an earlier part of the same history to rewind: the next run's
+        `agent_start` says how much history it starts from, which is what a
+        session recorder needs. Messages the session never held cannot be
+        recorded that way — start a new session for those.
         """
         if self.state.is_running:
             raise RuntimeError("Cannot restore while a run is in flight.")

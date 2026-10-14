@@ -24,8 +24,8 @@ model = "claude-sonnet-5"
 # Name of the environment variable that overrides `model`. The name is a
 # config key so a deployment using a different one changes config, not code.
 model_env = "LAB_HARNESS_MODEL"
-# Provider for a model id nothing else routes -- not listed in any
-# providers.openai profile and not in the catalog. --provider overrides it.
+# Provider for a model id nothing else routes -- one the catalog does not list,
+# or lists without a provider. --provider overrides it.
 provider = "anthropic"
 
 [project]
@@ -36,6 +36,34 @@ context_files = ["HARNESS.md", "AGENTS.md"]
 # A longer file is truncated. These instructions ride along on every request,
 # so an unbounded file is an unbounded bill.
 max_bytes = 32000
+
+[prompts]
+# What the model is told besides the conversation and the tool declarations.
+# The defaults ship in lab_harness/prompts.toml, which documents both keys;
+# copy one here to replace it. --system-prompt and --system-prompt-file replace
+# `system` for one run.
+#
+# `system` opens every request's system prompt. Name no tools in it: the tool
+# declarations already say what the model can call. To replace it, for example:
+# system = """\
+# You are a careful research assistant. Keep responses concise."""
+#
+# `project_instructions` wraps the project's instructions file, appended to
+# `system`. {name} is the file's name, {text} its contents; write {{ and }} for
+# literal braces. A shorter one, for example:
+# project_instructions = """\
+# ## Project instructions ({name})
+#
+# {text}"""
+
+[tools]
+# Tools the model is given, in interactive and one-shot mode alike; --tools
+# replaces the list for one run. One-shot runs have no approval gate, so leaving
+# a tool out is what stops it running there. An empty list gives none.
+enabled = [
+    "read", "write", "edit", "ls", "bash", "grep", "glob",
+    "web_search", "web_fetch",
+]
 
 [tools.read]
 # Lines returned when the model requests no explicit limit.
@@ -112,17 +140,13 @@ region = "us-en"
 
 [tools.approval]
 # Tools that prompt before executing in interactive mode. One-shot (-p) runs
-# have no gate at all -- there is nobody at the keyboard to answer.
+# have no gate at all -- there is nobody at the keyboard to answer -- so narrow
+# `enabled` above to keep a tool out of them.
 required = ["bash", "write", "edit"]
 # Whether answering "always" is remembered. Session-only, never persisted.
 allow_remember = true
 
 [terminal]
-# Tools the interactive terminal enables.
-enabled_tools = [
-    "read", "write", "edit", "ls", "bash", "grep", "glob",
-    "web_search", "web_fetch",
-]
 # Lines of tool output shown before collapsing to a summary.
 max_result_lines = 12
 # Lines of an edit's diff shown before collapsing -- more than plain output
@@ -170,8 +194,9 @@ directory_name = "sessions"
 # Write transcripts to disk at all.
 enabled = true
 # Schema version written into each file header. A protocol constant, not a knob.
-# Version 2 added the per-invocation `context` entry; version 1 files still read.
-version = 2
+# Version 2 added the `context` entry, version 3 the `rewrite` entry; older
+# files still read.
+version = 3
 
 [providers.anthropic]
 # Names of the environment variables credentials are read from. The values

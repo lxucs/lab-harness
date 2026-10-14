@@ -35,7 +35,35 @@ from lab_harness.tools.base import ToolContext as ToolContext
 
 @dataclass(frozen=True, slots=True)
 class AgentStart:
+    """A run begins, with everything its requests carry besides the messages.
+
+    Every run says so, not only the first: the system prompt, tools and model
+    may change between runs, and a subscriber recording the session must see
+    each change to rebuild the requests that followed it.
+    """
+
+    system_prompt: str
+    tools: tuple[ToolDeclaration, ...]
+    model: Model
+    #: Messages carried into the run from before it. The ones it announces —
+    #: normally the prompt that started it — come after these.
+    history: int
     type: Literal["agent_start"] = "agent_start"
+
+
+@dataclass(frozen=True, slots=True)
+class RequestRewritten:
+    """A `prepare_request` hook changed what the next request sends.
+
+    The transcript keeps the history, not this view, so without the event the
+    request could not be rebuilt. None means the hook left that part alone.
+    """
+
+    #: Sent instead of the history.
+    messages: tuple[Message, ...] | None = None
+    #: Sent to instead of the run's model.
+    model: Model | None = None
+    type: Literal["request_rewritten"] = "request_rewritten"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +141,7 @@ AgentEvent = (
     | AgentEnd
     | TurnStart
     | TurnEnd
+    | RequestRewritten
     | MessageStart
     | MessageUpdate
     | MessageEnd
@@ -165,7 +194,8 @@ class PrepareRequestContext:
 @dataclass(frozen=True, slots=True)
 class RequestUpdate:
     """Replacement state for the request being prepared. This is the seam
-    context compaction will use."""
+    context compaction will use. The loop announces any replacement as
+    `RequestRewritten`, so the transcript records what was really sent."""
 
     messages: tuple[Message, ...] | None = None
     model: Model | None = None

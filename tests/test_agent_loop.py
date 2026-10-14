@@ -12,6 +12,7 @@ from lab_harness.agent.types import (
     AgentContext,
     AgentEnd,
     AgentEvent,
+    AgentStart,
     AgentTool,
     BeforeToolCallResult,
     EventSink,
@@ -23,12 +24,14 @@ from lab_harness.agent.types import (
     MessageStart,
     MessageUpdate,
     PrepareRequestContext,
+    RequestRewritten,
     RequestUpdate,
     ToolContext,
     ToolExecutionEnd,
     ToolExecutionStart,
     ToolExecutionUpdate,
     ToolResult,
+    declarations_for,
 )
 from lab_harness.config import Config
 from lab_harness.llm.fake import (
@@ -364,6 +367,66 @@ async def test_prepare_request_can_replace_messages() -> None:
     await run_agent_loop(_ctx(), _cfg(provider, prepare_request=replace), emit)
 
     assert provider.requests[0].messages == replacement
+
+
+async def test_agent_start_carries_what_the_run_sends_besides_messages() -> None:
+    """Every run says it, so a change between runs reaches the session file."""
+    tool = RecordingTool()
+    events, emit = _collector()
+    history = (
+        UserMessage(content=text("earlier")),
+        AssistantMessage(content=text("noted"), model="m", provider="p"),
+    )
+    prompt = UserMessage(content=text("now"))
+    ctx = AgentContext(
+        system_prompt="sys",
+        messages=(*history, prompt),
+        tools=(tool,),
+        unannounced=(prompt,),
+    )
+
+    await run_agent_loop(ctx, _cfg(FakeProvider([text_response("ok")])), emit)
+
+    start = events[0]
+    assert isinstance(start, AgentStart)
+    assert start.system_prompt == "sys"
+    assert start.tools == declarations_for((tool,))
+    assert start.model == FAKE_MODEL
+    # The earlier messages only: the prompt it announces comes after them.
+    assert start.history == 2
+
+
+async def test_a_rewritten_request_is_announced_as_sent() -> None:
+    """The transcript keeps the history, so the event is the only record of the view."""
+    swapped = replace(FAKE_MODEL, id="swapped-model")
+    replacement = (UserMessage(content=text("summary")),)
+    provider = FakeProvider([text_response("ok")])
+    events, emit = _collector()
+
+    async def rewrite(request: PrepareRequestContext) -> RequestUpdate:
+        return RequestUpdate(messages=replacement, model=swapped)
+
+    await run_agent_loop(_ctx(), _cfg(provider, prepare_request=rewrite), emit)
+
+    rewrites = [e for e in events if isinstance(e, RequestRewritten)]
+    assert rewrites == [RequestRewritten(messages=replacement, model=swapped)]
+    kinds = [e.type for e in events]
+    # After the turn opens and before the response does: it describes that request.
+    assert kinds.index("turn_start") < kinds.index("request_rewritten")
+    assert kinds.index("request_rewritten") < kinds.index("message_start", 2)
+
+
+@pytest.mark.parametrize("update", [None, RequestUpdate()], ids=["none", "empty"])
+async def test_a_hook_that_changes_nothing_announces_nothing(update: RequestUpdate | None) -> None:
+    events, emit = _collector()
+
+    async def leave(request: PrepareRequestContext) -> RequestUpdate | None:
+        return update
+
+    provider = FakeProvider([text_response("ok")])
+    await run_agent_loop(_ctx(), _cfg(provider, prepare_request=leave), emit)
+
+    assert not [e for e in events if isinstance(e, RequestRewritten)]
 
 
 async def test_max_turns_stops_a_runaway_loop() -> None:

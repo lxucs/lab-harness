@@ -79,8 +79,9 @@ async def test_scripted_runs_a_real_tool_with_no_key(
 
 
 async def test_quickstart_streams_the_answer_and_shows_tool_calls(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
+    (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
     module = load("quickstart")
     provider = scripted(
         monkeypatch,
@@ -94,6 +95,10 @@ async def test_quickstart_streams_the_answer_and_shows_tool_calls(
     assert "A small project." in out
     assert "2 request(s)" in out
     assert [t.name for t in provider.requests[0].tools] == module.READ_ONLY_TOOLS
+    # The prompt the CLI would send: configured text, then the project's own.
+    system = provider.requests[0].system_prompt
+    assert system.startswith(load_config().prompts.system)
+    assert system.endswith("Indent with tabs.")
 
 
 async def test_custom_tool_is_declared_and_counts_words(

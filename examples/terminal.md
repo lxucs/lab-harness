@@ -34,9 +34,15 @@ uv run lab-harness -p "summarize the config module" > summary.txt   # the answer
 ```
 
 **There is no approval gate in `-p` mode** — nobody is at the keyboard to
-answer, so `bash`, `write` and `edit` run unprompted. Tool notices go to
-stderr and the answer to stdout. The exit status is `1` when the final turn
-errored or was aborted, `0` otherwise.
+answer, so `bash`, `write` and `edit` run unprompted. To rule them out, give
+the run fewer tools; a tool left out is never offered to the model:
+
+```bash
+uv run lab-harness -p "review the config module" --tools read,ls,grep,glob
+```
+
+Tool notices go to stderr and the answer to stdout. The exit status is `1`
+when the final turn errored or was aborted, `0` otherwise.
 
 ## Events as JSONL, for scripts
 
@@ -72,6 +78,18 @@ OPENAI_API_KEY=sk-... uv run lab-harness --model gpt-6-luna
 
 Adding a vendor or a model is a few lines of config:
 [docs/configuration.md](../docs/configuration.md#provider-profiles).
+
+## The system prompt
+
+```bash
+uv run lab-harness --system-prompt "Answer in one sentence."
+uv run lab-harness -p "summarize the config module" --system-prompt-file prompts/terse.md
+```
+
+Either replaces the default, which ships in
+[`lab_harness/prompts.toml`](../lab_harness/prompts.toml), for one run; a
+project's `AGENTS.md` is still appended. To change it for good, set
+`[prompts] system` in config: [docs/configuration.md](../docs/configuration.md#prompts).
 
 ## Another directory, and debugging
 

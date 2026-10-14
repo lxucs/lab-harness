@@ -20,7 +20,7 @@ everything else assumes.
 | [tools.md](tools.md) | Tool contract, built-in tools, adding a tool |
 | [sessions.md](sessions.md) | Transcript format, resume, rebuilding trajectories |
 | [cli.md](cli.md) | Terminal, flags, keybindings, the usage and cost readout |
-| [configuration.md](configuration.md) | Config files, environment variables, models and prices |
+| [configuration.md](configuration.md) | Config files, environment variables, models and prices, prompts |
 | [contributing.md](contributing.md) | Code conventions, architectural invariants, config rules |
 
 Design rationale and the decisions behind v1 scope live in

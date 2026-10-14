@@ -4,18 +4,28 @@ The recorder is a subscriber like any other — it never calls into the agent, a
 the runtime does not know it exists. That is what lets persistence be optional
 (`--no-save`) without a branch anywhere in the loop.
 
-It records `message_end` and ignores everything else: deltas and tool progress
-describe a run in flight, not its durable result.
+It records three events and ignores the rest, since deltas and tool progress
+describe a run in flight rather than its durable result:
+
+- `message_end` — every message, as it completes.
+- `agent_start` — only when the run's system prompt, tools, model or history
+  differ from what the last `context` entry says, which opens a new segment.
+  So a change made between runs is on record before the first request it
+  affects, and an unchanged session writes nothing extra.
+- `request_rewritten` — what a `prepare_request` hook sent instead.
 """
 
 import logging
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
-from lab_harness.agent.types import AgentEvent, MessageEnd
+from lab_harness.agent.types import AgentEvent, AgentStart, MessageEnd, RequestRewritten
 from lab_harness.config import Config, snapshot
-from lab_harness.llm.types import AssistantMessage, Model, ToolDeclaration
+from lab_harness.llm.types import AssistantMessage, Message, Model, ToolDeclaration
 from lab_harness.session.store import new_session_id, session_path
 from lab_harness.session.transcript import (
+    Rewrite,
     SessionContext,
     SessionHeader,
     TranscriptWriter,
@@ -26,11 +36,16 @@ _log = logging.getLogger(__name__)
 
 
 class SessionRecorder:
-    """Writes a run's messages to a transcript as they complete."""
+    """Writes a session to a transcript as it happens."""
 
-    def __init__(self, writer: TranscriptWriter) -> None:
+    def __init__(self, writer: TranscriptWriter, context: SessionContext) -> None:
+        """`context` is the entry already written, which opened this segment."""
         self._writer = writer
         self._written = 0
+        self._context = context
+        # Messages in the agent's history: those the segment carried forward,
+        # plus every one announced since. What the next run should start from.
+        self._history = context.restored
 
     @property
     def path(self) -> Path:
@@ -41,15 +56,49 @@ class SessionRecorder:
         return self._writer.header.id
 
     async def __call__(self, event: AgentEvent) -> None:
-        if not isinstance(event, MessageEnd):
+        if isinstance(event, AgentStart):
+            self._record_context(event)
+        elif isinstance(event, RequestRewritten):
+            self._record(self._writer.append_rewrite, Rewrite(event.messages, event.model))
+        elif isinstance(event, MessageEnd):
+            self._record_message(event)
+
+    def _record_context(self, event: AgentStart) -> None:
+        current = self._context
+        if (event.system_prompt, event.tools, event.model, event.history) == (
+            current.system_prompt,
+            current.tools,
+            current.model,
+            self._history,
+        ):
             return
+        self._context = replace(
+            current,
+            timestamp=now_timestamp(),
+            restored=event.history,
+            system_prompt=event.system_prompt,
+            tools=event.tools,
+            model=event.model,
+        )
+        self._history = event.history
+        _log.debug("Context changed: new segment in %s", self.path.name)
+        self._record(self._writer.append_context, self._context)
+
+    def _record_message(self, event: MessageEnd) -> None:
+        self._history += 1
+        self._record(self._write_message, event.message)
+
+    def _write_message(self, message: Message) -> None:
+        self._writer.append_message(message)
+        self._written += 1
+        if isinstance(message, AssistantMessage):
+            # Usage is per-request, so it rides alongside the assistant
+            # message that carries it rather than being derived later.
+            self._writer.append_usage(message.usage, message.model)
+
+    def _record[T](self, write: Callable[[T], None], entry: T) -> None:
         try:
-            self._writer.append_message(event.message)
-            self._written += 1
-            if isinstance(event.message, AssistantMessage):
-                # Usage is per-request, so it rides alongside the assistant
-                # message that carries it rather than being derived later.
-                self._writer.append_usage(event.message.usage, event.message.model)
+            write(entry)
         except OSError:
             # A full disk must not kill a run in progress. The loop isolates
             # subscriber failures anyway; this logs the cause rather than
@@ -98,15 +147,14 @@ def start_recorder(
     )
     writer = TranscriptWriter(path, header)
     writer.open()
-    writer.append_context(
-        SessionContext(
-            timestamp=now_timestamp(),
-            restored=restored,
-            system_prompt=system_prompt,
-            tools=tools,
-            model=model,
-            config=snapshot(config),
-        )
+    context = SessionContext(
+        timestamp=now_timestamp(),
+        restored=restored,
+        system_prompt=system_prompt,
+        tools=tools,
+        model=model,
+        config=snapshot(config),
     )
+    writer.append_context(context)
     _log.info("%s transcript %s", "Appending to" if appending else "Writing", path)
-    return SessionRecorder(writer)
+    return SessionRecorder(writer, context)

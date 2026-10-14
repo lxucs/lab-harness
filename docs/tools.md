@@ -50,6 +50,11 @@ async def read(p: ReadParams, ctx: ToolContext) -> ToolResult:
 
 Adding a tool is one file plus one registry entry.
 
+**The description is the only place to tell the model how to use a tool.** The
+system prompt names no tools, so it stays true whichever ones `--tools`
+enables; advice such as "prefer this to running grep through a shell" goes in
+the description, which is only sent when the tool is.
+
 **Invalid arguments never reach your function.** `FunctionTool.execute`
 validates first and returns a `fail()` naming the offending fields, so the model
 can correct itself. A bad signature — a first argument that is not a Pydantic
@@ -91,8 +96,14 @@ what makes two tests with different tool sets interfere. Construct one per run
 and pass it down.
 
 Duplicate names raise on registration, and `select()` raises on an unknown name
-— a typo in configured tool names should fail at wiring time, not silently
-disable a tool and leave the model unable to do its job.
+or one given twice — a typo in configured tool names should fail at wiring
+time, not silently disable a tool and leave the model unable to do its job.
+
+The CLI selects with `tools.enabled` from config, or `--tools read,ls` for one
+run, and the same list applies in interactive and one-shot mode. A tool that is
+not selected is never declared to the model, which makes selection the way to
+keep `bash` out of a `-p` run — approval cannot, since `-p` has none. An unknown
+name is a startup error that names where it came from.
 
 ## bash
 
@@ -133,7 +144,7 @@ is why one-shot and interactive modes differ without the loop branching.
 
 | Mode | Gate |
 |---|---|
-| `lab-harness -p "…"` | **None.** Nobody is at the keyboard to answer. |
+| `lab-harness -p "…"` | **None.** Nobody is at the keyboard to answer — narrow `--tools` instead. |
 | `lab-harness` (interactive) | Prompts for `tools.approval.required` |
 | `lab-harness --yes` | Disabled explicitly |
 

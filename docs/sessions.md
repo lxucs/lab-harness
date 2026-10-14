@@ -11,17 +11,19 @@ Append-only JSONL, one file per session:
 Line 1 is the header; every subsequent line is one entry.
 
 ```jsonc
-{"type": "session", "version": 2, "id": "...", "cwd": "/path",
+{"type": "session", "version": 3, "id": "...", "cwd": "/path",
  "timestamp": "...", "model": "..."}
 {"type": "context", "timestamp": "...", "restored": 0, "system_prompt": "...",
  "tools": [ /* declarations */ ], "model": { /* Model */ }, "config": { /* ... */ }}
 {"type": "message", "timestamp": "...", "message": { /* ... */ }}
 {"type": "usage", "usage": { /* ... */ }, "model": "..."}
+{"type": "rewrite", "timestamp": "...", "messages": [ /* ... */ ], "model": null}
 ```
 
 Every invocation — the first run, and each `--resume` after it — writes one
-`context` entry before its messages. That entry and the messages after it are a
-**segment**.
+`context` entry before its messages, and so does every run that starts with a
+different system prompt, tool set or model than the last entry records. That
+entry and the messages after it are a **segment**.
 
 **Append-only, flushed per line.** A crashed or killed run leaves a readable
 transcript up to its last completed message. That is the whole durability
@@ -57,15 +59,19 @@ every candidate.
 | Type | Purpose |
 |---|---|
 | `session` | Header. One per file, first line. |
-| `context` | What one invocation's requests were sent with. Opens its segment. |
+| `context` | What a segment's requests were sent with. Opens the segment. |
 | `message` | One transcript message, stamped with when it was written |
 | `usage` | Token usage for a request, written beside its assistant message. Repeats the message's own `usage`. |
+| `rewrite` | What a `prepare_request` hook sent instead, for the request after it. See below. |
 | `compaction` | **Reserved.** Not emitted yet; see below. |
 
 **Unknown types are skipped, not fatal.** `compaction` is reserved so adding
 compaction later needs no schema bump, and a reader that choked on an
 unrecognized `type` would make every future addition a breaking change. The
 count of skipped entries is surfaced so a resume can mention it.
+
+`rewrite` is the exception that bumped the version to 3: a reader that skipped
+it would rebuild those requests wrong rather than merely miss something.
 
 ## Trajectories
 
@@ -79,14 +85,44 @@ for step in recorded_requests(read_transcript(path)):
     step.request  # Context: system_prompt, messages, tools — what was sent
     step.response  # the AssistantMessage that came back, usage included
     step.timestamp  # when the response finished
-    step.model  # the Model, limits and all
+    step.model  # the Model it went to, limits and all
     step.config  # the config snapshot the invocation ran with
 ```
 
-That holds across resumes, an interrupted turn, and a prompt, tool set, model
-or config that changed between invocations — each segment records its own. A
-test rebuilds a session with all of those and compares against what the
-provider was actually handed.
+That holds across resumes, an interrupted turn, a prompt, tool set, model or
+config that changed between invocations, one that changed between runs of the
+same invocation, and a request a hook rewrote. Tests rebuild sessions with
+each of those and compare against what the provider was actually handed.
+
+### Changes mid-session
+
+The system prompt, tools and model can change between runs without starting a
+new session — from Python today, by assigning to the agent's state:
+
+```python
+agent.state.system_prompt = "Answer in French."
+agent.state.tools = default_registry().select(["read", "grep"])
+agent.state.model = resolve_model("claude-opus-5")  # same provider
+await agent.prompt("...")  # recorded under the new context
+```
+
+Each run's `agent_start` event carries what it is sent with, and the recorder
+writes a new `context` entry when that differs from the last one, before the
+run's first message. A session that changes nothing writes nothing extra.
+
+### Rewritten requests
+
+A `prepare_request` hook may send something other than the history — a
+compacted view, a redacted one — or send it to another model. The history
+stays as it was: that is what resume continues from. So the file holds both.
+The loop announces the rewrite as a `request_rewritten` event, the recorder
+writes it as a `rewrite` entry, and `recorded_requests` rebuilds that request
+from it: the hook's messages and model, the segment's prompt and tools.
+
+A `rewrite` holds the whole view it sent, so a hook that rewrites every
+request grows the file by a view per request. The CLI installs no hook.
+Compaction, when it lands, will add its own entry to write a summary once
+rather than with every request.
 
 Every assistant message yields one step, errored and aborted ones included, so
 filter on `step.response.stop_reason` for the ones worth keeping. An abort
@@ -101,17 +137,14 @@ What a `context` entry holds:
 | `tools` | Every tool declaration — name, description, JSON schema — in the order sent |
 | `model` | The resolved `Model`: id, the provider that served it, limits, capability flags |
 | `config` | The whole resolved config as plain data, credentials replaced with `[redacted]` |
-| `restored` | How many earlier messages this invocation carried forward |
-| `timestamp` | When the invocation started |
+| `restored` | How many earlier messages this segment carried forward |
+| `timestamp` | When the invocation started, or the run that changed the context |
 
 **What is not recorded:**
 
 - **The wire translation.** A step is the provider-neutral request; the bytes
   sent are what the adapter makes of it under the provider settings in
   `config`.
-- **Anything a `prepare_request` hook does.** It rewrites the request without
-  touching the transcript. The CLI installs none, but a step would not reflect
-  one that did.
 - **Values read from the environment** — credentials and `*_BASE_URL`
   overrides. The snapshot holds the variables' names, not their values.
 - **Streaming deltas.** The assembled message is kept instead.
@@ -149,11 +182,13 @@ when its run began. The results of one tool batch are written together once
 the whole batch is done, so they share a moment — each one's `duration_ms`
 says how long it ran.
 
-### Version 1 files
+### Older files
 
-Files written before the `context` entry still read and resume. Their messages
-count as history for anything appended later, but yield no steps of their own:
-nothing recorded what they were sent with. Their timestamps read as empty.
+Version 2 files are version 3 files without `rewrite` entries, and read as
+such. Files written before the `context` entry (version 1) still read and
+resume. Their messages count as history for anything appended later, but yield
+no steps of their own: nothing recorded what they were sent with. Their
+timestamps read as empty.
 
 ## Resume
 

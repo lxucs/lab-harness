@@ -14,6 +14,7 @@ from lab_harness.session.store import (
 from lab_harness.session.transcript import (
     RecordedMessage,
     RecordedRequest,
+    Rewrite,
     Segment,
     SessionContext,
     SessionHeader,
@@ -29,6 +30,7 @@ __all__ = [
     "RecordedRequest",
     "ResumeError",
     "ResumedSession",
+    "Rewrite",
     "Segment",
     "SessionContext",
     "SessionHeader",

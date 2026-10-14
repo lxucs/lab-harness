@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from lab_harness.agent import Agent
-from lab_harness.agent.types import declarations_for
+from lab_harness.agent.types import PrepareRequestContext, RequestUpdate, declarations_for
 from lab_harness.config import REDACTED, Config, OpenAIConfig, SessionConfig, TavilyConfig, snapshot
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import (
@@ -392,6 +392,7 @@ async def test_a_write_failure_does_not_kill_the_run(tmp_path: Path) -> None:
     messages = await agent.prompt("go")
 
     assert messages[-1].role == "assistant"
+    recorder.close()
 
 
 def test_the_context_entry_records_what_every_request_is_sent_with(tmp_path: Path) -> None:
@@ -842,6 +843,110 @@ async def test_every_request_can_be_rebuilt_from_the_transcript(tmp_path: Path) 
     assert [r.model for r in rebuilt] == [FAKE_MODEL] * 4 + [other_model] * 2
     assert [r.config for r in rebuilt] == [snapshot(RUNTIME)] * 4 + [snapshot(other_config)] * 2
     assert transcript.messages == tuple(agent.state.messages)
+
+
+def _contexts(path: Path) -> list[dict[str, object]]:
+    lines = [json.loads(line) for line in path.read_text().splitlines()]
+    return [entry for entry in lines if entry["type"] == "context"]
+
+
+async def test_a_change_between_runs_is_recorded_before_the_requests_it_affects(
+    tmp_path: Path,
+) -> None:
+    """Prompt, tools and model may change mid-session, from Python today and from
+    the terminal later; each rebuilt request must carry what it was sent with."""
+    provider = FakeProvider([text_response(f"reply {n}") for n in range(5)])
+    agent = Agent(
+        model=FAKE_MODEL,
+        provider=provider,
+        system_prompt="prompt one",
+        tools=default_registry().select(["ls"]),
+        cwd=str(tmp_path),
+    )
+    other_model = replace(FAKE_MODEL, id="fake-model-2")
+    recorder = _attach(agent, tmp_path)
+
+    await agent.prompt("one")
+    agent.state.system_prompt = "prompt two"
+    await agent.prompt("two")
+    agent.state.tools = default_registry().select(["ls", "read"])
+    await agent.prompt("three")
+    agent.state.model = other_model
+    await agent.prompt("four")
+    await agent.prompt("five")  # nothing changed: nothing extra to record
+    recorder.close()
+
+    transcript = read_transcript(recorder.path)
+    rebuilt = recorded_requests(transcript)
+    assert [r.request for r in rebuilt] == provider.requests
+    assert [r.model for r in rebuilt] == [FAKE_MODEL] * 3 + [other_model] * 2
+    # The opening entry and one per change, each carrying the history so far.
+    assert [c["restored"] for c in _contexts(recorder.path)] == [0, 2, 4, 6]
+    assert transcript.messages == tuple(agent.state.messages)
+    assert resume(cwd=str(tmp_path), config=CONFIG).messages == tuple(agent.state.messages)
+
+
+async def test_an_unchanged_session_writes_one_context_entry(tmp_path: Path) -> None:
+    agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("a"), text_response("b")]))
+    recorder = _attach(agent, tmp_path)
+
+    await agent.prompt("one")
+    await agent.prompt("two")
+    recorder.close()
+
+    assert len(_contexts(recorder.path)) == 1
+
+
+async def test_a_rewind_records_what_the_next_run_starts_from(tmp_path: Path) -> None:
+    """`restore()` to an earlier point: the next requests drop what was rewound."""
+    provider = FakeProvider([text_response(f"reply {n}") for n in range(3)])
+    agent = Agent(model=FAKE_MODEL, provider=provider)
+    recorder = _attach(agent, tmp_path)
+
+    await agent.prompt("one")
+    await agent.prompt("two")
+    agent.restore(agent.state.messages[:2])
+    await agent.prompt("two, again")
+    recorder.close()
+
+    transcript = read_transcript(recorder.path)
+    assert [r.request for r in recorded_requests(transcript)] == provider.requests
+    assert transcript.messages == tuple(agent.state.messages)
+
+
+async def test_a_rewritten_request_is_rebuilt_as_sent(tmp_path: Path) -> None:
+    """A `prepare_request` hook changes the view, never the history: the transcript
+    must hold both, so the trajectory shows what was sent and resume continues
+    from what was said."""
+    call = ToolCallBlock(id="c1", name="ls", arguments={})
+    provider = FakeProvider([tool_call_response([call]), text_response("done")])
+    swapped = replace(FAKE_MODEL, id="fake-model-small")
+    summary = UserMessage(content=text("Summary: the user asked for a listing."))
+
+    async def compact(request: PrepareRequestContext) -> RequestUpdate | None:
+        if len(request.messages) < 3:
+            return None
+        return RequestUpdate(messages=(summary, *request.messages[-2:]), model=swapped)
+
+    agent = Agent(
+        model=FAKE_MODEL,
+        provider=provider,
+        tools=default_registry().select(["ls"]),
+        cwd=str(tmp_path),
+        prepare_request=compact,
+    )
+    recorder = _attach(agent, tmp_path)
+    await agent.prompt("list the files")
+    recorder.close()
+
+    transcript = read_transcript(recorder.path)
+    rebuilt = recorded_requests(transcript)
+    assert [r.request for r in rebuilt] == provider.requests
+    assert rebuilt[1].request.messages[0] == summary
+    assert [r.model for r in rebuilt] == [FAKE_MODEL, swapped]
+    # The history is untouched, so resume continues from the real conversation.
+    assert transcript.messages == tuple(agent.state.messages)
+    assert resume(cwd=str(tmp_path), config=CONFIG).messages == tuple(agent.state.messages)
 
 
 async def test_every_message_is_timestamped_in_order(tmp_path: Path) -> None:

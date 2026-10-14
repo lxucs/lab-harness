@@ -15,6 +15,7 @@ from lab_harness.agent.types import (
     MessageEnd,
     MessageStart,
     MessageUpdate,
+    RequestRewritten,
     ToolExecutionEnd,
     ToolExecutionStart,
     ToolExecutionUpdate,
@@ -39,11 +40,13 @@ from lab_harness.llm.serde import block_from_dict, event_from_dict, message_from
 from lab_harness.llm.types import (
     AssistantMessage,
     ImageBlock,
+    Model,
     ProviderBlock,
     SystemMessage,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,
+    ToolDeclaration,
     ToolResultMessage,
     Usage,
     UserMessage,
@@ -79,6 +82,7 @@ MESSAGES = [
 ]
 
 _ASSISTANT = AssistantMessage(content=text("done"), model="m", provider="p")
+_MODEL = Model(id="m", name="M", provider="p", context_window=1000, max_tokens=100)
 
 EVENTS = [
     StreamStart(),
@@ -153,7 +157,14 @@ def test_every_message_type_is_covered() -> None:
 
 
 AGENT_EVENTS = [
-    AgentStart(),
+    AgentStart(
+        system_prompt="Be brief.",
+        tools=(ToolDeclaration(name="read", description="Read a file.", parameters={}),),
+        model=_MODEL,
+        history=2,
+    ),
+    RequestRewritten(messages=(UserMessage(content=text("summary")),), model=_MODEL),
+    RequestRewritten(),
     AgentEnd(messages=(UserMessage(content=text("hi")),)),
     TurnStart(),
     TurnEnd(message=_ASSISTANT, tool_results=()),

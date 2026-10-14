@@ -2,17 +2,24 @@
 
 Line 1 is a header; every line after it is one entry:
 
-    {"type": "session", "version": 2, "id": "...", "cwd": "...", ...}
+    {"type": "session", "version": 3, "id": "...", "cwd": "...", ...}
     {"type": "context", "restored": 0, "system_prompt": "...", "tools": [...], ...}
     {"type": "message", "timestamp": "...", "message": {...}}
     {"type": "usage", "usage": {...}, "model": "..."}
+    {"type": "rewrite", "timestamp": "...", "messages": [...], "model": null}
 
-**Each invocation opens with a `context` entry** — the system prompt, tool
-declarations, model and config its requests were sent with, which are
-everything a request carries besides the messages. A context entry and the
-messages after it form a *segment*. Together with `restored`, the number of
-earlier messages the invocation carried forward, that is enough to rebuild
-every request exactly: see `recorded_requests`.
+**A `context` entry records what requests are sent with** — the system prompt,
+tool declarations, model and config, which are everything a request carries
+besides the messages. Each invocation opens with one, and another follows
+whenever a run starts with a different system prompt, tools or model than the
+last entry says. A context entry and the messages after it form a *segment*.
+Together with `restored`, the number of earlier messages the segment carried
+forward, that is enough to rebuild every request exactly: see
+`recorded_requests`.
+
+**A `rewrite` entry records what a `prepare_request` hook sent instead** of the
+history or the model, for the one request that follows it. The history itself
+is never rewritten, which is what lets resume continue from it.
 
 `restored` is also what keeps resume honest. Resume trims an interrupted turn
 from the history it hands the agent, but the file is append-only, so the
@@ -34,7 +41,7 @@ result. Deltas are never persisted.
 """
 
 import json
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -53,6 +60,7 @@ ENTRY_SESSION = "session"
 ENTRY_CONTEXT = "context"
 ENTRY_MESSAGE = "message"
 ENTRY_USAGE = "usage"
+ENTRY_REWRITE = "rewrite"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,11 +77,12 @@ class SessionHeader:
 
 @dataclass(frozen=True, slots=True)
 class SessionContext:
-    """What one invocation's requests were sent with, besides the messages."""
+    """What a segment's requests were sent with, besides the messages."""
 
+    #: When the invocation started, or the run that changed the context.
     timestamp: str
-    #: How many messages of the history before this entry the invocation
-    #: carried forward. Fewer than the history holds means resume trimmed an
+    #: How many messages of the history before this entry the segment carried
+    #: forward. Fewer than the history holds means resume trimmed an
     #: interrupted turn off its end.
     restored: int
     system_prompt: str
@@ -87,6 +96,18 @@ class SessionContext:
 
 
 @dataclass(frozen=True, slots=True)
+class Rewrite:
+    """What a `prepare_request` hook sent in place of the run's own request.
+
+    None means that part was not rewritten: the request carried the history,
+    or went to the segment's model.
+    """
+
+    messages: tuple[Message, ...] | None = None
+    model: Model | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RecordedMessage:
     """A message as the transcript holds it: the message, and when it was written."""
 
@@ -97,11 +118,18 @@ class RecordedMessage:
     #: done — each one's own `duration_ms` says how long it ran. Empty in a
     #: version 1 file, which recorded none.
     timestamp: str = ""
+    #: On an assistant message, what its request sent instead, if a hook
+    #: rewrote it.
+    rewrite: Rewrite | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    """One invocation's part of a session: its context, and what it added."""
+    """A stretch of a session sent with one context, and what it added.
+
+    An invocation opens one; a run that changed the system prompt, tools or
+    model mid-session opens another.
+    """
 
     context: SessionContext
     entries: tuple[RecordedMessage, ...] = ()
@@ -140,6 +168,9 @@ class TranscriptWriter:
 
     def append_usage(self, usage: Usage, model: str) -> None:
         self._write({"type": ENTRY_USAGE, "usage": to_dict(usage), "model": model})
+
+    def append_rewrite(self, rewrite: Rewrite) -> None:
+        self._write({"type": ENTRY_REWRITE, "timestamp": now_timestamp(), **to_dict(rewrite)})
 
     def close(self) -> None:
         if self._handle is not None:
@@ -200,6 +231,7 @@ class RecordedRequest:
     response: AssistantMessage
     #: When the response finished — see `RecordedMessage.timestamp`.
     timestamp: str
+    #: The model the request went to, a hook's replacement included.
     model: Model
     config: dict[str, Any]
 
@@ -211,6 +243,9 @@ def recorded_requests(transcript: Transcript) -> tuple[RecordedRequest, ...]:
     so errored and aborted turns are included — and an abort between turns
     yields one that never reached the model at all. Filter on
     `response.stop_reason` for the turns worth keeping.
+
+    A request a `prepare_request` hook rewrote is rebuilt as sent: with the
+    hook's messages and model, not the history and the segment's model.
 
     Messages from before any `context` entry (a version 1 file) count as
     history for what follows, but yield no requests of their own: nothing
@@ -224,9 +259,10 @@ def recorded_requests(transcript: Transcript) -> tuple[RecordedRequest, ...]:
         for entry in segment.entries:
             message = entry.message
             if isinstance(message, AssistantMessage):
+                rewrite = entry.rewrite or Rewrite()
                 request = Context(
                     system_prompt=context.system_prompt,
-                    messages=tuple(history),
+                    messages=tuple(history) if rewrite.messages is None else rewrite.messages,
                     tools=context.tools,
                 )
                 found.append(
@@ -234,7 +270,7 @@ def recorded_requests(transcript: Transcript) -> tuple[RecordedRequest, ...]:
                         request=request,
                         response=message,
                         timestamp=entry.timestamp,
-                        model=context.model,
+                        model=context.model if rewrite.model is None else rewrite.model,
                         config=context.config,
                     )
                 )
@@ -263,6 +299,9 @@ def read_transcript(path: Path) -> Transcript:
     segments: list[_OpenSegment] = []
     unattributed: list[RecordedMessage] = []
     skipped = 0
+    # A rewrite belongs to the assistant message after it: the response to the
+    # request it describes.
+    rewrite: Rewrite | None = None
 
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -284,19 +323,28 @@ def read_transcript(path: Path) -> Transcript:
                     header = _header_from(entry)
                 continue
             if kind == ENTRY_CONTEXT:
+                rewrite = None
                 try:
                     segments.append(_OpenSegment(_context_from(entry)))
                 except (KeyError, TypeError, ValueError):
                     skipped += 1
                 continue
+            if kind == ENTRY_REWRITE:
+                try:
+                    rewrite = _rewrite_from(entry)
+                except (KeyError, TypeError, ValueError):
+                    skipped += 1
+                continue
             if kind == ENTRY_MESSAGE:
                 try:
-                    recorded = RecordedMessage(
-                        message_from_dict(entry["message"]), str(entry.get("timestamp", ""))
-                    )
+                    message = message_from_dict(entry["message"])
                 except (KeyError, TypeError, ValueError):
                     skipped += 1
                     continue
+                recorded = RecordedMessage(message, str(entry.get("timestamp", "")))
+                if isinstance(message, AssistantMessage):
+                    recorded = replace(recorded, rewrite=rewrite)
+                    rewrite = None
                 (segments[-1].entries if segments else unattributed).append(recorded)
                 continue
             if kind == ENTRY_USAGE:
@@ -340,6 +388,15 @@ def _context_from(entry: dict[str, Any]) -> SessionContext:
         tools=tuple(ToolDeclaration(**tool) for tool in entry["tools"]),
         model=Model(**entry["model"]),
         config=entry["config"],
+    )
+
+
+def _rewrite_from(entry: dict[str, Any]) -> Rewrite:
+    messages = entry["messages"]
+    model = entry["model"]
+    return Rewrite(
+        messages=None if messages is None else tuple(message_from_dict(m) for m in messages),
+        model=None if model is None else Model(**model),
     )
 
 

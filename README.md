@@ -3,22 +3,20 @@
 **A minimal agent harness in Python, built for research.** Small enough to read
 in an afternoon, complete enough to run real experiments on.
 
-It runs a local agentic loop — the model reads files, runs commands, edits
-code, and searches the web — from an interactive terminal, a one-shot command,
-or your own Python. Architecturally it follows
-[pi](https://github.com/earendil-works/pi): the same layering, trimmed to the
-parts that earn their keep.
+It runs a local agentic loop — the model reads and writes files, runs commands,
+and searches the web, with whichever of those tools you give it — from an
+interactive terminal, a one-shot command, or your own Python. Architecturally it follows
+[pi](https://github.com/earendil-works/pi): the same layering, trimmed to the core logics.
 
 - **Minimal.** The stateless agent loop is under 500 lines of code, in
   [`agent/loop.py`](lab_harness/agent/loop.py); the stateful `Agent` that wraps
-  it — transcript, subscribers, abort — is under 150, in
-  [`agent/agent.py`](lab_harness/agent/agent.py). Not counting comments and
-  docstrings, which explain the why. A handful of runtime dependencies, no
-  agent framework.
+  it — transcript, subscribers, abort — is under 150 lines, in
+  [`agent/agent.py`](lab_harness/agent/agent.py). No other framework dependencies.
 - **Every request reproducible.** A session records the system prompt, tools,
-  model and config each invocation ran with, so every request it made can be
-  rebuilt exactly as the provider received it — for replay, analysis, or
-  training data. See [trajectories](docs/sessions.md#trajectories).
+  model and config each request was sent with — including changes mid-session
+  and requests a hook rewrote — so every request it made can be rebuilt exactly
+  as the provider received it, for replay, analysis, or training data. See
+  [trajectories](docs/sessions.md#trajectories).
 - **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any
   OpenAI-compatible endpoint, with reasoning carried across tool calls the way
   each vendor requires. Every endpoint and model is a table in
@@ -96,8 +94,9 @@ uv run lab-harness -p "summarize the config module"   # one-shot
 ```
 
 Interactive mode asks before `bash`, `write` or `edit` runs; `-p` has nobody to
-ask, so they run unprompted. Sessions, JSONL events, other models and debug
-logs: [examples/terminal.md](examples/terminal.md).
+ask, so they run unprompted — give it fewer tools with `--tools read,ls,grep,glob`
+to rule them out. Sessions, JSONL events, other models, the system prompt and
+debug logs: [examples/terminal.md](examples/terminal.md).
 
 ## From Python
 
@@ -135,7 +134,7 @@ for training. Configuration and every environment variable:
 | [tools.md](docs/tools.md) | Tool contract, built-ins, adding a tool |
 | [sessions.md](docs/sessions.md) | Transcript format, resume, rebuilding trajectories |
 | [cli.md](docs/cli.md) | Terminal, flags, keybindings, the usage and cost readout |
-| [configuration.md](docs/configuration.md) | Config files, environment variables, models and prices |
+| [configuration.md](docs/configuration.md) | Config files, environment variables, models and prices, prompts |
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
 
 The full design rationale — including what was cut and why — is in
@@ -151,16 +150,18 @@ should also read [AGENTS.md](AGENTS.md).
 pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with streamed, collapsible thinking,
 colored edit diffs and a per-run token, cache and cost readout, a fail-closed
-approval gate, layered TOML config, project instructions from
+approval gate, a tool set chosen in config or per run, layered TOML config with
+the prompts and the model catalog as data, project instructions from
 `HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable sessions
-that record enough to rebuild every request they made. A step-by-step reading
+that record enough to rebuild every request they made, changes mid-session
+included. A step-by-step reading
 order is in
 [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
 gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
-`edit` run unprompted. Interactive mode asks, and fails closed on anything but
-an explicit yes.
+`edit` run unprompted unless `--tools` or `tools.enabled` leaves them out.
+Interactive mode asks, and fails closed on anything but an explicit yes.
 
 **Web search needs a key.** The default backend is
 [Tavily](https://tavily.com) (free tier available); the keyless `ddgs`
@@ -173,9 +174,9 @@ key either way.
 - **Context compaction.** The one piece of the original design still unbuilt.
   `prepare_request` is called before every provider request,
   `Model.context_window` and per-message `Usage` exist, and the session schema
-  reserves a `compaction` entry — so it lands without touching the loop. That
-  entry has to record the summary, or rebuilt trajectories would show the
-  uncompacted history.
+  reserves a `compaction` entry — so it lands without touching the loop. Its
+  rewrites are recorded already; the entry is for writing a summary once rather
+  than the whole view with every request.
 - **Anthropic prompt caching.** The Messages adapter sends no `cache_control`
   markers yet, so Anthropic caches nothing and its cache hit rate reads 0%.
   Contained to one function in `anthropic.py`; the placement is planned in

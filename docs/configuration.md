@@ -3,11 +3,13 @@
 ## Principles
 
 **Nothing tunable is hardcoded.** Models, timeouts, retry counts, truncation
-limits, directory locations, default tool sets — all of it resolves from config.
-The schema in `lab_harness/config.py` is the single list of every knob the system
-has, and every default lives there — except the LLMs that ship, which are data:
-[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml) lists the
-endpoints and models, in config-file format.
+limits, directory locations, default tool sets, prompts — all of it resolves
+from config. The schema in `lab_harness/config.py` is the single list of every
+knob the system has, and every default lives there — except two kinds of data
+the package ships in config-file format:
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml), the
+endpoints and models, and [`lab_harness/prompts.toml`](../lab_harness/prompts.toml),
+the prompts.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
 go in `config.local.toml` (gitignored) or environment variables — never in
@@ -18,8 +20,8 @@ go in `config.local.toml` (gitignored) or environment variables — never in
 
 Lowest to highest precedence:
 
-1. Schema defaults in `lab_harness/config.py`, and the endpoints and models in
-   `lab_harness/llm/catalog.toml`
+1. Schema defaults in `lab_harness/config.py`, the endpoints and models in
+   `lab_harness/llm/catalog.toml`, and the prompts in `lab_harness/prompts.toml`
 2. `~/.lab-harness/config.toml` — user config
 3. `./.lab-harness/config.toml` — project config, committed
 4. `./.lab-harness/config.local.toml` — project-local, **gitignored**
@@ -72,6 +74,16 @@ provider = "anthropic"           # for a model id nothing else routes
 context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
 max_bytes = 32000                            # longer files are truncated
 
+[prompts]               # ships in lab_harness/prompts.toml; see "Prompts" below
+system = "You are a helpful assistant running in a terminal. …"
+project_instructions = "## Project instructions ({name})\n\n…{text}"
+
+[tools]
+enabled = [             # what the model may call, in both modes; --tools overrides
+    "read", "write", "edit", "ls", "bash", "grep", "glob",
+    "web_search", "web_fetch",
+]
+
 [tools.read]
 default_limit = 2000    # lines returned when the model requests no limit
 max_line_length = 2000  # where a long line is clipped
@@ -110,10 +122,6 @@ required = ["bash", "write", "edit"]  # prompt before these run
 allow_remember = true                 # whether "always" is honored
 
 [terminal]
-enabled_tools = [
-    "read", "write", "edit", "ls", "bash", "grep", "glob",
-    "web_search", "web_fetch",
-]
 max_result_lines = 12   # tool output shown before collapsing
 max_diff_lines = 40     # lines of an edit's diff shown before collapsing
 markdown = true         # render assistant text as markdown
@@ -129,7 +137,7 @@ prompt = "bold #d77757"
 [session]
 home = "~/.lab-harness" # root for state; $LAB_HARNESS_HOME overrides
 enabled = true          # write transcripts at all
-version = 2             # transcript schema version
+version = 3             # transcript schema version
 
 [providers.anthropic]
 default_max_tokens = 8192     # when the model declares none
@@ -377,6 +385,43 @@ Amounts are labelled with `terminal.currency_symbol` (default `$`). It is only a
 label: write every rate in the same currency, because a session that switches
 models adds the costs together.
 
+## Prompts
+
+What the model is told besides the conversation and the tool declarations. The
+text ships in [`lab_harness/prompts.toml`](../lab_harness/prompts.toml) — data,
+not Python — and that file is the default of the `[prompts]` section, in the
+same format. A config file replaces a prompt with the same key:
+
+```toml
+[prompts]
+system = """\
+You are a careful research assistant. Say when you are unsure. \
+Keep responses concise."""
+```
+
+| Key | Holds |
+|---|---|
+| `system` | Opens every request's system prompt. Empty sends none. |
+| `project_instructions` | Wraps the [project's instructions](#project-instructions), appended after a blank line. `{name}` is the file's name, `{text}` its contents. |
+
+**The system prompt names no tools.** What the model can call, and how to use
+each tool, comes from the tool declarations alone — so `tools.enabled` or
+`--tools` can narrow the set without the prompt describing a tool that is not
+there. Advice about one tool belongs in its description. A test holds the
+shipped prompt to this; hold your own to it too.
+
+**For one run**, `--system-prompt TEXT` or `--system-prompt-file PATH` replaces
+`system`; the project's instructions are still appended. **Mid-session**, a
+Python caller can assign `agent.state.system_prompt` between runs. Either way
+the session records the prompt each request was sent with —
+[sessions.md](sessions.md#changes-mid-session).
+
+`project_instructions` is checked at startup, in every directory: a
+placeholder other than `{name}` and `{text}`, or a template without `{text}`,
+is an error. Write `{{` and `}}` for literal braces. A line ending in a
+backslash inside `"""` continues the paragraph, so a prompt can be wrapped in
+the file without breaking the text the model sees.
+
 ## The terminal
 
 How the interactive terminal looks. What each element is:
@@ -445,7 +490,7 @@ go to the file as usual, out of the conversation.
 |---|---|
 | `error` | Only failures the run could not absorb |
 | `warning` *(default)* | …plus a model id not in the catalog, project instructions truncated, `max_turns` exhausted, a provider request that failed, and a resumed session's warnings in `-p` mode |
-| `info` | …plus one line per significant decision — the model and where its id came from, which rule picked the provider, the project instructions used, the transcript being written, approval being off, a `-p` resume — and one summary line per run |
+| `info` | …plus one line per significant decision — the model and where its id came from, which rule picked the provider, the tools and the system prompt and where each came from, the project instructions used, the transcript being written, approval being off, a `-p` resume — and one summary line per run |
 | `debug` | …plus a trace: every config file read or skipped, the tools and prompt size, each request's shape and reasoning settings, each response's vendor id, stop reason as sent, sizes, tokens and timing, each tool call's argument names, approval answer, outcome and duration, and outbound web requests |
 
 [cli.md](cli.md#diagnostics) has what a run looks like at `debug`.
@@ -545,4 +590,6 @@ must not have.
 
 Changing the file changes the system prompt — so `--resume` on an older
 session will warn that the prompt has moved. That is the warning working, not
-a bug; the transcript records which prompt each invocation ran with.
+a bug; the transcript records which prompt each request was sent with. How the
+instructions are wrapped is `prompts.project_instructions` — see
+[Prompts](#prompts).

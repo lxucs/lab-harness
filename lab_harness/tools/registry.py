@@ -31,12 +31,16 @@ class ToolRegistry:
         """Resolve configured tool names, in the order given.
 
         An unknown name raises: a typo in config that silently disabled a tool
-        would be found much later, by the model failing to do its job.
+        would be found much later, by the model failing to do its job. So does
+        a name given twice, which would declare the tool to the model twice.
         """
         unknown = [name for name in names if name not in self._tools]
         if unknown:
             available = ", ".join(sorted(self._tools))
             raise ValueError(f"Unknown tool(s): {', '.join(unknown)}. Available: {available}")
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"Tool(s) listed more than once: {', '.join(repeated)}")
         return tuple(self._tools[name] for name in names)
 
     def __iter__(self) -> Iterator[AgentTool]:

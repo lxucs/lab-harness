@@ -22,6 +22,9 @@ what the runtime does.
 | `--model` | Model id. Beats `$LAB_HARNESS_MODEL`, which beats `agent.model` in config. |
 | `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
+| `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
+| `--system-prompt` | Replaces `prompts.system` for this run. Project instructions are still appended. |
+| `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
 | `--resume [ID]` | Continue a session. With no id, the most recent one here. |
@@ -194,7 +197,7 @@ One event per line, flushed as it happens:
 
 ```bash
 $ lab-harness -p "what files are here?" --json
-{"type": "agent_start"}
+{"system_prompt": "...", "tools": [...], "model": {"id": "claude-sonnet-5", ...}, "history": 0, "type": "agent_start"}
 {"type": "turn_start"}
 {"message": {"content": [], "model": "...", "stop_reason": "stop", ...}, "type": "message_start"}
 {"tool_call_id": "c1", "tool_name": "ls", "arguments": {}, "type": "tool_execution_start"}
@@ -226,9 +229,28 @@ transcript across many invocations. Sessions are scoped to the working
 directory — resuming in one project never surfaces another's history.
 
 Each invocation also records the system prompt, tool declarations, model and
-config (credentials redacted) it ran with, so every request can be rebuilt
-from the file. Format, trimming of interrupted turns, rebuilding trajectories,
-and the reserved `compaction` entry: [sessions.md](sessions.md).
+config (credentials redacted) it ran with, and records them again whenever one
+changes mid-session, so every request can be rebuilt from the file. Format,
+trimming of interrupted turns, rebuilding trajectories, and the reserved
+`compaction` entry: [sessions.md](sessions.md).
+
+## The system prompt
+
+What every request opens with: `prompts.system` from config, then the
+project's instructions, below. The default ships in
+[`lab_harness/prompts.toml`](../lab_harness/prompts.toml). It names no tools —
+what the model can call comes from the tool declarations alone, so narrowing
+`--tools` never leaves the prompt describing a tool that is not there.
+
+```bash
+lab-harness --system-prompt "Answer in one sentence."
+lab-harness --system-prompt-file prompts/terse.md
+```
+
+Either replaces `prompts.system` for one run, and the project's instructions
+are still appended. The file is read relative to the shell's directory, not
+`--cwd`, and its surrounding whitespace dropped. To change the prompt for good,
+set it in config: [configuration.md](configuration.md#prompts).
 
 ## Project instructions
 
@@ -284,8 +306,8 @@ region — straight to the terminal, a record would land inside the region and
 break its next redraw. To keep them out of the conversation, redirect stderr
 and `tail -f lab-harness.log` in another pane.
 
-`info` adds the decisions — which model, from where, which provider and why —
-and one line per run. `debug` adds the trace: every request, response and tool
+`info` adds the decisions — which model, from where, which provider and why,
+which tools, which system prompt — and one line per run. `debug` adds the trace: every request, response and tool
 call, with the ids that find each one in the transcript and in `--json`:
 
 ```
@@ -368,4 +390,7 @@ session, never persisted.
 
 Approval is **skipped in `-p` mode**, which means one-shot runs execute mutating
 tools without asking — there is nobody at the keyboard to answer. Use `-p`
-deliberately, and `--yes` only when you mean it.
+deliberately, and `--yes` only when you mean it. To keep a tool out of a run
+altogether, leave it out of the tool set: `--tools read,ls,grep,glob` makes a
+read-only run, in either mode, because a tool not enabled is never declared to
+the model.

@@ -5,7 +5,7 @@ the repository root, after `uv sync`.
 
 | Example | Shows | Needs a key |
 |---|---|---|
-| [terminal.md](terminal.md) | The CLI: interactive, one-shot, JSONL events, sessions, other models, debug logs | yes |
+| [terminal.md](terminal.md) | The CLI: interactive, one-shot, JSONL events, sessions, other models, the system prompt, debug logs | yes |
 | [scripted.py](scripted.py) | The real loop and a real tool, driven by a scripted model | **no** |
 | [quickstart.py](quickstart.py) | An agent in a few lines: stream the answer, watch the tool calls | yes |
 | [custom_tool.py](custom_tool.py) | A new tool as one decorated function, beside a few built-ins | yes |

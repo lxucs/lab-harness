@@ -46,6 +46,7 @@ from lab_harness.agent.types import (
     MessageStart,
     MessageUpdate,
     PrepareRequestContext,
+    RequestRewritten,
     ToolContext,
     ToolExecutionEnd,
     ToolExecutionStart,
@@ -113,7 +114,15 @@ async def run_agent_loop(
     requests = 0
 
     _log.debug("Run started with %d message(s) and %d tool(s)", len(transcript), len(ctx.tools))
-    await _safe_emit(emit, AgentStart())
+    await _safe_emit(
+        emit,
+        AgentStart(
+            system_prompt=ctx.system_prompt,
+            tools=declarations,
+            model=cfg.model,
+            history=len(ctx.messages) - len(ctx.unannounced),
+        ),
+    )
 
     # Messages the caller already holds but no subscriber has seen — normally
     # the user turn that triggered this run. Announced, not appended: they are
@@ -138,9 +147,14 @@ async def run_agent_loop(
             update = await cfg.prepare_request(
                 PrepareRequestContext(messages=messages, model=model)
             )
-            if update is not None:
+            if update is not None and (update.messages is not None or update.model is not None):
                 messages = update.messages if update.messages is not None else messages
                 model = update.model if update.model is not None else model
+                # The transcript keeps the history; this is the only record of
+                # what was sent instead.
+                await _safe_emit(
+                    emit, RequestRewritten(messages=update.messages, model=update.model)
+                )
 
         # After the hook, so the line says what was actually sent.
         _log.debug("Turn %d/%d: %d message(s) to %s", turn + 1, limit, len(messages), model.id)
