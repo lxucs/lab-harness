@@ -32,7 +32,6 @@ from lab_harness.cli.terminal import (
 from lab_harness.config import (
     Config,
     ConfigError,
-    ModelConfig,
     PricingConfig,
     TerminalConfig,
     ThemeConfig,
@@ -47,6 +46,7 @@ from lab_harness.llm.types import (
     text,
 )
 from lab_harness.logs import configure_logging
+from tests.entries import model_entry
 
 
 class ScriptedSession:
@@ -295,7 +295,7 @@ async def test_the_footer_can_be_turned_off() -> None:
 
 async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
     price = PricingConfig(input=1_000.0, output=1_000.0)
-    config = Config(models={FAKE_MODEL.id: ModelConfig(price=price)})
+    config = Config(models={FAKE_MODEL.id: model_entry(price=price)})
     terminal, buffer = _terminal(["hello"], config)
     _attach(terminal, FakeProvider([text_response("Hi")]))
 

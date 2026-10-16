@@ -14,7 +14,6 @@ modeled on [pi](https://github.com/earendil-works/pi). Researchers read and
 change the code, so keep it small and readable: a new feature that fits a hook
 or a subscriber does not belong in the loop.
 
-- Design spec: [`docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md`](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md)
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Usage, terminal and Python: [`examples/`](examples/)
 - What is built and what is not: [`README.md`](README.md#status)
@@ -50,7 +49,7 @@ ids — in config, the model catalog, the prompts, docs, tests, or examples.
 | `.lab-harness/config.toml` | yes | Non-sensitive defaults |
 | `.lab-harness/config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `.lab-harness/config.example.toml` | yes | Template, placeholders only |
-| `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
+| `lab_harness/llm/catalog.toml` | yes | Every LLM setting — public, documented vendor data only |
 | `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 
 Real runtime values belong in the `*.local.toml` layer, which `.gitignore`

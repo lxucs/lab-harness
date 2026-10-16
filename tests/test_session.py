@@ -14,7 +14,7 @@ import pytest
 
 from lab_harness.agent import Agent
 from lab_harness.agent.types import PrepareRequestContext, RequestUpdate, declarations_for
-from lab_harness.config import REDACTED, Config, OpenAIConfig, SessionConfig, TavilyConfig, snapshot
+from lab_harness.config import REDACTED, Config, SessionConfig, TavilyConfig, snapshot
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import (
     AssistantMessage,
@@ -45,6 +45,7 @@ from lab_harness.session.transcript import (
 )
 from lab_harness.tools import default_registry
 from lab_harness.tools.base import ExecutionMode, ToolContext, ToolResult
+from tests.entries import profile_entry
 
 CONFIG = SessionConfig()
 #: What a recorder snapshots. The session part of it is CONFIG.
@@ -423,7 +424,7 @@ def test_credentials_never_reach_the_transcript(tmp_path: Path) -> None:
         RUNTIME,
         providers=replace(
             RUNTIME.providers,
-            openai={**RUNTIME.providers.openai, "mine": OpenAIConfig(api_key=secret)},
+            openai={**RUNTIME.providers.openai, "mine": profile_entry(api_key=secret)},
         ),
         tools=replace(
             RUNTIME.tools, web=replace(RUNTIME.tools.web, tavily=TavilyConfig(api_key=secret))

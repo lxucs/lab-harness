@@ -36,7 +36,7 @@ from anthropic.types import ThinkingBlock as SDKThinkingBlock
 from anthropic.types import ThinkingDelta as SDKThinkingDelta
 from anthropic.types import ToolUseBlock as SDKToolUseBlock
 
-from lab_harness.config import AnthropicConfig
+from lab_harness.config import AnthropicConfig, Config
 from lab_harness.llm.events import (
     StreamDone,
     StreamError,
@@ -102,7 +102,7 @@ class AnthropicProvider:
         *,
         client: anthropic.AsyncAnthropic | None = None,
     ) -> None:
-        self._config = config if config is not None else AnthropicConfig()
+        self._config = config if config is not None else Config().providers.anthropic
         self._client = client
         self._client_error: str | None = None
         if client is None:

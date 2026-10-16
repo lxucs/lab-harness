@@ -2,7 +2,8 @@
 
 The catalog itself is data, not code: llm/catalog.toml, read as the default of
 the `models` config section. A config file adds a model, or changes one, with
-the same `[models.<id>]` table, so nothing about a model is hardcoded here.
+the same `[models.<id>]` table, so nothing about a model is hardcoded here. An
+id it does not list gets `[defaults.model]`.
 
 Capability flags describe the model, so they live with it rather than at a
 call site: `supports_reasoning` gates the thinking request an adapter sends,
@@ -12,14 +13,10 @@ and `supports_images` and `supports_server_tools` only record a capability.
 import logging
 import os
 
-from lab_harness.config import Config, ModelConfig
+from lab_harness.config import Config, model_defaults
 from lab_harness.llm.types import Model
 
 _log = logging.getLogger(__name__)
-
-#: What an unlisted id is given, as its warning states it.
-_UNKNOWN = ModelConfig()
-_UNKNOWN_LIMITS = f"{_UNKNOWN.context_window}-token context, {_UNKNOWN.max_tokens} output tokens"
 
 
 def resolve_model(model_id: str | None = None, config: Config | None = None) -> Model:
@@ -45,11 +42,16 @@ def resolve_model(model_id: str | None = None, config: Config | None = None) -> 
     _log.info("Using model %r, from %s", wanted, source)
     entry = config.models.get(wanted)
     if entry is None:
+        entry = model_defaults()
         # A typo looks identical to a model newer than the catalog, so this
         # says only what is certain: the limits are a guess. Which vendor
         # serves the id is decided later, by routing.
-        _log.warning("Model %r is not in the catalog; assuming %s", wanted, _UNKNOWN_LIMITS)
-        entry = _UNKNOWN
+        _log.warning(
+            "Model %r is not in the catalog; assuming %s-token context, %s output tokens",
+            wanted,
+            entry.context_window,
+            entry.max_tokens,
+        )
     return Model(
         id=wanted,
         name=entry.name or wanted,

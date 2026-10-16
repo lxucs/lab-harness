@@ -4,6 +4,10 @@ An example that drifts is worse than none: it documents keys that do nothing
 and omits the ones you need. Now that config files actually load, the example
 can be checked by *loading* it rather than by eyeballing it — if it applies
 cleanly and changes nothing, every key exists and every value is the default.
+
+The LLM sections are the exception. Every LLM setting is in
+lab_harness/llm/catalog.toml, whose loader refuses a defaults table that leaves
+a key out — so the catalog documents each one, and the example none.
 """
 
 import tomllib
@@ -13,13 +17,12 @@ from typing import Any
 
 import pytest
 
-from lab_harness.config import Config, _apply, _member_type
+from lab_harness.config import Config, _apply
 
 EXAMPLE = Path(__file__).resolve().parent.parent / ".lab-harness" / "config.example.toml"
 
-#: Stands in for the entry name in a table of named sections, whose keys are
-#: schema while the names are data: one documented entry covers them all.
-NAME = "<name>"
+#: Sections documented in the catalog, and only there.
+LLM_SECTIONS = frozenset({"providers", "models"})
 
 #: Keys deliberately absent from the example, and why. Anything else missing is
 #: an undocumented setting.
@@ -29,8 +32,6 @@ INTENTIONALLY_ABSENT = {
     "tools.web.tavily.api_key",
     # A machine-specific endpoint, for the same reason.
     "tools.web.tavily.base_url",
-    # Same rule, for an OpenAI-compatible profile.
-    f"providers.openai.{NAME}.api_key",
     # Prose that ships in prompts.toml, where it is documented. A copy here
     # would have to change with every edit to the default prompt.
     "prompts.system",
@@ -47,21 +48,15 @@ def example_data() -> dict[str, Any]:
 
 
 def leaf_paths(instance: object, trail: tuple[str, ...] = ()) -> set[str]:
-    """Every scalar setting in the schema, as dotted paths.
-
-    A dict field is a table of *named* sections (`providers.openai.deepseek`).
-    Its keys come from the entry type, not from whatever entries ship: the
-    names are data, but the keys inside a section are schema and must be
-    documented like any other.
-    """
+    """Every scalar setting in the schema outside the LLM sections, as dotted paths."""
     found: set[str] = set()
     for field in fields(instance):  # type: ignore[arg-type]
+        if not trail and field.name in LLM_SECTIONS:
+            continue
         value = getattr(instance, field.name)
         where = (*trail, field.name)
         if is_dataclass(value):
             found |= leaf_paths(value, where)
-        elif isinstance(value, dict):
-            found |= leaf_paths(_member_type(field)(), (*where, NAME))
         else:
             found.add(".".join(where))
     return found
@@ -70,18 +65,13 @@ def leaf_paths(instance: object, trail: tuple[str, ...] = ()) -> set[str]:
 def documented_paths(
     data: dict[str, Any], schema: object = None, trail: tuple[str, ...] = ()
 ) -> set[str]:
-    """Every scalar the example sets, as dotted paths, named entries as `NAME`."""
+    """Every scalar the example sets, as dotted paths."""
     schema = Config() if schema is None else schema
-    known = {field.name: field for field in fields(schema)}  # type: ignore[arg-type]
     found: set[str] = set()
     for key, value in data.items():
         where = (*trail, key)
         current = getattr(schema, key, None)
-        if isinstance(current, dict):
-            member = _member_type(known[key])
-            for section in value.values():
-                found |= documented_paths(section, member(), (*where, NAME))
-        elif is_dataclass(current):
+        if is_dataclass(current):
             found |= documented_paths(value, current, where)
         else:
             found.add(".".join(where))
@@ -127,3 +117,9 @@ def test_the_example_contains_no_secrets() -> None:
 def test_intentionally_absent_keys_really_are_absent(key: str) -> None:
     """Keeps the allowlist honest: an entry that got documented should be removed."""
     assert key not in documented_paths(example_data())
+
+
+def test_llm_settings_are_left_to_the_catalog() -> None:
+    """One place for every LLM setting, so the example holds none of them."""
+    present = sorted(LLM_SECTIONS & example_data().keys())
+    assert not present, f"Document these in lab_harness/llm/catalog.toml instead: {present}"

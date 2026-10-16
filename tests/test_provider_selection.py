@@ -27,6 +27,7 @@ from lab_harness.llm.providers import (
 from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.providers.responses import ResponsesProvider
+from tests.entries import model_entry, profile_entry
 
 
 def with_profiles(**profiles: OpenAIConfig) -> Config:
@@ -53,7 +54,7 @@ def test_a_models_entry_routes_its_id() -> None:
 
 def test_a_config_entry_can_repoint_a_catalogued_model() -> None:
     """A gateway, or a local server with the same weights, without a code change."""
-    config = with_models(**{"claude-sonnet-5": ModelConfig(provider="local")})
+    config = with_models(**{"claude-sonnet-5": model_entry(provider="local")})
 
     assert select_provider("claude-sonnet-5", config) == "local"
 
@@ -61,7 +62,7 @@ def test_a_config_entry_can_repoint_a_catalogued_model() -> None:
 def test_an_entry_naming_no_provider_falls_through() -> None:
     """An entry may only describe limits or a price, and leave routing alone."""
     config = replace(
-        with_models(**{"their-model": ModelConfig(max_tokens=4_096)}),
+        with_models(**{"their-model": model_entry(max_tokens=4_096)}),
         agent=AgentConfig(provider="my-gateway"),
     )
 
@@ -107,7 +108,7 @@ def test_a_profile_builds_the_openai_adapter_carrying_its_name() -> None:
 
 
 def test_a_profile_added_only_in_config_can_be_built() -> None:
-    config = with_profiles(groq=OpenAIConfig(base_url="https://api.groq.com/openai/v1"))
+    config = with_profiles(groq=profile_entry(base_url="https://api.groq.com/openai/v1"))
 
     provider = build_provider("groq", config)
 
@@ -140,8 +141,8 @@ def test_route_returns_a_matched_model_and_provider() -> None:
 def test_route_sets_the_provider_of_a_model_from_its_entry() -> None:
     """A model a config file added routes like a catalogued one."""
     config = replace(
-        with_models(**{"llama-3.3-70b": ModelConfig(provider="groq")}),
-        providers=ProvidersConfig(openai={"groq": OpenAIConfig()}),
+        with_models(**{"llama-3.3-70b": model_entry(provider="groq")}),
+        providers=ProvidersConfig(openai={"groq": profile_entry()}),
     )
 
     model, provider = route("llama-3.3-70b", config)
@@ -200,26 +201,26 @@ def test_the_other_shipped_profiles_speak_chat_completions() -> None:
 
 def test_chat_completions_is_the_default_for_a_new_profile() -> None:
     """A vendor added in config is far more likely to speak the old dialect."""
-    config = with_profiles(groq=OpenAIConfig())
+    config = with_profiles(groq=profile_entry())
 
     assert isinstance(build_provider("groq", config), ChatCompletionsProvider)
 
 
 def test_a_profile_can_opt_into_responses() -> None:
-    config = with_profiles(gateway=OpenAIConfig(api="responses"))
+    config = with_profiles(gateway=profile_entry(api="responses"))
 
     assert isinstance(build_provider("gateway", config), ResponsesProvider)
 
 
 def test_the_profile_name_survives_either_protocol() -> None:
     """It lands in AssistantMessage.provider, so a transcript stays truthful."""
-    assert build_protocol(OpenAIConfig(api="responses"), "mine").name == "mine"
-    assert build_protocol(OpenAIConfig(api="chat_completions"), "mine").name == "mine"
+    assert build_protocol(profile_entry(api="responses"), "mine").name == "mine"
+    assert build_protocol(profile_entry(api="chat_completions"), "mine").name == "mine"
 
 
 def test_an_unknown_protocol_fails_at_startup() -> None:
     with pytest.raises(ConfigError) as caught:
-        build_protocol(OpenAIConfig(api="grpc"), "mine")
+        build_protocol(profile_entry(api="grpc"), "mine")
 
     message = str(caught.value)
     assert "grpc" in message
@@ -229,7 +230,7 @@ def test_an_unknown_protocol_fails_at_startup() -> None:
 
 
 def test_an_unknown_protocol_in_config_fails_through_build_provider() -> None:
-    config = with_profiles(broken=OpenAIConfig(api="telepathy"))
+    config = with_profiles(broken=profile_entry(api="telepathy"))
 
     with pytest.raises(ConfigError, match="telepathy"):
         build_provider("broken", config)

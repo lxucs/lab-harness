@@ -55,6 +55,7 @@ from lab_harness.llm.types import (
     text,
 )
 from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
+from tests.entries import profile_entry
 from tests.http_fakes import (
     TEST_KEY,
     Exploding,
@@ -104,7 +105,7 @@ def provider(
     config: OpenAIConfig | None = None,
     name: str = "deepseek",
 ) -> ChatCompletionsProvider:
-    config = config or OpenAIConfig(api_key=TEST_KEY)
+    config = config or profile_entry(api_key=TEST_KEY)
     return ChatCompletionsProvider(config, name, client=recorder.client())
 
 
@@ -131,7 +132,7 @@ async def collect(
 async def test_posts_to_the_chat_completions_path() -> None:
     recorder = Recorder(sse(delta(content="hi"), finish()))
 
-    await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, base_url="https://x.test/v1")))
+    await collect(provider(recorder, profile_entry(api_key=TEST_KEY, base_url="https://x.test/v1")))
 
     assert recorder.request is not None
     assert str(recorder.request.url) == "https://x.test/v1/chat/completions"
@@ -140,7 +141,9 @@ async def test_posts_to_the_chat_completions_path() -> None:
 async def test_a_trailing_slash_on_base_url_does_not_double_up() -> None:
     recorder = Recorder(sse(finish()))
 
-    await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, base_url="https://x.test/v1/")))
+    await collect(
+        provider(recorder, profile_entry(api_key=TEST_KEY, base_url="https://x.test/v1/"))
+    )
 
     assert recorder.request is not None
     assert str(recorder.request.url) == "https://x.test/v1/chat/completions"
@@ -161,7 +164,7 @@ async def test_the_environment_beats_a_configured_key(monkeypatch: pytest.Monkey
     recorder = Recorder(sse(finish()))
 
     await collect(
-        provider(recorder, OpenAIConfig(api_key=TEST_KEY, api_key_env="DEEPSEEK_API_KEY"))
+        provider(recorder, profile_entry(api_key=TEST_KEY, api_key_env="DEEPSEEK_API_KEY"))
     )
 
     assert recorder.request is not None
@@ -175,7 +178,7 @@ async def test_the_environment_can_override_the_base_url(monkeypatch: pytest.Mon
     await collect(
         provider(
             recorder,
-            OpenAIConfig(
+            profile_entry(
                 api_key=TEST_KEY, base_url="https://x.test/v1", base_url_env="DEEPSEEK_BASE_URL"
             ),
         )
@@ -206,7 +209,7 @@ async def test_usage_is_requested_by_default() -> None:
 async def test_usage_can_be_turned_off_for_servers_that_reject_it() -> None:
     recorder = Recorder(sse(finish()))
 
-    await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, include_usage=False)))
+    await collect(provider(recorder, profile_entry(api_key=TEST_KEY, include_usage=False)))
 
     assert "stream_options" not in recorder.payload
 
@@ -224,7 +227,7 @@ async def test_preserved_thinking_sends_glms_documented_object() -> None:
     """Exactly Z.ai's example; `clear_thinking: false` is what keeps it."""
     recorder = Recorder(sse(finish()))
 
-    await collect(provider(recorder, OpenAIConfig(api_key=TEST_KEY, preserve_thinking=True)))
+    await collect(provider(recorder, profile_entry(api_key=TEST_KEY, preserve_thinking=True)))
 
     assert recorder.payload["thinking"] == {"type": "enabled", "clear_thinking": False}
 
@@ -377,7 +380,7 @@ async def test_thinking_is_not_replayed_by_default() -> None:
 # turn's `reasoning_content` comes back; GLM asks for it unmodified. Request
 # shapes follow the two vendors' published examples, not captured traffic.
 
-REPLAYING = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
+REPLAYING = profile_entry(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
 
 
 def thinking_turn(
@@ -436,7 +439,7 @@ async def test_every_earlier_turn_carries_its_reasoning() -> None:
 @pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
 async def test_the_replay_field_is_the_configured_one(field: str) -> None:
     recorder = Recorder(sse(finish()))
-    config = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field=field)
+    config = profile_entry(api_key=TEST_KEY, replay_reasoning_field=field)
 
     await collect(
         provider(recorder, config), ctx(messages=(thinking_turn("t", TextBlock(text="a")),))
@@ -770,7 +773,7 @@ async def test_a_missing_credential_is_a_stream_error_not_a_raise() -> None:
     recorder = Recorder(sse(finish()))
 
     events = await collect(
-        provider(recorder, OpenAIConfig(api_key="", api_key_env="NOT_SET_ANYWHERE"))
+        provider(recorder, profile_entry(api_key="", api_key_env="NOT_SET_ANYWHERE"))
     )
 
     assert len(events) == 1
@@ -785,7 +788,7 @@ async def test_the_credential_error_names_the_profile() -> None:
     recorder = Recorder(sse(finish()))
 
     events = await collect(
-        provider(recorder, OpenAIConfig(api_key="", api_key_env="NOPE"), name="my-gateway")
+        provider(recorder, profile_entry(api_key="", api_key_env="NOPE"), name="my-gateway")
     )
 
     assert "my-gateway" in (final(events).error_message or "")
@@ -987,7 +990,7 @@ async def test_the_log_counts_the_turns_whose_reasoning_goes_back(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """DeepSeek 400s a tool loop missing it, so how many carried it is the first question."""
-    config = OpenAIConfig(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
+    config = profile_entry(api_key=TEST_KEY, replay_reasoning_field="reasoning_content")
     reasoned = AssistantMessage(
         content=(ThinkingBlock(thinking="because"), TextBlock(text="a")),
         model=MODEL.id,

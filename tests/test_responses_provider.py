@@ -48,6 +48,7 @@ from lab_harness.llm.types import (
     UserMessage,
     text,
 )
+from tests.entries import profile_entry
 from tests.http_fakes import (
     TEST_KEY,
     Exploding,
@@ -133,7 +134,7 @@ def provider(
     config: OpenAIConfig | None = None,
     name: str = "openai",
 ) -> ResponsesProvider:
-    config = config or OpenAIConfig(api="responses", api_key=TEST_KEY)
+    config = config or profile_entry(api="responses", api_key=TEST_KEY)
     return ResponsesProvider(config, name, client=recorder.client())
 
 
@@ -169,7 +170,7 @@ async def test_posts_to_the_responses_path() -> None:
     recorder = Recorder(sse(completed()))
 
     await collect(
-        provider(recorder, OpenAIConfig(api_key=TEST_KEY, base_url="https://api.openai.com/v1"))
+        provider(recorder, profile_entry(api_key=TEST_KEY, base_url="https://api.openai.com/v1"))
     )
 
     assert recorder.request is not None
@@ -264,7 +265,7 @@ async def test_the_summary_can_be_turned_off() -> None:
     recorder = Recorder(sse(completed()))
 
     await collect(
-        provider(recorder, OpenAIConfig(api_key=TEST_KEY, reasoning_summary="")),
+        provider(recorder, profile_entry(api_key=TEST_KEY, reasoning_summary="")),
         model=REASONING_MODEL,
     )
 
@@ -276,7 +277,7 @@ async def test_storing_server_side_drops_the_encrypted_request() -> None:
     recorder = Recorder(sse(completed()))
 
     await collect(
-        provider(recorder, OpenAIConfig(api_key=TEST_KEY, store=True)), model=REASONING_MODEL
+        provider(recorder, profile_entry(api_key=TEST_KEY, store=True)), model=REASONING_MODEL
     )
 
     assert recorder.payload["store"] is True
@@ -655,7 +656,7 @@ async def test_incomplete_reasons_map_to_stop_reasons(reason: str, expected: str
 async def test_a_missing_credential_is_a_stream_error() -> None:
     recorder = Recorder(sse(completed()))
 
-    events = await collect(provider(recorder, OpenAIConfig(api_key="", api_key_env="NOT_SET")))
+    events = await collect(provider(recorder, profile_entry(api_key="", api_key_env="NOT_SET")))
 
     assert isinstance(events[0], StreamError)
     assert "NOT_SET" in (final(events).error_message or "")

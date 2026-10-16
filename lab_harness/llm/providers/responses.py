@@ -40,7 +40,7 @@ from typing import Any
 
 import httpx
 
-from lab_harness.config import OpenAIConfig
+from lab_harness.config import OpenAIConfig, profile_defaults
 from lab_harness.llm.events import (
     StreamDone,
     StreamEvent,
@@ -98,7 +98,7 @@ class ResponsesProvider:
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._config = config if config is not None else OpenAIConfig()
+        self._config = config if config is not None else profile_defaults()
         self._client = client
         self.name = name
         _http.log_sources(name, self._config)

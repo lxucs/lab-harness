@@ -22,11 +22,11 @@ from lab_harness.config import (
     SECRET_FIELDS,
     Config,
     ConfigError,
-    ModelConfig,
-    OpenAIConfig,
     config_paths,
     lab_harness_home,
     load_config,
+    model_defaults,
+    profile_defaults,
     snapshot,
 )
 
@@ -179,6 +179,13 @@ def test_a_scalar_where_a_section_belongs_is_an_error(tmp_path: Path) -> None:
         load_config(tmp_path)
 
 
+def test_the_defaults_are_the_catalogs_alone(tmp_path: Path) -> None:
+    """A config file overrides one entry at a time; no setting is shared by all."""
+    project(tmp_path, "[defaults.model]\nmax_tokens = 4096\n")
+    with pytest.raises(ConfigError, match="unknown setting 'defaults'"):
+        load_config(tmp_path)
+
+
 def test_an_array_of_non_strings_is_an_error(tmp_path: Path) -> None:
     project(tmp_path, "[tools.approval]\nrequired = [1, 2]\n")
     with pytest.raises(ConfigError, match="an array of strings"):
@@ -241,7 +248,7 @@ def test_the_vendors_that_want_reasoning_back_get_it() -> None:
 
 def test_a_new_profile_does_not_replay_reasoning() -> None:
     """An unknown server may reject a field it never asked for."""
-    assert OpenAIConfig().replay_reasoning_field == ""
+    assert profile_defaults().replay_reasoning_field == ""
 
 
 def test_only_glm_asks_the_server_to_preserve_thinking() -> None:
@@ -250,7 +257,7 @@ def test_only_glm_asks_the_server_to_preserve_thinking() -> None:
 
     assert profiles["glm"].preserve_thinking is True
     assert profiles["deepseek"].preserve_thinking is False
-    assert OpenAIConfig().preserve_thinking is False
+    assert profile_defaults().preserve_thinking is False
 
 
 def test_a_new_profile_can_be_added_in_config(tmp_path: Path) -> None:
@@ -277,13 +284,13 @@ def test_a_new_profile_keeps_the_shipped_ones(tmp_path: Path) -> None:
     assert set(profiles) >= {"openai", "deepseek", "glm", "groq"}
 
 
-def test_an_unset_key_in_a_new_profile_takes_the_schema_default(tmp_path: Path) -> None:
+def test_an_unset_key_in_a_new_profile_takes_the_catalog_default(tmp_path: Path) -> None:
     project(tmp_path, '[providers.openai.groq]\nbase_url = "https://api.groq.com/openai/v1"\n')
 
     groq = load_config(tmp_path).providers.openai["groq"]
 
-    assert groq.timeout_seconds == 120.0
-    assert groq.include_usage is True
+    assert groq.timeout_seconds == profile_defaults().timeout_seconds == 120.0
+    assert groq.include_usage is profile_defaults().include_usage is True
 
 
 def test_an_existing_profile_merges_rather_than_replaces(tmp_path: Path) -> None:
@@ -364,7 +371,7 @@ def test_a_model_can_be_added_in_config(tmp_path: Path) -> None:
     entry = load_config(tmp_path).models["my-model-1.5"]
 
     assert (entry.provider, entry.max_tokens) == ("groq", 4_096)
-    assert entry.context_window == ModelConfig().context_window, "an unset key is the default"
+    assert entry.context_window == model_defaults().context_window, "an unset key is the default"
     assert (entry.price.input, entry.price.output) == (0.6, 2.2)
     assert (entry.price.cache_read, entry.price.cache_write) == (0.0, 0.0), "an unset rate is zero"
 

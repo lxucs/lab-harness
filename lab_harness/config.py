@@ -4,9 +4,9 @@ This module is the single list of every tunable in the system. Code reads
 values from a resolved `Config`; it never hardcodes them. See
 docs/contributing.md. The one exception is data rather than tunables, which
 the package ships as TOML in config-file format and reads here as defaults:
-the LLM endpoints and models in llm/catalog.toml, the defaults of
-`providers.openai` and `models`, and the prompts in prompts.toml, the default
-of `prompts`.
+every LLM setting in llm/catalog.toml, the default of `providers` and `models`
+and the only source of their values, and the prompts in prompts.toml, the
+default of `prompts`.
 
 `load_config()` layers TOML files over these defaults, lowest precedence
 first: `<home>/config.toml`, `./.lab-harness/config.toml`, then
@@ -27,10 +27,10 @@ import logging
 import os
 import tomllib
 from collections.abc import Mapping
-from dataclasses import Field, asdict, dataclass, field, fields, is_dataclass, replace
+from dataclasses import MISSING, Field, asdict, dataclass, field, fields, is_dataclass, replace
 from functools import cache
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, get_args, get_origin
 
 _log = logging.getLogger(__name__)
 
@@ -232,38 +232,31 @@ class ToolsConfig:
 
 @dataclass(frozen=True, slots=True)
 class AnthropicConfig:
+    """Claude's adapter. Every value ships in llm/catalog.toml, so a field here
+    has a type and no default."""
+
     #: Env vars consulted for credentials, in precedence order. The values
     #: themselves never live in config — see docs/contributing.md.
-    auth_token_env: str = "ANTHROPIC_AUTH_TOKEN"
-    api_key_env: str = "ANTHROPIC_API_KEY"
-    base_url_env: str = "ANTHROPIC_BASE_URL"
+    auth_token_env: str
+    api_key_env: str
+    base_url_env: str
     #: Sampling ceiling when the model declares none.
-    default_max_tokens: int = 8_192
+    default_max_tokens: int
     #: What comes back in a thinking block: "summarized" or "omitted". The
     #: 5-series models think whether asked to or not, but default to omitted —
     #: the blocks arrive empty, and a terminal has nothing to show. Billing is
     #: the same either way. Empty sends no preference, for a model that
     #: rejects the field.
-    thinking_display: str = "summarized"
+    thinking_display: str
     #: Models that take the older thinking request, a token budget, matched by
     #: id prefix so a dated id and its alias agree: everything before 4.6,
     #: which introduced adaptive thinking. Any other reasoning model gets
     #: adaptive, as an uncatalogued id is assumed current — and the 5-series
     #: rejects a budget with a 400.
-    budget_thinking_models: tuple[str, ...] = (
-        "claude-haiku-4-5",
-        "claude-sonnet-4-5",
-        "claude-opus-4-5",
-        "claude-opus-4-1",
-        "claude-opus-4-0",
-        "claude-opus-4-2025",
-        "claude-sonnet-4-0",
-        "claude-sonnet-4-2025",
-        "claude-3",
-    )
+    budget_thinking_models: tuple[str, ...]
     #: Budget for those models, in tokens, when reasoning is requested. They
     #: do not think otherwise.
-    thinking_budget_tokens: int = 4_096
+    thinking_budget_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,37 +267,38 @@ class OpenAIConfig:
     `responses` is OpenAI's current API, and the only way to carry an OpenAI
     reasoning model's chain of thought across a tool call; `chat_completions`
     is what DeepSeek, GLM, Groq, OpenRouter, vLLM and Ollama speak.
+
+    A key a profile leaves out comes from `[defaults.profile]` in
+    llm/catalog.toml, so a field here has a type and no default — except
+    `api_key`, whose default is having none.
     """
 
-    #: "responses" or "chat_completions". Defaults to the latter because it is
-    #: what every non-OpenAI endpoint speaks; the shipped `openai` profile
+    #: "responses" or "chat_completions". The default is the latter because it
+    #: is what every non-OpenAI endpoint speaks; the shipped `openai` profile
     #: overrides it.
-    api: str = "chat_completions"
-    base_url: str = "https://api.openai.com/v1"
+    api: str
+    base_url: str
     #: Env var consulted first for the key.
-    api_key_env: str = "OPENAI_API_KEY"
+    api_key_env: str
     #: Env var that overrides `base_url`. Useful for a gateway in front of a
     #: vendor, and for pointing a profile at a local server.
-    base_url_env: str = "OPENAI_BASE_URL"
-    #: Empty means "not configured here"; look in the environment instead.
-    #: Only ever set this in config.local.toml, never a committed file.
-    api_key: str = ""
+    base_url_env: str
     #: Sampling ceiling when the model declares none.
-    default_max_tokens: int = 8_192
+    default_max_tokens: int
     #: Wall-clock limit for one streamed request. Generous next to the web
     #: tools': a long answer with reasoning legitimately takes minutes.
-    timeout_seconds: float = 120.0
+    timeout_seconds: float
     #: Ask for token counts in the stream. Not every compatible server
     #: implements `stream_options`; turn this off for one that rejects it.
     #: `chat_completions` only — Responses always reports usage.
-    include_usage: bool = True
+    include_usage: bool
     #: `chat_completions` only. Field each earlier assistant turn's reasoning
     #: is sent back in; empty sends none. DeepSeek returns a 400 for a request
     #: with tools unless every earlier turn's `reasoning_content` comes back,
     #: and GLM asks for it unmodified. Off for a new profile, because a server
     #: that never asked for the field may reject it. Responses replays its own
     #: encrypted reasoning regardless of this.
-    replay_reasoning_field: str = ""
+    replay_reasoning_field: str
     #: `chat_completions` only. Ask the server to keep earlier turns' reasoning
     #: in context rather than discarding it — GLM's Preserved Thinking, which
     #: is off on its standard endpoint. Replaying reasoning the server then
@@ -312,17 +306,21 @@ class OpenAIConfig:
     #: It sends GLM's own request shape, which another vendor would read
     #: differently or reject; and its `type: "enabled"` switches thinking on
     #: for GLM-4.6, the one hybrid model left in the lineup.
-    preserve_thinking: bool = False
+    preserve_thinking: bool
     #: `responses` only. Detail of the reasoning summary: "auto", "concise" or
     #: "detailed". Empty asks for none, which makes a reasoning model's
     #: thinking invisible — the raw chain is never returned, so the summary is
     #: the only readable form of it.
-    reasoning_summary: str = "auto"
+    reasoning_summary: str
     #: `responses` only. Let the server keep the conversation and refer to it
     #: by id. Off, because this harness owns its transcript: a thread living on
     #: someone else's server is one `--resume` and the session files cannot
     #: see. Turning it on disables encrypted-reasoning replay.
-    store: bool = False
+    store: bool
+    #: Empty means "not configured here"; look in the environment instead.
+    #: Only ever set this in config.local.toml, never a committed file — which
+    #: is why its default is here rather than in the catalog.
+    api_key: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,61 +348,158 @@ class PricingConfig:
 class ModelConfig:
     """One model: who serves it, its limits and capabilities, and its price.
 
-    Keyed by model id under `models`. The defaults describe an id nobody
-    listed, which still works: it is assumed current, so it reasons, and its
-    limits are floors across the current Anthropic line, so guessing them
-    cannot exceed what a model accepts.
+    Keyed by model id under `models`. A key an entry leaves out comes from
+    `[defaults.model]` in llm/catalog.toml, which is also all an id nobody
+    listed gets — so a field here has a type and no default.
     """
 
     #: Display name. Empty shows the id.
-    name: str = ""
+    name: str
     #: "anthropic", or the name of a `providers.openai` profile. This is what
     #: routes `--model <id>` with no `--provider`; empty leaves it to
     #: `agent.provider`.
-    provider: str = ""
-    context_window: int = 200_000
-    max_tokens: int = 8_192
+    provider: str
+    context_window: int
+    max_tokens: int
     #: Gates the thinking request an adapter sends.
-    supports_reasoning: bool = True
+    supports_reasoning: bool
     #: Recorded, not acted on: nothing checks either before sending.
-    supports_images: bool = False
-    supports_server_tools: bool = False
+    supports_images: bool
+    supports_server_tools: bool
     #: An all-zero price — the default — shows no cost rather than a free one.
-    price: PricingConfig = field(default_factory=PricingConfig)
+    price: PricingConfig
 
 
-#: The LLMs the harness ships knowing about — OpenAI-family endpoints and the
-#: model catalog — as data, in config-file format. It is the default of
-#: `providers.openai` and of `models`, so a config file extends or overrides it
-#: with the same tables.
+#: Every LLM setting the harness ships — Claude's adapter, the OpenAI-family
+#: endpoints, the models, and what an endpoint or a model gets for a key it
+#: leaves out — as data, in config-file format. It is the default of
+#: `providers` and of `models`, so a config file extends or overrides it with
+#: the same tables.
 CATALOG_FILE = Path(__file__).parent / "llm" / "catalog.toml"
 
 
 @dataclass(frozen=True, slots=True)
+class _Defaults:
+    """`[defaults]` in the catalog: what a profile or a model gets for a key it
+    leaves out. `Config` has no such section, so only the catalog may set it."""
+
+    profile: OpenAIConfig
+    model: ModelConfig
+
+
+@dataclass(frozen=True, slots=True)
 class _CatalogProviders:
+    anthropic: AnthropicConfig
     openai: dict[str, OpenAIConfig] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class _Catalog:
-    """What the catalog may hold: the two sections it is the default of. Read
-    through `_apply` like any config file, so anything else is an error."""
+    """What the catalog may hold besides `[defaults]`: the two sections it is
+    the default of. Read through `_apply` like any config file, so anything else
+    is an error."""
 
-    providers: _CatalogProviders = field(default_factory=_CatalogProviders)
+    providers: _CatalogProviders
     models: dict[str, ModelConfig] = field(default_factory=dict)
 
 
 @cache
+def _defaults() -> _Defaults:
+    data = _read_shipped(CATALOG_FILE).get("defaults", {})
+    return _load_complete(_Defaults, data, source=CATALOG_FILE, trail=("defaults",))
+
+
+@cache
 def _catalog() -> _Catalog:
-    return _load_shipped(CATALOG_FILE, _Catalog())
+    data = dict(_read_shipped(CATALOG_FILE))
+    # Read by _defaults() instead, since every entry here starts from one.
+    data.pop("defaults", None)
+    return _load_complete(_Catalog, data, source=CATALOG_FILE, trail=())
+
+
+def profile_defaults() -> OpenAIConfig:
+    """What a `providers.openai` profile gets for each key it leaves out."""
+    return _defaults().profile
+
+
+def model_defaults() -> ModelConfig:
+    """What a `models` entry gets for each key it leaves out — and all that an
+    id listed nowhere gets."""
+    return _defaults().model
+
+
+def _read_shipped(path: Path) -> Mapping[str, Any]:
+    """A data file the package ships. Missing is a broken install, not a default."""
+    data = _read_toml(path)
+    if data is None:
+        raise ConfigError(f"{path}: missing, so the package is incomplete")
+    return data
 
 
 def _load_shipped[T](path: Path, shape: T) -> T:
     """Read a data file the package ships, as strictly as any config file."""
-    data = _read_toml(path)
-    if data is None:
-        raise ConfigError(f"{path}: missing, so the package is incomplete")
-    return _apply(shape, data, source=path, trail=())
+    return _apply(shape, _read_shipped(path), source=path, trail=())
+
+
+def _load_complete[T](
+    cls: type[T], data: Mapping[str, Any], *, source: Path, trail: tuple[str, ...]
+) -> T:
+    """Read a shipped table whose class leaves its values to it.
+
+    Checked as strictly as any config file, then for completeness: a key the
+    table leaves out has nothing else to come from.
+    """
+    loaded = _apply(_blank(cls), data, source=source, trail=trail)
+    _require_every_key(cls, data, source=source, trail=trail)
+    return loaded
+
+
+#: The empty value of each scalar type a config field can have.
+_EMPTY: dict[object, object] = {str: "", int: 0, float: 0.0, bool: False}
+
+
+def _has_default(spec: Field[Any]) -> bool:
+    return spec.default is not MISSING or spec.default_factory is not MISSING
+
+
+def _blank[T](cls: type[T]) -> T:
+    """`cls` with each field it has no default for at its type's empty value.
+
+    Never a usable config: it only gives `_apply` the types to check a table
+    against, for a class whose values all come from a shipped file.
+    """
+    values: dict[str, object] = {}
+    for spec in fields(cls):  # type: ignore[arg-type]
+        if _has_default(spec):
+            continue
+        # isinstance as well, for the reason `_member_type` gives.
+        if isinstance(spec.type, type) and is_dataclass(spec.type):
+            values[spec.name] = _blank(spec.type)
+        elif get_origin(spec.type) is tuple:
+            values[spec.name] = ()
+        else:
+            values[spec.name] = _EMPTY[spec.type]
+    return cls(**values)
+
+
+def _require_every_key(
+    cls: type, data: Mapping[str, Any], *, source: Path, trail: tuple[str, ...]
+) -> None:
+    """Raise unless `data` sets every key `cls` has no default for, at any depth."""
+    required = [spec for spec in fields(cls) if not _has_default(spec)]  # type: ignore[arg-type]
+    missing = [spec.name for spec in required if spec.name not in data]
+    if missing:
+        where = f" {'.'.join(trail)!r}" if trail else ""
+        raise ConfigError(
+            f"{source}:{where} must set {', '.join(missing)}, so the package is incomplete"
+        )
+    for spec in required:
+        if isinstance(spec.type, type) and is_dataclass(spec.type):
+            _require_every_key(spec.type, data[spec.name], source=source, trail=(*trail, spec.name))
+
+
+def _shipped_anthropic() -> AnthropicConfig:
+    return _catalog().providers.anthropic
 
 
 def _shipped_profiles() -> dict[str, OpenAIConfig]:
@@ -417,9 +512,11 @@ def _shipped_models() -> dict[str, ModelConfig]:
 
 @dataclass(frozen=True, slots=True)
 class ProvidersConfig:
-    anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
-    #: OpenAI-compatible endpoints, keyed by profile name; the shipped ones are
-    #: in llm/catalog.toml. Like `models`, and unlike every other section, *new
+    #: Claude's adapter. Its values ship in llm/catalog.toml.
+    anthropic: AnthropicConfig = field(default_factory=_shipped_anthropic)
+    #: OpenAI-compatible endpoints, keyed by profile name; the shipped ones,
+    #: and what a profile gets for a key it leaves out, are in
+    #: llm/catalog.toml. Like `models`, and unlike every other section, *new
     #: keys here are allowed* — that is how a vendor is added without touching
     #: code. Keys *inside* a profile are still checked.
     openai: dict[str, OpenAIConfig] = field(default_factory=_shipped_profiles)
@@ -566,9 +663,9 @@ class Config:
     prompts: PromptsConfig = field(default_factory=_shipped_prompts)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)
-    #: Every model the harness knows, keyed by id; the shipped ones are in
-    #: llm/catalog.toml. Like `providers.openai`, a new key is allowed — it
-    #: adds a model.
+    #: Every model the harness knows, keyed by id; the shipped ones, and what
+    #: an entry gets for a key it leaves out, are in llm/catalog.toml. Like
+    #: `providers.openai`, a new key is allowed — it adds a model.
     models: dict[str, ModelConfig] = field(default_factory=_shipped_models)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
     session: SessionConfig = field(default_factory=SessionConfig)
@@ -729,7 +826,8 @@ def _apply_named(
     The only tables where an unknown key is not an error. Everywhere else a
     name the schema does not know is a typo; here it is a new entry — a vendor
     profile, or a model — which is how a deployment adds one without
-    code. Keys *inside* a section are checked as strictly as anywhere else.
+    code. Keys *inside* a section are checked as strictly as anywhere else,
+    and a new entry starts from the catalog's defaults for its kind.
     """
     where = ".".join(trail)
     if not isinstance(data, Mapping):
@@ -744,9 +842,18 @@ def _apply_named(
             )
         base = merged.get(name)
         if base is None:
-            base = member()
+            base = _new_entry(member)
         merged[name] = _apply(base, section, source=source, trail=(*trail, name))
     return merged
+
+
+def _new_entry(member: type) -> Any:
+    """What an entry a table of named sections does not have yet starts from."""
+    if member is OpenAIConfig:
+        return profile_defaults()
+    if member is ModelConfig:
+        return model_defaults()
+    raise TypeError(f"No catalog defaults for {member.__name__}")
 
 
 #: Readable names for the types a config value can have, so messages read as

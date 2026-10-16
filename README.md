@@ -137,9 +137,6 @@ for training. Configuration and every environment variable:
 | [configuration.md](docs/configuration.md) | Config files, environment variables, models and prices, prompts |
 | [contributing.md](docs/contributing.md) | Code conventions, architectural invariants, config rules |
 
-The full design rationale — including what was cut and why — is in
-[the design spec](docs/superpowers/specs/2026-10-09-lab-harness-runtime-design.md).
-
 Contributing: [docs/contributing.md](docs/contributing.md). AI coding agents
 should also read [AGENTS.md](AGENTS.md).
 
@@ -171,7 +168,7 @@ key either way.
 
 ### TODO
 
-- **Context compaction.** The one piece of the original design still unbuilt.
+- **Context compaction.** The one planned piece still unbuilt.
   `prepare_request` is called before every provider request,
   `Model.context_window` and per-message `Usage` exist, and the session schema
   reserves a `compaction` entry — so it lands without touching the loop. Its

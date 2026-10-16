@@ -11,9 +11,20 @@ from pathlib import Path
 import pytest
 
 from lab_harness import config as config_module
-from lab_harness.config import AgentConfig, Config, ConfigError, ModelConfig, _catalog
+from lab_harness.config import (
+    AgentConfig,
+    AnthropicConfig,
+    Config,
+    ConfigError,
+    ModelConfig,
+    OpenAIConfig,
+    _catalog,
+    _defaults,
+    model_defaults,
+)
 from lab_harness.llm.providers import ANTHROPIC
 from lab_harness.llm.registry import resolve_model
+from tests.entries import model_entry
 
 
 def agent(**settings: str) -> Config:
@@ -31,7 +42,7 @@ def test_a_catalog_id_resolves_to_its_entry() -> None:
 def test_a_configured_entry_is_what_resolves() -> None:
     """The catalog is config: an entry a config file changed is the one used."""
     config = Config()
-    models = {**config.models, "claude-opus-5": ModelConfig(max_tokens=1_000)}
+    models = {**config.models, "claude-opus-5": model_entry(max_tokens=1_000)}
     assert resolve_model("claude-opus-5", replace(config, models=models)).max_tokens == 1_000
 
 
@@ -53,7 +64,7 @@ def test_every_catalogued_model_has_a_name_and_a_price() -> None:
         assert entry.price.input and entry.price.output, model_id
 
 
-def test_the_catalog_may_only_hold_endpoints_and_models(
+def test_the_catalog_may_only_hold_llm_settings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """It is read like a config file, so a stray section fails rather than vanishing."""
@@ -71,6 +82,47 @@ def test_a_missing_catalog_is_a_clear_error(
     monkeypatch.setattr(config_module, "CATALOG_FILE", tmp_path / "catalog.toml")
 
     with pytest.raises(ConfigError, match="package is incomplete"):
+        _catalog.__wrapped__()
+
+
+def shipped_without(line: str) -> str:
+    """The shipped catalog with one line taken out."""
+    shipped = config_module.CATALOG_FILE.read_text()
+    assert line in shipped, "the line this test removes must exist"
+    return shipped.replace(line, "", 1)
+
+
+def test_an_llm_class_has_no_values_of_its_own() -> None:
+    """Every value ships in the catalog. A bare one would be quietly half-set."""
+    for cls in (AnthropicConfig, OpenAIConfig, ModelConfig):
+        with pytest.raises(TypeError):
+            cls()  # type: ignore[call-arg]
+
+
+def test_a_defaults_table_missing_a_key_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nothing else supplies a key a defaults table leaves out."""
+    catalog = tmp_path / "catalog.toml"
+    catalog.write_text(shipped_without("timeout_seconds = 120.0\n"))
+    monkeypatch.setattr(config_module, "CATALOG_FILE", catalog)
+
+    with pytest.raises(
+        ConfigError, match=r"'defaults\.profile' must set timeout_seconds.*package is incomplete"
+    ):
+        _defaults.__wrapped__()
+
+
+def test_anthropic_missing_a_key_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    catalog = tmp_path / "catalog.toml"
+    catalog.write_text(shipped_without("thinking_budget_tokens = 4_096\n"))
+    monkeypatch.setattr(config_module, "CATALOG_FILE", catalog)
+
+    with pytest.raises(
+        ConfigError, match=r"'providers\.anthropic' must set thinking_budget_tokens"
+    ):
         _catalog.__wrapped__()
 
 
@@ -128,6 +180,15 @@ def test_an_unknown_id_gets_conservative_limits() -> None:
     model = resolve_model("claude-something-7")
     assert model.context_window == 200_000
     assert model.max_tokens == 8_192
+
+
+def test_an_unknown_id_gets_the_catalogs_model_defaults() -> None:
+    model, defaults = resolve_model("claude-something-7"), model_defaults()
+    assert (model.context_window, model.max_tokens) == (
+        defaults.context_window,
+        defaults.max_tokens,
+    )
+    assert model.supports_reasoning is defaults.supports_reasoning
 
 
 def test_an_unknown_configured_model_still_resolves() -> None:

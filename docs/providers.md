@@ -326,12 +326,14 @@ A profile's credential resolves from the environment first, then
 
 ## The model catalog
 
-Every model lab-harness knows, and the endpoints it ships, are data rather
-than code: [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
-It is the default of the `providers.openai` and `models` config sections and
-uses their format exactly, so a config file adds a model or a vendor, or
-changes one, with the same tables. One `[models.<id>]` table holds everything
-about a model — who serves it, its limits and flags, its price; the keys are in
+Every LLM setting lab-harness ships is data rather than code:
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml) holds
+Claude's adapter settings, the endpoints, every model, and in `[defaults]` what
+an endpoint or a model gets for a key it leaves out. It is the default of the
+`providers` and `models` config sections and uses their format exactly, so a
+config file adds a model or a vendor, or changes one, with the same tables. One
+`[models.<id>]` table holds everything about a model — who serves it, its
+limits and flags, its price; the keys are in
 [configuration.md](configuration.md#models).
 
 `resolve_model()` in `lab_harness/llm/registry.py` turns an id into the `Model`

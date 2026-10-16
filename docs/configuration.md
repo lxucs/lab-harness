@@ -7,9 +7,9 @@ limits, directory locations, default tool sets, prompts — all of it resolves
 from config. The schema in `lab_harness/config.py` is the single list of every
 knob the system has, and every default lives there — except two kinds of data
 the package ships in config-file format:
-[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml), the
-endpoints and models, and [`lab_harness/prompts.toml`](../lab_harness/prompts.toml),
-the prompts.
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml), every LLM
+setting, and [`lab_harness/prompts.toml`](../lab_harness/prompts.toml), the
+prompts.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
 go in `config.local.toml` (gitignored) or environment variables — never in
@@ -20,7 +20,7 @@ go in `config.local.toml` (gitignored) or environment variables — never in
 
 Lowest to highest precedence:
 
-1. Schema defaults in `lab_harness/config.py`, the endpoints and models in
+1. Schema defaults in `lab_harness/config.py`, every LLM setting in
    `lab_harness/llm/catalog.toml`, and the prompts in `lab_harness/prompts.toml`
 2. `~/.lab-harness/config.toml` — user config
 3. `./.lab-harness/config.toml` — project config, committed
@@ -55,7 +55,7 @@ picks up that project's `.lab-harness/`, not this one's.
 |---|---|---|
 | `config.toml` | yes | Non-sensitive defaults — tool lists, feature flags, limits |
 | `config.local.toml` | **no** | Keys, absolute paths, private endpoints |
-| `config.example.toml` | yes | Template documenting every key, placeholders only |
+| `config.example.toml` | yes | Template documenting every key but the LLM ones, placeholders only |
 
 ### `config.toml` — safe to commit
 
@@ -139,37 +139,9 @@ home = "~/.lab-harness" # root for state; $LAB_HARNESS_HOME overrides
 enabled = true          # write transcripts at all
 version = 3             # transcript schema version
 
-[providers.anthropic]
-default_max_tokens = 8192     # when the model declares none
-thinking_display = "summarized"  # "summarized" | "omitted" | "" for no preference
-budget_thinking_models = ["claude-haiku-4-5", "claude-3"]  # …and the rest before 4.6
-thinking_budget_tokens = 4096 # for those, when reasoning is requested
-
-# Endpoints in the OpenAI family, keyed by profile name. openai, deepseek and
-# glm ship in llm/catalog.toml; see "Provider profiles" below.
-[providers.openai.deepseek]
-api = "chat_completions"      # or "responses" (OpenAI's current API)
-base_url = "https://api.deepseek.com/v1"
-api_key_env = "DEEPSEEK_API_KEY"   # NAME of the variable; never the value here
-default_max_tokens = 8192
-timeout_seconds = 120.0
-include_usage = true          # chat_completions only
-replay_reasoning_field = "reasoning_content"  # chat_completions only; "" sends none
-preserve_thinking = false     # chat_completions only; GLM's Preserved Thinking
-reasoning_summary = "auto"    # responses only: "auto" | "concise" | "detailed"
-store = false                 # responses only; true disables encrypted replay
-
-# Every model, keyed by id: who serves it, its limits, and its price. The
-# catalog ships the ones lab-harness knows; see "Models" below.
-[models.claude-sonnet-5]
-name = "Claude Sonnet 5"
-provider = "anthropic"        # or a [providers.openai] profile; routes --model
-context_window = 1000000
-max_tokens = 64000
-supports_reasoning = true     # gates the thinking request
-supports_images = true
-supports_server_tools = true
-price = { input = 2.0, output = 10.0, cache_read = 0.2, cache_write = 2.5 }  # USD per 1M
+# Every LLM setting — [providers.anthropic], [providers.openai.<name>] and
+# [models.<id>] — ships in lab_harness/llm/catalog.toml, in this format; see
+# "Provider profiles" and "Models" below.
 
 [logging]
 level = "warning"                    # debug | info | warning | error
@@ -178,8 +150,8 @@ format = "%(levelname)s %(name)s: %(message)s"
 ```
 
 Every key, with its default, is in
-[`.lab-harness/config.example.toml`](../.lab-harness/config.example.toml); the
-endpoints and models that ship are in
+[`.lab-harness/config.example.toml`](../.lab-harness/config.example.toml) —
+except the LLM ones, which are all in
 [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml).
 
 ### `config.local.toml` — never committed
@@ -292,8 +264,11 @@ it sends GLM's own request shape, so leave it off for any other vendor.
 
 **Adding does not replace.** A profile named in a config file merges into the
 shipped one; `[providers.openai.deepseek] timeout_seconds = 30` leaves its
-`base_url` and `api_key_env` alone. Keys *inside* a profile are checked as
-strictly as anywhere else, so a typo there still fails at startup.
+`base_url` and `api_key_env` alone. A new profile starts from the catalog's
+`[defaults.profile]`, which lists every key and what one left out gets —
+OpenAI's endpoint and variables among them, so a profile for anyone else names
+its own. Keys *inside* a profile are checked as strictly as anywhere else, so a
+typo there still fails at startup.
 
 ## Models
 
@@ -324,10 +299,11 @@ provider = "my-gateway"
 | `supports_images`, `supports_server_tools` | `false` | Recorded; nothing acts on them |
 | `price` | all zero | USD — or any one currency — per million tokens |
 
-**The defaults are what an unlisted id gets.** An id with no entry still works:
-it is assumed current, so it reasons, and its limits are floors across current
-models, so guessing cannot exceed what one accepts. An entry needs only the
-keys that differ.
+**The defaults are what an unlisted id gets.** They are the catalog's
+`[defaults.model]`, which a config file cannot change — it overrides one entry
+at a time. An id with no entry still works: it is assumed current, so it
+reasons, and its limits are floors across current models, so guessing cannot
+exceed what one accepts. An entry needs only the keys that differ.
 
 **Which provider serves a model**, highest precedence first: `--provider`, then
 the entry's `provider`, then `agent.provider`. So `--model deepseek-flash`

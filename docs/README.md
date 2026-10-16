@@ -23,16 +23,13 @@ everything else assumes.
 | [configuration.md](configuration.md) | Config files, environment variables, models and prices, prompts |
 | [contributing.md](contributing.md) | Code conventions, architectural invariants, config rules |
 
-Design rationale and the decisions behind v1 scope live in
-[superpowers/specs/2026-10-09-lab-harness-runtime-design.md](superpowers/specs/2026-10-09-lab-harness-runtime-design.md).
-
 Working agreements for AI coding agents are in [`../AGENTS.md`](../AGENTS.md).
 
 ## Status
 
 Every numbered build step is complete, so these pages describe what the code
-does rather than what it will do. The one piece of the original design still
-unbuilt is context compaction, marked TODO in
+does rather than what it will do. The one planned piece still unbuilt is
+context compaction, marked TODO in
 [architecture.md](architecture.md). The remaining TODOs — compaction and Anthropic
 prompt caching — and what is deliberately not planned are listed in
 [the README](../README.md#todo).

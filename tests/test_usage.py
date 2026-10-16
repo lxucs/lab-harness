@@ -16,16 +16,17 @@ from lab_harness.cli.usage import (
     price_for,
     summarize,
 )
-from lab_harness.config import Config, ModelConfig, PricingConfig
+from lab_harness.config import Config, PricingConfig
 from lab_harness.llm.fake import FAKE_MODEL
 from lab_harness.llm.types import AssistantMessage, Usage, UserMessage, text
+from tests.entries import model_entry
 
 PRICED = "priced-model"
 UNPRICED = "unpriced-model"
 #: Round rates so expected costs can be worked out by hand.
 PRICE = PricingConfig(input=2.0, output=10.0, cache_read=0.2, cache_write=2.5)
 #: The models table `summarize` reads prices from, holding one priced model.
-MODELS = {PRICED: ModelConfig(price=PRICE)}
+MODELS = {PRICED: model_entry(price=PRICE)}
 
 
 def reply(usage: Usage, *, model: str = PRICED, stop_reason: str = "stop") -> AssistantMessage:
@@ -135,18 +136,18 @@ def test_a_model_without_an_entry_is_unpriced() -> None:
 
 def test_an_entry_without_a_price_is_unpriced() -> None:
     """An entry may give only limits or a provider; its default price is none."""
-    assert price_for(PRICED, {PRICED: ModelConfig(provider="groq")}) is None
+    assert price_for(PRICED, {PRICED: model_entry(provider="groq")}) is None
 
 
 def test_an_all_zero_price_is_unpriced() -> None:
     """TOML has no null, and a merged table cannot delete a shipped entry."""
-    assert price_for(PRICED, {PRICED: ModelConfig(price=PricingConfig())}) is None
+    assert price_for(PRICED, {PRICED: model_entry(price=PricingConfig())}) is None
 
 
 def test_a_partly_priced_entry_is_priced() -> None:
     price = PricingConfig(input=1.0)
 
-    assert price_for(PRICED, {PRICED: ModelConfig(price=price)}) == price
+    assert price_for(PRICED, {PRICED: model_entry(price=price)}) == price
 
 
 def test_cost_of_is_per_million_tokens() -> None:

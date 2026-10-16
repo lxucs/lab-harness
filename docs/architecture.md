@@ -141,13 +141,13 @@ itself and prompts again when the run returns.
 branch summarization.
 
 **pi's generated provider catalog** shrinks to `llm/catalog.toml`: a hand-kept
-table of the endpoints we ship and the models they serve, in config-file
-format, so adding a model is a few lines of TOML and a config file can add or
-override one the same way.
+file of every LLM setting we ship — the endpoints, the models they serve, and
+their defaults — in config-file format, so adding a model is a few lines of
+TOML and a config file can add or override one the same way.
 
 ## TODO, with a place to land
 
-**Context compaction** is the one piece of the original design still unbuilt.
+**Context compaction** is the one planned piece still unbuilt.
 The seam it needs — `prepare_request` — already exists and is already called
 before every provider request. Compaction reads the context, decides whether to
 summarize, and returns a replacement; nothing in the loop changes when it
@@ -158,7 +158,12 @@ schema, so the groundwork is laid. Rebuilt
 rewrite `prepare_request` makes is recorded — but as the whole view, on every
 request. The `compaction` entry is for writing a summary once.
 
-See §7 of the design spec for the full plan.
+The plan is a `context/` package of two modules, `tokens.py` and
+`compaction.py`: past a threshold, summarize the oldest turns with a cheap
+model, splice in a `CompactionSummary` message, keep the most recent turns, and
+never cut between a tool call and its result. It should stay small — pi's
+version also covers branch summarization and structured artifact indexes,
+which are not planned here.
 
 ## Reading order
 

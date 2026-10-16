@@ -7,6 +7,7 @@ must not raise. Every failure path has to arrive as a StreamError.
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from typing import Any
 
 import anthropic
@@ -19,7 +20,7 @@ from anthropic.types import (
     RawMessageStartEvent,
 )
 
-from lab_harness.config import AnthropicConfig
+from lab_harness.config import Config
 from lab_harness.llm.events import (
     StreamDone,
     StreamError,
@@ -134,8 +135,12 @@ class _FakeClient:
         self.messages = _FakeMessages(events, error)
 
 
+#: Claude's adapter settings, as the catalog ships them.
+SHIPPED = Config().providers.anthropic
+
+
 def _provider(events: Sequence[object] = (), error: Exception | None = None) -> AnthropicProvider:
-    return AnthropicProvider(AnthropicConfig(), client=_FakeClient(events, error))  # type: ignore[arg-type]
+    return AnthropicProvider(SHIPPED, client=_FakeClient(events, error))  # type: ignore[arg-type]
 
 
 async def _collect(provider: AnthropicProvider, ctx: Context, opts: StreamOptions | None = None):
@@ -338,7 +343,7 @@ async def test_missing_credentials_report_through_the_stream_not_the_constructor
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Construction must not raise; the loop learns about it as an error turn."""
-    config = AnthropicConfig()
+    config = SHIPPED
     monkeypatch.delenv(config.api_key_env, raising=False)
     monkeypatch.delenv(config.auth_token_env, raising=False)
 
@@ -356,7 +361,7 @@ async def test_an_already_set_signal_aborts_before_any_request() -> None:
     signal = asyncio.Event()
     signal.set()
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
 
     events = await _collect(provider, _ctx(), StreamOptions(signal=signal))
 
@@ -381,7 +386,7 @@ async def test_a_signal_set_mid_stream_stops_it() -> None:
 
     client = _FakeClient()
     client.messages.stream = lambda **kwargs: _SettingStream(())  # type: ignore[method-assign]
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
 
     events = await _collect(provider, _ctx(), StreamOptions(signal=signal))
 
@@ -418,7 +423,7 @@ async def test_a_translation_failure_becomes_an_error_not_a_crash() -> None:
 
 async def test_system_prompt_goes_to_the_top_level_field() -> None:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
 
     await _collect(provider, _ctx(system_prompt="be helpful"))
 
@@ -427,7 +432,7 @@ async def test_system_prompt_goes_to_the_top_level_field() -> None:
 
 async def test_tool_declarations_become_input_schema() -> None:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     declaration = ToolDeclaration(
         name="read", description="Read a file", parameters={"type": "object", "properties": {}}
     )
@@ -443,7 +448,7 @@ async def test_tool_declarations_become_input_schema() -> None:
 async def test_consecutive_tool_results_merge_into_one_user_turn() -> None:
     """The API requires every tool_result for a turn in a single user message."""
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     messages = (
         UserMessage(content=text("go")),
         AssistantMessage(
@@ -470,7 +475,7 @@ async def test_consecutive_tool_results_merge_into_one_user_turn() -> None:
 async def test_an_error_placeholder_message_is_not_replayed() -> None:
     """Empty content is rejected by the API; an aborted turn has none."""
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     messages = (
         UserMessage(content=text("go")),
         AssistantMessage(content=(), model=MODEL.id, provider="anthropic", stop_reason="aborted"),
@@ -485,7 +490,7 @@ async def test_an_error_placeholder_message_is_not_replayed() -> None:
 async def test_signature_less_thinking_blocks_are_dropped() -> None:
     """The API rejects a replayed thinking block without its signature."""
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     messages = (
         AssistantMessage(
             content=(ThinkingBlock(thinking="hmm"), TextBlock(text="answer")),
@@ -502,7 +507,7 @@ async def test_signature_less_thinking_blocks_are_dropped() -> None:
 
 async def test_provider_blocks_are_replayed_verbatim() -> None:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     messages = (
         AssistantMessage(
             content=(ProviderBlock(provider_type="web_search_tool_use", data={"id": "s1"}),),
@@ -519,7 +524,7 @@ async def test_provider_blocks_are_replayed_verbatim() -> None:
 
 async def test_max_tokens_comes_from_the_model_not_a_literal() -> None:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
 
     await _collect(provider, _ctx())
 
@@ -533,7 +538,7 @@ async def _request_for(
     model_id: str, opts: StreamOptions | None = None, **config: Any
 ) -> dict[str, Any]:
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(**config), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(replace(SHIPPED, **config), client=client)  # type: ignore[arg-type]
     _ = [event async for event in provider.stream(resolve_model(model_id), _ctx(), opts)]
     return client.messages.requests[0]
 
@@ -597,7 +602,7 @@ async def test_a_model_without_reasoning_gets_no_thinking_request() -> None:
     from dataclasses import replace
 
     client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
-    provider = AnthropicProvider(AnthropicConfig(), client=client)  # type: ignore[arg-type]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
     plain = replace(MODEL, supports_reasoning=False)
 
     _ = [event async for event in provider.stream(plain, _ctx(), StreamOptions(reasoning="high"))]

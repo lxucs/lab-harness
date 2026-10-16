@@ -79,10 +79,13 @@ Defaults live in one place — the schema in `lab_harness/config.py` — so read
 schema tells you every knob the system has. Adding a tunable means adding it to
 the schema with a default in the same change.
 
-The LLMs that ship are data, not defaults in code: every model and every
-OpenAI-family endpoint is a table in `lab_harness/llm/catalog.toml`, in the
-same format a config file uses. Adding a model is one `[models.<id>]` table
-there, with its documented limits and price; no Python changes.
+LLM settings are the exception: they are data, all in
+`lab_harness/llm/catalog.toml`, in the same format a config file uses —
+Claude's adapter settings, every OpenAI-family endpoint, every model, and the
+`[defaults]` an endpoint or a model gets for a key it leaves out. Their classes
+in `config.py` have types and no defaults, so a new LLM setting is a field
+there and its value in the catalog, in the same change. Adding a model is one
+`[models.<id>]` table, with its documented limits and price; no Python changes.
 
 Prompts are data too. Text the model is sent — the system prompt, the wrapper
 around project instructions — lives in `lab_harness/prompts.toml` and reaches
@@ -107,7 +110,7 @@ the prompts, docs, tests, or examples.
 | `config.toml` | yes | Non-sensitive defaults |
 | `config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `config.example.toml` | yes | Template with placeholders |
-| `lab_harness/llm/catalog.toml` | yes | Shipped endpoints and models — public, documented vendor data only |
+| `lab_harness/llm/catalog.toml` | yes | Every LLM setting — public, documented vendor data only |
 | `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 
 Prefer environment variables for secrets. If you add a config location, add its
