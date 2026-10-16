@@ -238,3 +238,7 @@ config.local.toml
 .env.*
 !.env.example
 .superpowers/
+
+# Design specs and implementation plans written while working on a change.
+# They are scratch material: what lasts belongs in docs/.
+docs/superpowers/
