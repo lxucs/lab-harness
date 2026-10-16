@@ -6,7 +6,7 @@
 lab-harness                      # interactive
 lab-harness -p "fix the lints"   # one-shot, plain text
 lab-harness -p "..." --json      # one-shot, JSONL event stream
-lab-harness --resume             # continue the most recent session
+lab-harness --resume ID          # continue a session; --resume alone lists them
 ```
 
 All of these are **subscribers to the same event stream**. The interactive
@@ -27,8 +27,7 @@ what the runtime does.
 | `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
-| `--resume [ID]` | Continue a session. With no id, the most recent one here. |
-| `--sessions` | List saved sessions for this directory and exit. |
+| `--resume [ID]` | Continue the session with this id; a unique prefix works. With no id, list this directory's sessions and exit. |
 | `--no-save` | Do not write a transcript for this run. |
 
 **Exit status is meaningful.** A run whose final turn ended in `error` or
@@ -218,9 +217,8 @@ possible. See [events.md](events.md).
 Every run is saved, per project, under `~/.lab-harness/sessions/`:
 
 ```bash
-lab-harness --sessions            # what is saved for this directory
-lab-harness --resume              # continue the most recent one
-lab-harness --resume 20261010T11  # a specific one; a unique prefix works
+lab-harness --resume              # what is saved for this directory
+lab-harness --resume 20261010T11  # continue one; a unique prefix works
 lab-harness -p "…" --no-save      # run without persisting
 ```
 
@@ -334,6 +332,7 @@ appears to do nothing — every file read or skipped, in precedence order:
 
 ```
 DEBUG lab_harness.config: No config file at /home/you/.lab-harness/config.toml
+DEBUG lab_harness.config: No config file at /home/you/.lab-harness/config.local.toml
 DEBUG lab_harness.config: Applying config from /repo/.lab-harness/config.toml
 DEBUG lab_harness.config: No config file at /repo/.lab-harness/config.local.toml
 ```

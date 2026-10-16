@@ -95,10 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const="",
         metavar="SESSION_ID",
-        help="Continue a session. With no id, the most recent one for this directory.",
-    )
-    parser.add_argument(
-        "--sessions", action="store_true", help="List saved sessions for this directory and exit."
+        help=(
+            "Continue the session with this id; a unique prefix works. With no "
+            "id, list this directory's sessions and exit."
+        ),
     )
     parser.add_argument(
         "--no-save", action="store_true", help="Do not write a transcript for this run."
@@ -194,7 +194,7 @@ def _attach_session(
         resumed = resume(
             cwd=args.cwd,
             config=config.session,
-            session_id=args.resume or None,
+            session_id=args.resume,
             system_prompt=agent.state.system_prompt,
         )
         agent.restore(resumed.messages)
@@ -271,7 +271,11 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
 
 
 def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
-    """Print saved sessions for this directory, newest first."""
+    """`--resume` with no id: print this directory's sessions, newest first.
+
+    Continuing one takes its id. Picking the most recent on its own would
+    continue the wrong conversation whenever the last run was not the one meant.
+    """
     console = Console()
     paths = list_sessions(args.cwd, config.session)
     if not paths:
@@ -289,6 +293,12 @@ def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
             f"{path.stem}  {len(transcript.messages):>4} msg  "
             f"{transcript.header.model}  {transcript.header.timestamp}"
         )
+    console.print(
+        Text(
+            "Continue one with --resume SESSION_ID; a unique prefix works.",
+            style=config.terminal.theme.muted,
+        )
+    )
     return 0
 
 
@@ -336,7 +346,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # up that project's .lab-harness/ rather than this directory's.
         config = load_config(args.cwd)
         configure_logging(args.log_level, config.logging)
-        if args.sessions:
+        # `--resume` alone: its value is the flag's const, "".
+        if args.resume == "":
             return list_saved_sessions(args, config)
         if args.prompt:
             return asyncio.run(run_once(args, config))

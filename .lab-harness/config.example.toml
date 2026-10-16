@@ -1,6 +1,7 @@
 # Example lab-harness configuration.
 #
-# Copy to .lab-harness/config.local.toml (gitignored, for machine-specific values).
+# Copy to .lab-harness/config.local.toml (gitignored, for machine-specific values),
+# or to ~/.lab-harness/config.local.toml for values every project should get.
 #
 # NEVER put API keys, absolute paths, or private endpoints in config.toml.
 # Keys belong in environment variables, or in config.local.toml. See

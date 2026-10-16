@@ -193,11 +193,15 @@ timestamps read as empty.
 ## Resume
 
 ```bash
-lab-harness --resume              # most recent session for this cwd
-lab-harness --resume <session-id> # a specific session; a unique prefix works
-lab-harness --sessions            # list what is saved for this directory
+lab-harness --resume              # list what is saved for this directory
+lab-harness --resume <session-id> # continue one; a unique prefix works
 lab-harness --no-save             # run without persisting anything
 ```
+
+`--resume` alone lists and exits rather than continuing the most recent
+session, which would be the wrong conversation whenever the last run was not
+the one meant. In Python, `resume()` without a `session_id` does take the most
+recent.
 
 Resume reads the file, rebuilds the message list, and continues writing to the
 **same** file, opening a new segment. An ambiguous id prefix is an error rather

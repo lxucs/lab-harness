@@ -126,10 +126,34 @@ def test_layers_merge_rather_than_replace(tmp_path: Path) -> None:
 
 
 def test_config_paths_are_in_precedence_order(tmp_path: Path) -> None:
-    paths = config_paths(tmp_path)
-    assert paths[0] == lab_harness_home() / CONFIG_FILE
-    assert paths[1] == tmp_path / PROJECT_DIRECTORY / CONFIG_FILE
-    assert paths[2] == tmp_path / PROJECT_DIRECTORY / LOCAL_CONFIG_FILE
+    home, project_directory = lab_harness_home(), tmp_path / PROJECT_DIRECTORY
+    assert config_paths(tmp_path) == (
+        home / CONFIG_FILE,
+        home / LOCAL_CONFIG_FILE,
+        project_directory / CONFIG_FILE,
+        project_directory / LOCAL_CONFIG_FILE,
+    )
+
+
+def test_a_home_local_file_applies_in_any_directory(tmp_path: Path) -> None:
+    """Where a key goes so it works wherever the harness runs."""
+    write(lab_harness_home() / LOCAL_CONFIG_FILE, '[tools.web.tavily]\napi_key = "k"\n')
+    for directory in (tmp_path / "one", tmp_path / "two"):
+        directory.mkdir()
+        assert load_config(directory).tools.web.tavily.api_key == "k"
+
+
+def test_the_home_local_file_overrides_the_home_file(tmp_path: Path) -> None:
+    write(lab_harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\n")
+    write(lab_harness_home() / LOCAL_CONFIG_FILE, "[agent]\nmax_turns = 2\n")
+    assert load_config(tmp_path).agent.max_turns == 2
+
+
+def test_a_project_file_overrides_the_home_local_file(tmp_path: Path) -> None:
+    """The project is the more specific place, whichever of its files says so."""
+    write(lab_harness_home() / LOCAL_CONFIG_FILE, "[agent]\nmax_turns = 1\n")
+    project(tmp_path, "[agent]\nmax_turns = 2\n")
+    assert load_config(tmp_path).agent.max_turns == 2
 
 
 # --- refusing bad input ---------------------------------------------------

@@ -57,9 +57,8 @@ One event per line, flushed as it happens. The event types and their fields:
 ## Sessions
 
 ```bash
-uv run lab-harness --sessions               # what is saved for this directory
-uv run lab-harness --resume                 # continue the most recent
-uv run lab-harness --resume <session-id>    # a given one; a unique prefix works
+uv run lab-harness --resume                 # what is saved for this directory
+uv run lab-harness --resume <session-id>    # continue one; a unique prefix works
 uv run lab-harness --no-save                # write nothing
 ```
 
@@ -91,10 +90,31 @@ Either replaces the default, which ships in
 project's `AGENTS.md` is still appended. To change it for good, set
 `[prompts] system` in config: [docs/configuration.md](../docs/configuration.md#prompts).
 
-## Another directory, and debugging
+## From another directory
+
+Install the command once, from the repository root, and move the settings and
+keys every project should get to `~/.lab-harness/`, which is read wherever the
+harness runs:
 
 ```bash
-uv run lab-harness --cwd ../other-project                 # its tools, config and instructions
+uv tool install --editable .        # lab-harness on PATH; edits here apply at once
+mkdir -p ~/.lab-harness
+cp .lab-harness/config.local.toml ~/.lab-harness/config.local.toml
+```
+
+Then start it in the directory to work on — no `--cwd`, no `uv run`:
+
+```bash
+cd /path/to/project
+lab-harness                         # its tools, AGENTS.md and sessions; your config
+```
+
+A `.lab-harness/` there still applies on top of yours. Without installing,
+`uv run lab-harness --cwd /path/to/project` from here does the same.
+
+## Debugging
+
+```bash
 uv run lab-harness --log-level debug -p "..."             # trace a run on stderr
 uv run lab-harness --log-level debug 2> lab-harness.log   # interactive, trace kept apart
 ```

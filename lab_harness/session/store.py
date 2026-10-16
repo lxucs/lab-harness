@@ -4,7 +4,7 @@ Layout:
 
     <home>/sessions/<project-slug>/<session-id>.jsonl
 
-Sessions are grouped by project so `--resume` can mean "the last session *here*"
+Sessions are grouped by project so `--resume` can list the sessions *here*
 without scanning every session ever recorded. The slug is derived from the
 working directory and carries a hash, because two checkouts of the same
 repository in different places are different projects and must not share a

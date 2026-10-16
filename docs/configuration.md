@@ -12,8 +12,8 @@ setting, and [`lab_harness/prompts.toml`](../lab_harness/prompts.toml), the
 prompts.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
-go in `config.local.toml` (gitignored) or environment variables — never in
-`config.toml`, docs, or tests. See the hygiene rules in
+go in a `config.local.toml` (never committed) or environment variables — never
+in `config.toml`, docs, or tests. See the hygiene rules in
 [`../AGENTS.md`](../AGENTS.md).
 
 ## Resolution order
@@ -23,10 +23,11 @@ Lowest to highest precedence:
 1. Schema defaults in `lab_harness/config.py`, every LLM setting in
    `lab_harness/llm/catalog.toml`, and the prompts in `lab_harness/prompts.toml`
 2. `~/.lab-harness/config.toml` — user config
-3. `./.lab-harness/config.toml` — project config, committed
-4. `./.lab-harness/config.local.toml` — project-local, **gitignored**
-5. Environment variables
-6. CLI flags
+3. `~/.lab-harness/config.local.toml` — user-local, for keys
+4. `./.lab-harness/config.toml` — project config, committed
+5. `./.lab-harness/config.local.toml` — project-local, **gitignored**
+6. Environment variables
+7. CLI flags
 
 A missing file is normal and skipped. A file that *exists* but is malformed is
 a startup error: config you meant to apply and that silently did nothing is
@@ -46,8 +47,10 @@ There is deliberately no generic environment-variable overlay. Each variable is
 read where it is used, and its *name* is itself a config key, so a deployment
 using different names changes config rather than code.
 
-Files are located relative to `--cwd`, so `lab-harness --cwd ../other-project`
-picks up that project's `.lab-harness/`, not this one's.
+Project files are located relative to `--cwd`, so `lab-harness --cwd
+../other-project` picks up that project's `.lab-harness/`, not this one's. The
+two in `~/.lab-harness/` (or `$LAB_HARNESS_HOME`) apply in every directory:
+settings and keys you want wherever the harness runs go there.
 
 ## Files
 
@@ -56,6 +59,9 @@ picks up that project's `.lab-harness/`, not this one's.
 | `config.toml` | yes | Non-sensitive defaults — tool lists, feature flags, limits |
 | `config.local.toml` | **no** | Keys, absolute paths, private endpoints |
 | `config.example.toml` | yes | Template documenting every key but the LLM ones, placeholders only |
+
+`config.toml` and `config.local.toml` are each read from home, then from the
+project. Only a project's `config.toml` is committed.
 
 ### `config.toml` — safe to commit
 
@@ -161,6 +167,7 @@ except the LLM ones, which are all in
 api_key = "tvly-..."   # placeholder
 
 [providers.openai.deepseek]
+api_key = "sk-..."     # literal key; the api_key_env variable still wins if set
 base_url = "https://internal-gateway.example.com/v1"   # placeholder
 ```
 
@@ -171,8 +178,10 @@ gateway in front of it is an environment setting.
 Prefer environment variables for secrets. `config.local.toml` is for
 machine-specific non-secret values, and for keys when env vars are inconvenient
 — a key that should survive across shells without living in a dotfile, say.
+A key you want in every project goes in `~/.lab-harness/config.local.toml`; one
+for this project alone, in `.lab-harness/config.local.toml`.
 
-Environment wins over this file, so a key here can always be overridden.
+Environment wins over both files, so a key in either can always be overridden.
 
 ## Environment variables
 

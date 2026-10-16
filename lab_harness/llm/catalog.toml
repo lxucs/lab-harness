@@ -110,6 +110,7 @@ api = "responses"
 [providers.openai.deepseek]
 base_url = "https://api.deepseek.com/v1"
 api_key_env = "DEEPSEEK_API_KEY"
+# api_key = "sk-..."   # or the literal key, here in config.local.toml; the env var above wins if set
 base_url_env = "DEEPSEEK_BASE_URL"
 # DeepSeek returns a 400 for a tool loop without its earlier reasoning.
 replay_reasoning_field = "reasoning_content"

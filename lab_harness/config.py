@@ -9,9 +9,10 @@ and the only source of their values, and the prompts in prompts.toml, the
 default of `prompts`.
 
 `load_config()` layers TOML files over these defaults, lowest precedence
-first: `<home>/config.toml`, `./.lab-harness/config.toml`, then
-`./.lab-harness/config.local.toml` — the last of which is gitignored and is the
-only one that may hold a credential.
+first: `<home>/config.toml`, `<home>/config.local.toml`,
+`./.lab-harness/config.toml`, then `./.lab-harness/config.local.toml`. A
+`config.local.toml` is never committed, and is the only file that may hold a
+credential.
 
 Environment variables sit above all of them, but there is deliberately no
 generic env-overlay machinery here. Each env var is read where it is used
@@ -727,15 +728,18 @@ def lab_harness_home(config: SessionConfig | None = None) -> Path:
 def config_paths(cwd: str | Path = ".") -> tuple[Path, ...]:
     """The files `load_config` reads, in increasing order of precedence.
 
+    Each place has the same pair: `config.toml`, then `config.local.toml`. The
+    home pair applies in every directory, so a key kept there works wherever
+    the harness runs; the project pair is read from `cwd`.
+
     Home is located from the *default* session config rather than from a
     loaded one. Resolving where to look for config using config that has not
     been loaded yet is circular; `LAB_HARNESS_HOME` is the escape hatch.
     """
-    project = Path(cwd) / PROJECT_DIRECTORY
-    return (
-        lab_harness_home() / CONFIG_FILE,
-        project / CONFIG_FILE,
-        project / LOCAL_CONFIG_FILE,
+    return tuple(
+        directory / name
+        for directory in (lab_harness_home(), Path(cwd) / PROJECT_DIRECTORY)
+        for name in (CONFIG_FILE, LOCAL_CONFIG_FILE)
     )
 
 

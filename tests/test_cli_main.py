@@ -70,7 +70,6 @@ def _args(**kwargs: object) -> argparse.Namespace:
         "system_prompt_file": None,
         "yes": False,
         "resume": None,
-        "sessions": False,
         # Tests must never write to the real ~/.lab-harness.
         "no_save": True,
     }
@@ -458,7 +457,7 @@ def test_debug_covers_the_loading_of_config_itself(
     (project / "config.toml").write_text("[agent]\nmax_turns = 9\n")
     monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
 
-    main(["--sessions", "--cwd", str(tmp_path)])
+    main(["--resume", "--cwd", str(tmp_path)])
 
     assert str(project / "config.toml") in capsys.readouterr().err
 
@@ -471,7 +470,7 @@ def test_a_config_file_can_set_the_level(
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "debug"\n')
 
-    main(["--sessions", "--cwd", str(tmp_path)])
+    main(["--resume", "--cwd", str(tmp_path)])
     resolve_model("claude-sonnet-5")
 
     assert "Using model" in capsys.readouterr().err
@@ -482,7 +481,7 @@ def test_the_flag_beats_a_config_file(tmp_path: Path, capsys: pytest.CaptureFixt
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "debug"\n')
 
-    main(["--sessions", "--cwd", str(tmp_path), "--log-level", "error"])
+    main(["--resume", "--cwd", str(tmp_path), "--log-level", "error"])
     resolve_model("claude-sonnet-5")
 
     assert "Using model" not in capsys.readouterr().err
@@ -494,7 +493,7 @@ def test_logs_go_to_stderr_not_stdout(
     """stdout carries the answer and the JSONL stream; a log line would corrupt both."""
     monkeypatch.setenv("LAB_HARNESS_LOG_LEVEL", "debug")
 
-    main(["--sessions", "--cwd", str(tmp_path)])
+    main(["--resume", "--cwd", str(tmp_path)])
 
     captured = capsys.readouterr()
     assert "DEBUG" in captured.err
@@ -509,7 +508,7 @@ def test_an_unusable_level_in_a_config_file_is_a_startup_error(
     project.mkdir()
     (project / "config.toml").write_text('[logging]\nlevel = "loud"\n')
 
-    assert main(["--sessions", "--cwd", str(tmp_path)]) == 1
+    assert main(["--resume", "--cwd", str(tmp_path)]) == 1
     assert "loud" in capsys.readouterr().err
 
 
@@ -575,9 +574,9 @@ def test_a_saved_session_rebuilds_every_request_the_cli_sent(
     (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
 
     assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
-    assert main(["-p", "second", "--resume", "--cwd", str(tmp_path)]) == 0
-
     [path] = list_sessions(tmp_path, Config().session)
+    assert main(["-p", "second", "--resume", path.stem, "--cwd", str(tmp_path)]) == 0
+
     rebuilt = recorded_requests(read_transcript(path))
     assert [r.request for r in rebuilt] == provider.requests
     assert "Indent with tabs." in rebuilt[0].request.system_prompt
@@ -595,7 +594,8 @@ def test_resume_warns_when_the_project_instructions_changed(
     assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
     (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
 
-    args = _args(cwd=str(tmp_path), resume="")
+    [path] = list_sessions(tmp_path, Config().session)
+    args = _args(cwd=str(tmp_path), resume=path.stem)
     output = StringIO()
     _attach_session(_build_agent(args, Config()), args, Config(), Console(file=output))
 
@@ -613,11 +613,45 @@ def test_one_shot_resume_warnings_go_to_stderr(
     (tmp_path / "AGENTS.md").write_text("Indent with spaces.")
     capsys.readouterr()
 
-    assert main(["-p", "second", "--resume", "--cwd", str(tmp_path)]) == 0
+    [path] = list_sessions(tmp_path, Config().session)
+    assert main(["-p", "second", "--resume", path.stem, "--cwd", str(tmp_path)]) == 0
 
     captured = capsys.readouterr()
     assert "system prompt has changed" in captured.err
     assert captured.out == "two\n"
+
+
+def test_resume_without_an_id_lists_the_sessions_and_runs_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Continuing a conversation takes its id, so the bare flag shows which ids exist."""
+    provider = FakeProvider([text_response("one"), text_response("two")])
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    assert main(["-p", "second", "--cwd", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["-p", "third", "--resume", "--cwd", str(tmp_path)]) == 0
+
+    out = capsys.readouterr().out
+    newest, oldest = list_sessions(tmp_path, Config().session)
+    assert out.index(newest.stem) < out.index(oldest.stem)
+    assert "--resume SESSION_ID" in out
+    assert len(provider.requests) == 2, "the prompt was not sent"
+    assert len(list_sessions(tmp_path, Config().session)) == 2, "and nothing was recorded"
+
+
+def test_resume_without_an_id_and_no_sessions_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--resume", "--cwd", str(tmp_path)]) == 0
+    assert "No saved sessions" in capsys.readouterr().out
+
+
+def test_there_is_no_separate_sessions_flag() -> None:
+    """`--resume` alone is the listing."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--sessions"])
 
 
 # --- where log records go -------------------------------------------------
