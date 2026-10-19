@@ -42,6 +42,7 @@ from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.logs import ROOT_LOGGER
+from lab_harness.prompts import build_system_prompt, detect_environment
 from lab_harness.session import list_sessions, read_transcript, recorded_requests
 from lab_harness.tools import default_registry
 
@@ -256,10 +257,21 @@ def test_the_model_flag_beats_the_configured_model() -> None:
 # --- project instructions -------------------------------------------------
 
 
-def test_no_project_file_means_the_configured_prompt() -> None:
+def test_no_project_file_means_the_configured_sections(_neutral_cwd: Path) -> None:
     agent = _build_agent(_args(), Config())
 
-    assert agent.state.system_prompt == Config().prompts.system
+    environment = detect_environment(_neutral_cwd, agent.state.model.id)
+    assert agent.state.system_prompt == build_system_prompt(Config().prompts, environment)
+
+
+def test_the_environment_is_filled_from_cwd_and_the_model(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "other"
+    elsewhere.mkdir()
+
+    agent = _build_agent(_args(cwd=str(elsewhere), model="claude-opus-5"), Config())
+
+    assert f"Primary working directory: {elsewhere.resolve()}\n" in agent.state.system_prompt
+    assert "You are powered by the model claude-opus-5." in agent.state.system_prompt
 
 
 def test_project_instructions_reach_the_system_prompt(_neutral_cwd: Path) -> None:
@@ -303,12 +315,12 @@ def test_a_configured_prompt_is_the_one_sent() -> None:
 
 
 def test_the_flag_replaces_the_configured_prompt(_neutral_cwd: Path) -> None:
-    """Only `system`: the project's instructions are still the project's."""
+    """Only `system`: the other sections, and the project's instructions, stay."""
     (_neutral_cwd / "AGENTS.md").write_text("Indent with tabs.")
 
     agent = _build_agent(_args(system_prompt="Be terse."), Config())
 
-    assert agent.state.system_prompt.startswith("Be terse.\n\n## Project instructions")
+    assert agent.state.system_prompt.startswith(f"Be terse.\n\n{Config().prompts.harness}\n\n")
     assert agent.state.system_prompt.endswith("Indent with tabs.")
     assert Config().prompts.system not in agent.state.system_prompt
 
@@ -320,11 +332,13 @@ def test_the_file_flag_reads_the_prompt_from_a_file(tmp_path: Path) -> None:
     agent = _build_agent(_args(system_prompt_file=str(prompt_file)), Config())
 
     # Stripped, as project instructions are: the editor's final newline goes.
-    assert agent.state.system_prompt == "Be terse.\nAnswer in one line."
+    assert agent.state.system_prompt.startswith("Be terse.\nAnswer in one line.\n\n# ")
 
 
-def test_an_empty_prompt_sends_none() -> None:
-    assert _build_agent(_args(system_prompt=""), Config()).state.system_prompt == ""
+def test_an_empty_flag_drops_only_the_system_section() -> None:
+    agent = _build_agent(_args(system_prompt=""), Config())
+
+    assert agent.state.system_prompt.startswith(Config().prompts.harness)
 
 
 def test_the_two_prompt_flags_exclude_each_other(capsys: pytest.CaptureFixture[str]) -> None:

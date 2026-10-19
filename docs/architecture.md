@@ -8,26 +8,26 @@ Dependencies point strictly downward.
 ```
          cli/          terminal, json sink  (subscribers)
           │
-          ▼
-        agent/         the loop, Agent, events
+          ├─────────────────┐
+          ▼                 ▼
+        agent/            prompts/     the system prompt
           │
     ┌─────┼─────┐
     ▼     ▼     ▼
   llm/  tools/  session/
-    └─────┴─────┴──→  config.py, project.py, logs.py   (leaf modules)
+    └─────┴─────┴──→  config.py, logs.py   (leaf modules)
 ```
 
 `llm/` imports from no other *layer*. It does read `lab_harness.config` — every
-layer does. The leaf modules import nothing from the package except each other
-and `config.py`, so depending on one cannot create a cycle and does not make a
-layer less replaceable. Treat "no upward dependencies" as being about the
-boxes, not about these three.
+layer does. The leaf modules import nothing from the package except each other,
+so depending on one cannot create a cycle and does not make a layer less
+replaceable. Treat "no upward dependencies" as being about the boxes, not about
+these two.
 
-`project.py` loads a project's `HARNESS.md` or `AGENTS.md` and joins it to the
-configured prompts as the system prompt. It lives beside `config.py` rather
-than inside `agent/` because it is the same kind of thing — read a directory,
-return data — and because `agent/` is not supposed to know the filesystem
-layout. The CLI and a Python caller build the prompt the same way.
+`prompts/` sits beside `agent/`, not under it. `cli/` builds the system prompt
+and hands `agent/` the finished string, so the runtime never reads a project's
+files or the machine it runs on — `agent/` is not supposed to know the
+filesystem layout. A Python caller builds the prompt the same way.
 
 `logs.py` decides where diagnostics go and how loud they are. Every layer takes
 a logger the ordinary way (`logging.getLogger(__name__)`) and emits records
@@ -56,6 +56,12 @@ update callback. Tools never reach for globals.
 rather than in `agent/`, precisely because of the rule above: `agent/` consumes
 tools, so a definition in `agent/` would force every tool module to import
 upward. `agent/types.py` re-exports them for callers.
+
+**`prompts/`** — what the model is told besides the conversation:
+`prompts.toml` holds the text, `environment.py` reads where the agent runs,
+`project.py` loads a project's `HARNESS.md` or `AGENTS.md`, and `system.py`
+fills in and joins the sections. It imports only `config.py` and returns a
+string; nothing but `cli/` and a Python caller imports it.
 
 **`session/`** — the append-only transcript on disk, and the reader that
 rebuilds every request from it. The recorder is a *subscriber*, so persistence
@@ -127,9 +133,10 @@ event and an entry of its own. That keeps enough to rebuild every request (see
 lines smaller.
 
 **Prompts are data.** The system prompt pi assembles in code is
-`lab_harness/prompts.toml` here, the default of the `[prompts]` config section,
-and it names no tools: the declarations alone tell the model what it can call,
-so the prompt stays true for any tool set.
+`lab_harness/prompts/prompts.toml` here, the default of the `[prompts]` config
+section; code only fills in the environment and joins the sections, in
+`prompts/system.py`. It names no tools: the declarations alone tell the model
+what it can call, so the prompt stays true for any tool set.
 
 **One run at a time, no queue.** pi has separate steering and follow-up queues,
 each with `all` and `one-at-a-time` drain modes, so a message can be injected
@@ -184,3 +191,4 @@ confusing order to read it in — each step only depends on the ones above.
 | 10 | `session/` |
 | 11 | `tools/web.py`, `html_text.py`, `config.py` loading |
 | 12 | `llm/providers/chat_completions.py`, `responses.py` |
+| 13 | `prompts/` — the system prompt |

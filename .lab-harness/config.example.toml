@@ -38,21 +38,33 @@ context_files = ["HARNESS.md", "AGENTS.md"]
 max_bytes = 32000
 
 [prompts]
-# What the model is told besides the conversation and the tool declarations.
-# The defaults ship in lab_harness/prompts.toml, which documents both keys;
-# copy one here to replace it. --system-prompt and --system-prompt-file replace
-# `system` for one run.
+# What the model is told besides the conversation and the tool declarations:
+# the sections of the system prompt, sent in this order, a blank line apart --
+# system, harness, environment, context_management, project_instructions. The
+# defaults ship in lab_harness/prompts/prompts.toml, which documents every key;
+# copy one here to replace it, or set it to "" to leave that section out.
+# --system-prompt and --system-prompt-file replace `system` for one run.
 #
-# `system` opens every request's system prompt. Name no tools in it: the tool
-# declarations already say what the model can call. To replace it, for example:
+# `system` opens every request's system prompt. Name no tools in any section:
+# the tool declarations already say what the model can call. To replace it, for
+# example:
 # system = """\
 # You are a careful research assistant. Keep responses concise."""
 #
-# `project_instructions` wraps the project's instructions file, appended to
-# `system`. {name} is the file's name, {text} its contents; write {{ and }} for
-# literal braces. A shorter one, for example:
+# `environment` says where the agent runs, from placeholders filled in at
+# startup: {cwd}, {git_enabled}, {system_platform}, {shell}, {os_version} and
+# {agent_model}. {cwd} is an absolute path on this machine; to keep it out of
+# every request, for example:
+# environment = """\
+# # Environment
+#  - Platform: {system_platform}
+#  - You are powered by the model {agent_model}."""
+#
+# `project_instructions` wraps the project's instructions file, appended last.
+# {name} is the file's name, {text} its contents. In either template, write {{
+# and }} for literal braces. A shorter one, for example:
 # project_instructions = """\
-# ## Project instructions ({name})
+# # Project instructions ({name})
 #
 # {text}"""
 

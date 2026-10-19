@@ -47,14 +47,15 @@ than a refactor.
 ## Architecture
 
 Three layers. Dependencies point strictly downward — `llm/` imports from no
-other layer. (Every layer reads the leaf modules `config.py`, `project.py` and
-`logs.py`, which import nothing from the package themselves.)
+other layer. (Every layer reads the leaf modules `config.py` and `logs.py`,
+which import only each other.)
 
 ```
          cli/          terminal, json sink  (subscribers)
           │
-          ▼
-        agent/         the loop, Agent, events
+          ├─────────────────┐
+          ▼                 ▼
+        agent/            prompts/     the system prompt
           │
     ┌─────┼─────┐
     ▼     ▼     ▼
@@ -67,6 +68,7 @@ other layer. (Every layer reads the leaf modules `config.py`, `project.py` and
 | `agent/` | The agentic loop and a stateful `Agent` that owns the transcript and emits events |
 | `tools/` | Built-in capabilities and the registry that declares them to the model |
 | `session/` | Append-only JSONL transcripts, resume, rebuilding requests — a subscriber, not a dependency |
+| `prompts/` | The system prompt: the configured sections, the environment, the project's `AGENTS.md` — built once and handed to the agent as a string |
 | `cli/` | Terminal and JSONL subscribers to the event stream |
 
 Two seams carry almost everything extensible:
@@ -118,6 +120,9 @@ agent = Agent(model=model, provider=provider, tools=tools, config=config)
 messages = asyncio.run(agent.prompt("What does this project do?"))
 ```
 
+That agent has no system prompt. `build_system_prompt` from `lab_harness.prompts`
+builds the one the CLI sends, as [quickstart.py](examples/quickstart.py) shows.
+
 [examples/](examples/) goes further: streaming events, a custom tool, all four
 hooks, a scripted model that needs no key, and exporting a session's requests
 for training. Configuration and every environment variable:
@@ -148,11 +153,11 @@ pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with streamed, collapsible thinking,
 colored edit diffs and a per-run token, cache and cost readout, a fail-closed
 approval gate, a tool set chosen in config or per run, layered TOML config with
-the prompts and the model catalog as data, project instructions from
-`HARNESS.md`/`AGENTS.md`, levelled diagnostics on stderr, and durable sessions
-that record enough to rebuild every request they made, changes mid-session
-included. A step-by-step reading
-order is in
+the prompts and the model catalog as data, a system prompt built from
+configurable sections with the environment filled in and the project's
+`HARNESS.md`/`AGENTS.md` appended, levelled diagnostics on stderr, and durable
+sessions that record enough to rebuild every request they made, changes
+mid-session included. A step-by-step reading order is in
 [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval

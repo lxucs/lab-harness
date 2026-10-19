@@ -5,8 +5,8 @@ values from a resolved `Config`; it never hardcodes them. See
 docs/contributing.md. The one exception is data rather than tunables, which
 the package ships as TOML in config-file format and reads here as defaults:
 every LLM setting in llm/catalog.toml, the default of `providers` and `models`
-and the only source of their values, and the prompts in prompts.toml, the
-default of `prompts`.
+and the only source of their values, and the prompts in prompts/prompts.toml,
+the default of `prompts`, which prompts/system.py assembles.
 
 `load_config()` layers TOML files over these defaults, lowest precedence
 first: `<home>/config.toml`, `<home>/config.local.toml`,
@@ -527,23 +527,32 @@ class ProvidersConfig:
 class PromptsConfig:
     """What the model is told besides the conversation and the tool declarations.
 
-    The shipped text is in prompts.toml, read as this section's default. It
-    names no tools: the declarations say what the model can call, and a prompt
-    naming one that `--tools` left out would describe a tool that is not there.
+    The sections of the system prompt, in the order prompts/system.py sends
+    them, a blank line apart; an empty one is left out. The shipped text is in
+    prompts.toml, read as this section's default. It names no tools: the
+    declarations say what the model can call, and a prompt naming one that
+    `--tools` left out would describe a tool that is not there.
     """
 
     #: Opens every request's system prompt. `--system-prompt` and
-    #: `--system-prompt-file` replace it for one run. Empty sends none.
+    #: `--system-prompt-file` replace it for one run.
     system: str = ""
-    #: Appended to `system` when the working directory has project
-    #: instructions: `{name}` is the file's name and `{text}` its contents.
-    #: Those are the only placeholders, and `{text}` is required.
+    #: How the harness works, as far as the model needs to know.
+    harness: str = ""
+    #: Where the agent runs. A template, filled when the prompt is built; its
+    #: placeholders are the fields of `Environment` in prompts/environment.py.
+    environment: str = ""
+    #: What happens as a conversation grows, and how to spend its turns.
+    context_management: str = ""
+    #: Appended last when the working directory has project instructions:
+    #: `{name}` is the file's name and `{text}` its contents. Those are the
+    #: only placeholders, and `{text}` is required.
     project_instructions: str = "{text}"
 
 
 #: The prompts the harness ships, as data in config-file format. It is the
 #: default of `prompts`, so a config file overrides one with the same table.
-PROMPTS_FILE = Path(__file__).parent / "prompts.toml"
+PROMPTS_FILE = Path(__file__).parent / "prompts" / "prompts.toml"
 
 
 @dataclass(frozen=True, slots=True)

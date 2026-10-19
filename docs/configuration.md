@@ -8,7 +8,8 @@ from config. The schema in `lab_harness/config.py` is the single list of every
 knob the system has, and every default lives there — except two kinds of data
 the package ships in config-file format:
 [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml), every LLM
-setting, and [`lab_harness/prompts.toml`](../lab_harness/prompts.toml), the
+setting, and
+[`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml), the
 prompts.
 
 **Nothing sensitive is committed.** Keys, absolute paths, and private endpoints
@@ -21,7 +22,8 @@ in `config.toml`, docs, or tests. See the hygiene rules in
 Lowest to highest precedence:
 
 1. Schema defaults in `lab_harness/config.py`, every LLM setting in
-   `lab_harness/llm/catalog.toml`, and the prompts in `lab_harness/prompts.toml`
+   `lab_harness/llm/catalog.toml`, and the prompts in
+   `lab_harness/prompts/prompts.toml`
 2. `~/.lab-harness/config.toml` — user config
 3. `~/.lab-harness/config.local.toml` — user-local, for keys
 4. `./.lab-harness/config.toml` — project config, committed
@@ -80,9 +82,12 @@ provider = "anthropic"           # for a model id nothing else routes
 context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
 max_bytes = 32000                            # longer files are truncated
 
-[prompts]               # ships in lab_harness/prompts.toml; see "Prompts" below
-system = "You are a helpful assistant running in a terminal. …"
-project_instructions = "## Project instructions ({name})\n\n…{text}"
+[prompts]               # ships in lab_harness/prompts/; see "Prompts" below
+system = "You are Lab Harness, a helpful assistant running in a terminal …"
+harness = "# Harness\n - Text you output outside of tool use …"
+environment = "# Environment\n…\n - Primary working directory: {cwd}\n…"
+context_management = "# Context management\n…"
+project_instructions = "# Project instructions ({name})\n\n…{text}"
 
 [tools]
 enabled = [             # what the model may call, in both modes; --tools overrides
@@ -373,7 +378,7 @@ models adds the costs together.
 ## Prompts
 
 What the model is told besides the conversation and the tool declarations. The
-text ships in [`lab_harness/prompts.toml`](../lab_harness/prompts.toml) — data,
+text ships in [`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml) — data,
 not Python — and that file is the default of the `[prompts]` section, in the
 same format. A config file replaces a prompt with the same key:
 
@@ -384,10 +389,39 @@ You are a careful research assistant. Say when you are unsure. \
 Keep responses concise."""
 ```
 
+Each key is a section of the system prompt.
+[`lab_harness/prompts/system.py`](../lab_harness/prompts/system.py) sends them in
+this order, a blank line apart, and leaves out any that is empty — so
+`harness = ""` drops that section, and setting every key to `""` sends no
+system prompt at all:
+
 | Key | Holds |
 |---|---|
-| `system` | Opens every request's system prompt. Empty sends none. |
-| `project_instructions` | Wraps the [project's instructions](#project-instructions), appended after a blank line. `{name}` is the file's name, `{text}` its contents. |
+| `system` | Opens the prompt: who the model is, and how to answer |
+| `harness` | How the harness works, as far as the model needs to know — where its text goes, what a denied call means |
+| `environment` | Where the agent runs. A template: see below |
+| `context_management` | What happens as a conversation grows, and how to spend its turns. Written for [compaction](architecture.md#todo-with-a-place-to-land), which is not built yet |
+| `project_instructions` | Wraps the [project's instructions](#project-instructions), when it has any. `{name}` is the file's name, `{text}` its contents. |
+
+**`environment` is filled in when the prompt is built**, from these
+placeholders and no others:
+
+| Placeholder | Value |
+|---|---|
+| `{cwd}` | The working directory, `--cwd`, as an absolute path |
+| `{git_enabled}` | `true` if it is inside a git repository, else `false` |
+| `{system_platform}` | Python's `sys.platform`: `darwin`, `linux`, `win32` |
+| `{shell}` | The shell commands run in: `/bin/sh`, or `%COMSPEC%` on Windows. Not `$SHELL` — a command written for zsh can fail in the shell that actually runs it |
+| `{os_version}` | The OS and its release, e.g. `Darwin 23.4.0` |
+| `{agent_model}` | The id of the model the run uses |
+
+`{cwd}` is a path on this machine, so it is in every request and in every
+trajectory exported from a session; an `environment` without it keeps it out.
+The model is named too, so resuming a session under another model changes the
+prompt, and `--resume` says so.
+
+Only `environment` and `project_instructions` are templates. The other
+sections are sent as written, braces and all.
 
 **The system prompt names no tools.** What the model can call, and how to use
 each tool, comes from the tool declarations alone — so `tools.enabled` or
@@ -396,16 +430,17 @@ there. Advice about one tool belongs in its description. A test holds the
 shipped prompt to this; hold your own to it too.
 
 **For one run**, `--system-prompt TEXT` or `--system-prompt-file PATH` replaces
-`system`; the project's instructions are still appended. **Mid-session**, a
-Python caller can assign `agent.state.system_prompt` between runs. Either way
-the session records the prompt each request was sent with —
-[sessions.md](sessions.md#changes-mid-session).
+`system`; the other sections, project instructions included, are still sent.
+**Mid-session**, a Python caller can assign `agent.state.system_prompt` between
+runs; after changing the model, rebuild it with `build_system_prompt` so the
+environment names the new one. Either way the session records the prompt each
+request was sent with — [sessions.md](sessions.md#changes-mid-session).
 
-`project_instructions` is checked at startup, in every directory: a
-placeholder other than `{name}` and `{text}`, or a template without `{text}`,
-is an error. Write `{{` and `}}` for literal braces. A line ending in a
-backslash inside `"""` continues the paragraph, so a prompt can be wrapped in
-the file without breaking the text the model sees.
+Both templates are checked at startup, in every directory: a placeholder not
+in its list, or a `project_instructions` without `{text}`, is an error. Write
+`{{` and `}}` for literal braces. A line ending in a backslash inside `"""`
+continues the paragraph, so a prompt can be wrapped in the file without
+breaking the text the model sees.
 
 ## The terminal
 

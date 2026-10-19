@@ -28,7 +28,7 @@ from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.llm.types import Context, ToolCallBlock, UserMessage, text
 from lab_harness.logs import LEVELS, ROOT_LOGGER, configure_logging, resolve_level
-from lab_harness.project import load_project_context
+from lab_harness.prompts import load_project_context
 from tests.http_fakes import Recorder
 
 

@@ -35,6 +35,9 @@ INTENTIONALLY_ABSENT = {
     # Prose that ships in prompts.toml, where it is documented. A copy here
     # would have to change with every edit to the default prompt.
     "prompts.system",
+    "prompts.harness",
+    "prompts.environment",
+    "prompts.context_management",
     "prompts.project_instructions",
 }
 

@@ -5,23 +5,17 @@ or `AGENTS.md`, both pre-existing conventions rather than our invention).
 Loading it into the system prompt saves the agent from rediscovering those
 conventions from the code on every run.
 
-Like `config.py`, this sits at the bottom of the dependency graph: it reads a
-directory and returns data, knowing nothing about agents, tools, or the CLI.
-`build_system_prompt` joins what it finds to the configured prompts, so Python
-callers assemble the same system prompt the CLI sends.
+It reads a directory and returns data. `system.py` wraps what it finds in
+`prompts.project_instructions` and appends it to the rest of the system prompt.
 """
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from string import Formatter
 
-from lab_harness.config import ConfigError, ProjectConfig, PromptsConfig
+from lab_harness.config import ConfigError, ProjectConfig
 
 _log = logging.getLogger(__name__)
-
-#: What `prompts.project_instructions` may refer to.
-_PLACEHOLDERS = frozenset({"name", "text"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,37 +76,3 @@ def load_project_context(
         return ProjectContext(path=path, text=text, truncated=truncated)
     _log.debug("No project instructions in %s (tried %s)", root, ", ".join(config.context_files))
     return None
-
-
-def build_system_prompt(prompts: PromptsConfig, context: ProjectContext | None) -> str:
-    """`prompts.system`, then the project's instructions when it has any.
-
-    The template keeps the file name, so the model can cite and edit the
-    source of a convention rather than treating it as an unattributable rule.
-    It is checked even when there is nothing to fill it with: a broken one
-    should fail in every directory, not only in those with an AGENTS.md.
-    """
-    _check_template(prompts.project_instructions)
-    if context is None:
-        return prompts.system
-    block = prompts.project_instructions.format(name=context.path.name, text=context.text)
-    return f"{prompts.system}\n\n{block}" if prompts.system else block
-
-
-def _check_template(template: str) -> None:
-    where = "prompts.project_instructions"
-    try:
-        fields = {field for _, field, _, _ in Formatter().parse(template) if field is not None}
-        unknown = sorted(f"{{{field}}}" for field in fields - _PLACEHOLDERS)
-        if not unknown:
-            # A format spec the placeholders cannot take fails only here.
-            template.format(name="", text="")
-    except ValueError as exc:
-        raise ConfigError(f"{where}: {exc}. Write {{{{ and }}}} for literal braces") from exc
-    if unknown:
-        raise ConfigError(
-            f"{where}: unknown placeholder(s) {', '.join(unknown)}; the template "
-            f"takes {{name}} and {{text}}. Write {{{{ and }}}} for literal braces"
-        )
-    if "text" not in fields:
-        raise ConfigError(f"{where}: needs {{text}}, where the instructions go")

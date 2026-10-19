@@ -24,7 +24,7 @@ from lab_harness.config import Config, ConfigError, PromptsConfig, load_config
 from lab_harness.llm.providers import route
 from lab_harness.llm.types import AssistantMessage, TextBlock
 from lab_harness.logs import LEVELS, configure_logging
-from lab_harness.project import build_system_prompt, load_project_context
+from lab_harness.prompts import build_system_prompt, detect_environment, load_project_context
 from lab_harness.session import (
     ResumeError,
     SessionRecorder,
@@ -71,7 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     prompt.add_argument(
         "--system-prompt",
         metavar="TEXT",
-        help="Replaces prompts.system for this run. Project instructions are still appended.",
+        help=(
+            "Replaces prompts.system for this run. The other sections of the "
+            "system prompt, project instructions included, are still sent."
+        ),
     )
     prompt.add_argument(
         "--system-prompt-file",
@@ -168,7 +171,8 @@ def _build_agent(
             note += f" (truncated to {config.project.max_bytes} bytes)"
         console.print(Text(note, style=config.terminal.theme.muted))
     model, provider = route(args.model, config, args.provider)
-    system_prompt = build_system_prompt(_prompts(args, config), context)
+    environment = detect_environment(args.cwd, model.id)
+    system_prompt = build_system_prompt(_prompts(args, config), environment, context)
     _log.debug("System prompt: %d characters", len(system_prompt))
     return Agent(
         model=model,

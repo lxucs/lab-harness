@@ -15,7 +15,7 @@ from typing import BinaryIO, cast
 import pytest
 
 from lab_harness.config import ConfigError, ProjectConfig
-from lab_harness.project import load_project_context
+from lab_harness.prompts import load_project_context
 
 #: Permission bits mean nothing to root, so the unreadable-file tests cannot
 #: run there. Containers that run the suite as root skip them rather than

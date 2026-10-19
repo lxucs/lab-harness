@@ -95,7 +95,7 @@ async def test_quickstart_streams_the_answer_and_shows_tool_calls(
     assert "A small project." in out
     assert "2 request(s)" in out
     assert [t.name for t in provider.requests[0].tools] == module.READ_ONLY_TOOLS
-    # The prompt the CLI would send: configured text, then the project's own.
+    # The prompt the CLI would send: the configured sections, then the project's own.
     system = provider.requests[0].system_prompt
     assert system.startswith(load_config().prompts.system)
     assert system.endswith("Indent with tabs.")

@@ -85,10 +85,12 @@ uv run lab-harness --system-prompt "Answer in one sentence."
 uv run lab-harness -p "summarize the config module" --system-prompt-file prompts/terse.md
 ```
 
-Either replaces the default, which ships in
-[`lab_harness/prompts.toml`](../lab_harness/prompts.toml), for one run; a
-project's `AGENTS.md` is still appended. To change it for good, set
-`[prompts] system` in config: [docs/configuration.md](../docs/configuration.md#prompts).
+Either replaces the opening section of the default, which ships in
+[`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml), for
+one run. The rest is still sent — how the harness works, the working
+directory, platform and model, and a project's `AGENTS.md`. To change any
+section for good, or leave one out, set it under `[prompts]` in config:
+[docs/configuration.md](../docs/configuration.md#prompts).
 
 ## From another directory
 

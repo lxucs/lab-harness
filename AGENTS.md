@@ -51,7 +51,7 @@ ids — in config, the model catalog, the prompts, docs, tests, or examples.
 | `~/.lab-harness/config.local.toml` | **no** — outside the repo | The same, for every project |
 | `.lab-harness/config.example.toml` | yes | Template, placeholders only |
 | `lab_harness/llm/catalog.toml` | yes | Every LLM setting — public, documented vendor data only |
-| `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
+| `lab_harness/prompts/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 
 Real runtime values belong in the `*.local.toml` layer, which `.gitignore`
 excludes; it merges over the committed file, so it only needs the keys that

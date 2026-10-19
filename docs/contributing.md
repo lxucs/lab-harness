@@ -27,6 +27,7 @@ boundary, which is why the rest of the code has so few defensive checks.
 cli/  →  agent/  →  llm/
          tools/      (llm has no upward deps)
          session/
+cli/  →  prompts/    (agent/ is handed the finished system prompt)
 ```
 
 `cli/` is a subscriber; the runtime never imports from it. Deleting `cli/` must
@@ -87,13 +88,14 @@ in `config.py` have types and no defaults, so a new LLM setting is a field
 there and its value in the catalog, in the same change. Adding a model is one
 `[models.<id>]` table, with its documented limits and price; no Python changes.
 
-Prompts are data too. Text the model is sent — the system prompt, the wrapper
-around project instructions — lives in `lab_harness/prompts.toml` and reaches
-code as `config.prompts`, never as a string literal in Python. The system
-prompt names no tools: tool guidance belongs in the tool's own description,
-which is only sent when the tool is. The one exception is text that belongs to
-a tool or an error — a tool's description, a tool result's message — which
-stays beside the code it describes.
+Prompts are data too. Text the model is sent — each section of the system
+prompt, the wrapper around project instructions — lives in
+`lab_harness/prompts/prompts.toml` and reaches code as `config.prompts`, never
+as a string literal in Python; `prompts/system.py` beside it fills it in and
+joins it. The system prompt names no tools: tool guidance belongs in the tool's own
+description, which is only sent when the tool is. The one exception is text
+that belongs to a tool or an error — a tool's description, a tool result's
+message — which stays beside the code it describes.
 
 A literal is fine only for genuine protocol constants that would be wrong to
 change: an API version header, a JSONL schema version, the `"\n"` a line
@@ -111,7 +113,7 @@ the prompts, docs, tests, or examples.
 | `config.local.toml` | **no** — gitignored | Keys, absolute paths, private endpoints |
 | `config.example.toml` | yes | Template with placeholders |
 | `lab_harness/llm/catalog.toml` | yes | Every LLM setting — public, documented vendor data only |
-| `lab_harness/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
+| `lab_harness/prompts/prompts.toml` | yes | Shipped prompts — no tool names, nothing about a particular machine |
 
 Prefer environment variables for secrets. If you add a config location, add its
 local variant to `.gitignore` in the same change.
@@ -225,7 +227,7 @@ updated is not finished.
 | Layering or module change | [architecture.md](architecture.md) |
 | Transcript format change | [sessions.md](sessions.md) |
 | New config key, env var, or log level | [configuration.md](configuration.md) |
-| New prompt, or a change to the default one | `lab_harness/prompts.toml` documents itself; a new key also goes in [configuration.md](configuration.md#prompts) |
+| New prompt, or a change to the default one | `lab_harness/prompts/prompts.toml` documents itself; a new section is also a field of `PromptsConfig`, a place in `prompts/system.py`'s order, and a row in [configuration.md](configuration.md#prompts) |
 
 Keep [`../README.md`](../README.md)'s Status section honest when something
 lands or is abandoned.

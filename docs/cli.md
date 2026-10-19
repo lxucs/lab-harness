@@ -23,7 +23,7 @@ what the runtime does.
 | `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
 | `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
-| `--system-prompt` | Replaces `prompts.system` for this run. Project instructions are still appended. |
+| `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. |
 | `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
@@ -234,21 +234,26 @@ trimming of interrupted turns, rebuilding trajectories, and the reserved
 
 ## The system prompt
 
-What every request opens with: `prompts.system` from config, then the
-project's instructions, below. The default ships in
-[`lab_harness/prompts.toml`](../lab_harness/prompts.toml). It names no tools —
-what the model can call comes from the tool declarations alone, so narrowing
-`--tools` never leaves the prompt describing a tool that is not there.
+What every request opens with: the sections of `[prompts]` in config —
+`system`, how the harness works, the environment it runs in (working
+directory, git, platform, shell, model), context management — and last the
+project's instructions, below. The text ships in
+[`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml), and
+[`lab_harness/prompts/system.py`](../lab_harness/prompts/system.py) puts it
+together. It names no tools — what the model can call comes from the tool
+declarations alone, so narrowing `--tools` never leaves the prompt describing
+a tool that is not there.
 
 ```bash
 lab-harness --system-prompt "Answer in one sentence."
 lab-harness --system-prompt-file prompts/terse.md
 ```
 
-Either replaces `prompts.system` for one run, and the project's instructions
-are still appended. The file is read relative to the shell's directory, not
-`--cwd`, and its surrounding whitespace dropped. To change the prompt for good,
-set it in config: [configuration.md](configuration.md#prompts).
+Either replaces `prompts.system` for one run; the other sections and the
+project's instructions are still sent. The file is read relative to the shell's
+directory, not `--cwd`, and its surrounding whitespace dropped. To change a
+section for good, or leave one out, set it in config:
+[configuration.md](configuration.md#prompts).
 
 ## Project instructions
 
