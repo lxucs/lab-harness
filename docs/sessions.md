@@ -212,9 +212,11 @@ recorded — usually because the project's `AGENTS.md` changed, or because the
 run uses another model, which the prompt names. The session still
 continues, under the new prompt; its segment records which one.
 
-Interactive mode prints resume warnings under the "Resumed" line. `-p` mode has
-no terminal to print them in, so they go to stderr as `warning` log records —
-clear of the answer on stdout and of the `--json` stream.
+Interactive mode prints resume warnings under the "Resumed" line, and then
+the conversation itself, the way each turn looked when it ran — so the session
+continues where the eye left off rather than from a summary line. `-p` mode has
+no terminal to print them in, so its warnings go to stderr as `warning` log
+records — clear of the answer on stdout and of the `--json` stream.
 
 ### Interrupted turns are trimmed
 
@@ -243,7 +245,9 @@ the durable result. **Deltas are never persisted.**
 The agent emits the user's message on the stream for exactly this reason — a
 transcript with no user messages in it cannot be resumed from. `restore()` is
 deliberately silent in the other direction: replaying a resumed history through
-the event stream would make the session re-record its own past.
+the event stream would make the session re-record its own past. The interactive
+terminal shows the history anyway, by drawing it directly through the renderer
+— off the event stream, so the recorder never sees it.
 
 ## Configuration
 

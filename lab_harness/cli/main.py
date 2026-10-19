@@ -267,6 +267,11 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
     agent = _build_agent(args, config, before_tool_call=gate, console=console)
     terminal.attach(agent)
     recorder = _attach_session(agent, args, config, console)
+    if args.resume is not None:
+        # The history itself, so the session continues where the eye left off
+        # rather than from the one-line note above it. One-shot skips this: its
+        # stdout is the answer alone.
+        terminal.renderer.replay(agent.state.messages)
     try:
         return await terminal.run()
     finally:

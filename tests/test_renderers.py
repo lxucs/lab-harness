@@ -27,7 +27,15 @@ from lab_harness.agent.types import (
 from lab_harness.cli.renderers import EventRenderer, headline
 from lab_harness.config import Config, ConfigError, TerminalConfig, ThemeConfig
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
-from lab_harness.llm.types import AssistantMessage, TextBlock, ThinkingBlock, ToolCallBlock, text
+from lab_harness.llm.types import (
+    AssistantMessage,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultMessage,
+    UserMessage,
+    text,
+)
 from lab_harness.tools import ToolRegistry
 from lab_harness.tools.fs import FILESYSTEM_TOOLS
 from tests.screen import visible
@@ -201,6 +209,101 @@ async def test_nothing_is_left_behind_by_the_live_region(tmp_path) -> None:
     assert "Ctrl-C to cancel" not in shown
 
 
+# --- replaying a restored history ------------------------------------------
+
+
+def _history() -> tuple:
+    """One saved conversation: a question, a tool loop, an answer, a failure."""
+    return (
+        UserMessage(content=text("list the files")),
+        AssistantMessage(
+            content=(
+                ThinkingBlock(thinking="look first"),
+                ToolCallBlock(id="c1", name="ls", arguments={"path": "."}),
+            ),
+            model="m",
+            provider="p",
+        ),
+        ToolResultMessage(tool_call_id="c1", tool_name="ls", content=text("a.py\nb.py")),
+        AssistantMessage(content=(TextBlock(text="two files"),), model="m", provider="p"),
+        UserMessage(content=text("break something")),
+        AssistantMessage(
+            content=(), model="m", provider="p", stop_reason="error", error_message="HTTP 500"
+        ),
+    )
+
+
+async def test_replay_prints_a_saved_history_as_it_happened() -> None:
+    buffer = io.StringIO()
+    renderer = _renderer(buffer)
+
+    renderer.replay(_history())
+
+    output = buffer.getvalue()
+    assert "› list the files" in output  # noqa: RUF001 — the input glyph, as typed
+    assert "✻ Thought" in output, "thinking settles the configured way"
+    assert "look first" not in output, "a collapsed replay stays collapsed"
+    assert "ls(.)" in output
+    assert "a.py" in output
+    assert "two files" in output
+    assert "HTTP 500" in output, "an errored turn says what went wrong"
+    # The conversation's order, as it happened.
+    assert output.index("list the files") < output.index("ls(.)")
+    assert output.index("a.py") < output.index("two files")
+
+
+async def test_a_replayed_thought_expands_under_ctrl_o() -> None:
+    buffer = io.StringIO()
+    renderer = _renderer(buffer)
+    messages = (
+        UserMessage(content=text("q")),
+        AssistantMessage(
+            content=(ThinkingBlock(thinking="the reasoning"), TextBlock(text="a")),
+            model="m",
+            provider="p",
+        ),
+    )
+
+    renderer.replay(messages)
+
+    assert "the reasoning" not in buffer.getvalue()
+    assert renderer.expand_thinking() is True
+    assert "the reasoning" in buffer.getvalue()
+
+
+async def test_replay_honors_the_hidden_and_full_modes() -> None:
+    hidden, full = io.StringIO(), io.StringIO()
+    renderer = _renderer(hidden, thinking="hidden")
+    renderer.replay(_history())
+    renderer = _renderer(full, thinking="full")
+    renderer.replay(_history())
+
+    assert "Thought" not in hidden.getvalue()
+    assert "look first" in full.getvalue()
+
+
+async def test_replay_collapses_a_long_tool_result_like_a_live_one() -> None:
+    buffer = io.StringIO()
+    renderer = _renderer(buffer)
+    messages = (
+        AssistantMessage(
+            content=(ToolCallBlock(id="c1", name="bash", arguments={"command": "cat big"}),),
+            model="m",
+            provider="p",
+        ),
+        ToolResultMessage(
+            tool_call_id="c1",
+            tool_name="bash",
+            content=text("\n".join(f"line{i}" for i in range(40))),
+        ),
+    )
+
+    renderer.replay(messages)
+
+    assert "line0" in buffer.getvalue()
+    assert "more line(s)" in buffer.getvalue()
+
+
 # --- thinking -------------------------------------------------------------
 
 
@@ -307,6 +410,25 @@ async def test_the_preview_shows_only_the_latest_lines() -> None:
     assert "step8" in shown
     assert "step9" in shown
     assert "step0" not in shown
+    renderer.close()
+
+
+async def test_the_spinner_stays_below_a_thinking_preview() -> None:
+    """The preview's lines are padded to the full width, so a spinner run on
+    after the last one is cropped away — and the region then ends at the
+    screen's edge, where a key the terminal echoes wraps it a line taller."""
+    buffer = io.StringIO()
+    clock = Clock()
+    renderer = _renderer(buffer, terminal=True, clock=clock)
+
+    await renderer(AgentStart(system_prompt="", tools=(), model=FAKE_MODEL, history=0))
+    await renderer(_started())
+    clock.now += 1  # past the throttle on redraws
+    await renderer(_thought("weighing the options"))
+
+    shown = visible(buffer.getvalue())
+    assert "weighing the options" in shown
+    assert "Ctrl-C to cancel" in shown
     renderer.close()
 
 

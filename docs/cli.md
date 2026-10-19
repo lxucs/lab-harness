@@ -27,7 +27,7 @@ what the runtime does.
 | `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
-| `--resume [ID]` | Continue the session with this id; a unique prefix works. With no id, list this directory's sessions and exit. |
+| `--resume [ID]` | Continue the session with this id; a unique prefix works. Interactive mode prints the saved conversation on resuming. With no id, list this directory's sessions and exit. |
 | `--no-save` | Do not write a transcript for this run. |
 
 **Exit status is meaningful.** A run whose final turn ended in `error` or
@@ -117,13 +117,17 @@ real chain of thought; OpenAI's Responses API and Claude send a summary; OpenAI
 via Chat Completions sends nothing. Claude Fable 5, Opus 5 and Sonnet 5 return
 empty thinking unless asked for a summary, which the adapter does by default —
 `providers.anthropic.thinking_display`, see
-[providers.md](providers.md#the-thinking-request).
+[providers.md](providers.md#the-thinking-request). Some servers also end the
+reasoning mid-sentence, where the answer begins. Expanding shows everything
+that arrived, and nothing is cut on this side; the transcript holds the same
+text.
 
 Ctrl-O is a prompt key binding. Pressed mid-run it waits in the input queue and
 takes effect when the prompt returns; nothing reads keys during a run, which is
-also what keeps text typed ahead safe. (A cooked-mode terminal on macOS and the
-BSDs would otherwise treat Ctrl-O as DISCARD and silently drop the run's
-output, so the terminal turns that one character off for the run's length.)
+also what keeps text typed ahead safe. For the run's length the terminal
+neither echoes keys nor treats Ctrl-O as DISCARD. An echoed key would land
+inside the live region and leave stale lines behind its redraws, and DISCARD,
+on macOS and the BSDs, would silently drop the run's output.
 
 | Key | Action |
 |---|---|
@@ -139,8 +143,9 @@ output, so the terminal turns that one character off for the run's length.)
 | `:q`, `:quit`, `exit` | Exit |
 
 The agent runs one turn sequence at a time. Typing while it works is buffered by
-the terminal and submitted when the run finishes — the runtime itself refuses a
-second concurrent `prompt()` rather than coordinating with the one in flight.
+the terminal, unechoed, and appears at the next prompt — submitted at once if
+it ended with Enter. The runtime itself refuses a second concurrent `prompt()`
+rather than coordinating with the one in flight.
 
 ### Usage and cost
 
@@ -225,6 +230,11 @@ lab-harness -p "…" --no-save      # run without persisting
 Resume continues writing to the *same* file, so a conversation stays one
 transcript across many invocations. Sessions are scoped to the working
 directory — resuming in one project never surfaces another's history.
+
+The interactive terminal prints the saved conversation before the first
+prompt: questions, answers, tool calls and their output, thinking settled the
+configured way and expandable with Ctrl-O. An edit shows its result but not
+its diff, which is display-only and never recorded.
 
 Each invocation also records the system prompt, tool declarations, model and
 config (credentials redacted) it ran with, and records them again whenever one

@@ -16,7 +16,8 @@ run it is a SIGINT, which the turn takes over from asyncio.run's handler.
 prints what the last run collapsed. It is a prompt key binding, so pressed
 mid-run it waits in the input queue and takes effect when the prompt returns —
 nothing reads keys during a run, which is also what keeps typed-ahead text
-safe.
+safe. Nothing echoes them either: typed-ahead text appears when the prompt
+does, not in the live region — see `_keys_wait_quietly`.
 
 **Typing during a run is buffered here, not queued in the runtime.** The agent
 refuses a second concurrent `prompt()` by design (see `agent.py`), so the
@@ -145,7 +146,7 @@ class Terminal:
         # before it, where `abort()` would find nothing to set.
         task = asyncio.create_task(self.agent.prompt(message))
         produced: list[Message] = []
-        with _ctrl_c_calls(self._cancel_turn), _ctrl_o_passes_through(_stdin_fd()):
+        with _ctrl_c_calls(self._cancel_turn), _keys_wait_quietly(_stdin_fd()):
             try:
                 produced = await asyncio.shield(task)
             except asyncio.CancelledError:
@@ -276,18 +277,23 @@ def _ctrl_c_calls(callback: Callable[[], object]) -> Iterator[None]:
 
 
 @contextmanager
-def _ctrl_o_passes_through(fd: int | None) -> Iterator[None]:
-    """Stop Ctrl-O discarding output for the duration, then restore the terminal.
+def _keys_wait_quietly(fd: int | None) -> Iterator[None]:
+    """Keep keys pressed during a run off the screen and out of its output,
+    for the duration, then restore the terminal.
 
-    In a cooked-mode terminal on macOS and the BSDs, Ctrl-O is DISCARD: the
-    terminal silently drops the program's output until it is pressed again.
-    A run reads no keys, so the terminal is cooked for its whole length — and
-    Ctrl-O is the key the collapsed-thinking line says to press. With the
-    character disabled, the keypress stays in the input queue instead, where
-    the next prompt reads it as the toggle.
+    A run reads no keys, so the terminal is cooked for its whole length, and a
+    cooked terminal acts on two of them itself. It echoes what is typed, into
+    the live region: the next redraw erases it, but a line that wraps makes
+    the region a line taller than rich drew, and each redraw after that
+    leaves its top line behind. And on macOS and the BSDs Ctrl-O is DISCARD,
+    which silently drops the program's output until it is pressed again —
+    the key the collapsed-thinking line says to press.
 
-    Only DISCARD, rather than every extended character: turning off IEXTEN
-    would also take Ctrl-W and Ctrl-V away from text typed ahead mid-run.
+    So echo is off and DISCARD disabled. Either way the keypress stays in the
+    input queue, where the next prompt reads it: typed-ahead text appears
+    there, and Ctrl-O is the toggle. Only DISCARD, rather than every extended
+    character: turning off IEXTEN would also take Ctrl-W and Ctrl-V away from
+    text typed ahead mid-run.
     """
     termios = _termios()
     if termios is None or fd is None or not os.isatty(fd):
@@ -295,6 +301,7 @@ def _ctrl_o_passes_through(fd: int | None) -> Iterator[None]:
         return
     saved = termios.tcgetattr(fd)
     changed = [*saved[:6], list(saved[6])]
+    changed[3] &= ~termios.ECHO
     changed[6][termios.VDISCARD] = bytes([os.fpathconf(fd, "PC_VDISABLE")])
     # TCSANOW rather than TCSAFLUSH, which would throw away typed-ahead input.
     termios.tcsetattr(fd, termios.TCSANOW, changed)

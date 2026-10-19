@@ -69,7 +69,10 @@ is wiring rather than a branch in the loop: `cli/` decides whether to attach
 one, and hands it the prompt, tools and config to record.
 
 **`cli/`** — a *subscriber* to the agent's event stream. The runtime never
-imports from `cli/`. Deleting `cli/` leaves the runtime working.
+imports from `cli/`. Deleting `cli/` leaves the runtime working. A resumed
+session's history is the one thing it draws from `agent.state` rather than the
+stream: the past is not a run, and sent through the stream it would be
+recorded a second time.
 
 If you need an upward import, the abstraction is in the wrong place. Add a hook
 or inject the dependency instead.

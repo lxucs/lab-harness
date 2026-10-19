@@ -26,7 +26,7 @@ from lab_harness.cli.terminal import (
     Terminal,
     _bindings,
     _ctrl_c_calls,
-    _ctrl_o_passes_through,
+    _keys_wait_quietly,
     build_approval_gate,
 )
 from lab_harness.config import (
@@ -523,7 +523,7 @@ def test_ctrl_o_cannot_discard_output_during_a_run() -> None:
     try:
         disabled = bytes([os.fpathconf(slave, "PC_VDISABLE")])
         before = termios.tcgetattr(slave)
-        with _ctrl_o_passes_through(slave):
+        with _keys_wait_quietly(slave):
             during = termios.tcgetattr(slave)
         after = termios.tcgetattr(slave)
     finally:
@@ -535,12 +535,38 @@ def test_ctrl_o_cannot_discard_output_during_a_run() -> None:
     assert after == before
 
 
-def test_the_discard_guard_ignores_a_non_terminal() -> None:
-    with _ctrl_o_passes_through(None):
+def test_the_key_guard_ignores_a_non_terminal() -> None:
+    with _keys_wait_quietly(None):
         pass
 
 
-async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -> None:
+def test_keys_typed_during_a_run_wait_unechoed() -> None:
+    """Echoed, a key lands inside the live region, and once it wraps the next
+    redraw leaves a stale line of the region behind. Unechoed it still waits
+    in the input queue, where the next prompt reads it."""
+    termios = pytest.importorskip("termios")
+    import os
+    import pty
+    import select
+
+    master, slave = pty.openpty()
+    try:
+        before = termios.tcgetattr(slave)
+        with _keys_wait_quietly(slave):
+            os.write(master, b"typed ahead\n")
+            echoed = select.select([master], [], [], 0.2)[0]
+        after = termios.tcgetattr(slave)
+        waiting = os.read(slave, 100)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+    assert not echoed, "nothing may be written to the screen"
+    assert waiting == b"typed ahead\n"
+    assert after == before
+
+
+async def test_a_run_keeps_keys_quiet_for_its_whole_length(monkeypatch) -> None:
     termios = pytest.importorskip("termios")
     import os
     import pty
@@ -555,10 +581,13 @@ async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -
     master, slave = pty.openpty()
     disabled = bytes([os.fpathconf(slave, "PC_VDISABLE")])
     during: list[bytes] = []
+    echoing: list[bool] = []
 
     @tool(name="probe", description="probe")
     async def probe(p: _P, ctx: ToolContext) -> ToolResult:
-        during.append(termios.tcgetattr(slave)[6][termios.VDISCARD])
+        attributes = termios.tcgetattr(slave)
+        during.append(attributes[6][termios.VDISCARD])
+        echoing.append(bool(attributes[3] & termios.ECHO))
         return ok("probed")
 
     monkeypatch.setattr("lab_harness.cli.terminal._stdin_fd", lambda: slave)
@@ -571,13 +600,15 @@ async def test_a_run_holds_the_discard_guard_for_its_whole_length(monkeypatch) -
     )
     try:
         await terminal.run()
-        after = termios.tcgetattr(slave)[6][termios.VDISCARD]
+        after = termios.tcgetattr(slave)
     finally:
         os.close(master)
         os.close(slave)
 
     assert during == [disabled]
-    assert after != disabled
+    assert echoing == [False]
+    assert after[6][termios.VDISCARD] != disabled
+    assert after[3] & termios.ECHO
 
 
 # --- the prompt -----------------------------------------------------------

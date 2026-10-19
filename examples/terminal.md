@@ -62,6 +62,9 @@ uv run lab-harness --resume <session-id>    # continue one; a unique prefix work
 uv run lab-harness --no-save                # write nothing
 ```
 
+Continuing one prints the saved conversation — questions, answers, tool calls —
+before the first prompt, so the session picks up where the eye left off.
+
 Transcripts live under `~/.lab-harness/sessions/`, one directory per project.
 Each records what every request was sent with;
 [trajectories.py](trajectories.py) exports them as JSONL.

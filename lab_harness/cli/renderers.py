@@ -20,6 +20,9 @@ stayed behind would leave a second copy of every answer.
 kept in full, collapsed to one line, or dropped, by `terminal.thinking`; and
 whatever the latest run collapsed can still be printed by `expand_thinking`.
 
+**A resumed history** is printed by `replay`, straight to scrollback with the
+same drawing code a live run uses, so it reads as the turns did when they ran.
+
 **Diffs** come from the tools, not from here: a result whose `details` carry
 one — `edit` and `write` — is drawn as Claude Code draws an edit. This module
 reads no files, which is also why an approval preview has no line numbers.
@@ -29,7 +32,7 @@ import asyncio
 import difflib
 import re
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, fields
 from typing import Literal
@@ -56,7 +59,16 @@ from lab_harness.agent.types import (
     ToolExecutionUpdate,
 )
 from lab_harness.config import ConfigError, TerminalConfig
-from lab_harness.llm.types import AssistantMessage, ContentBlock, TextBlock, ThinkingBlock
+from lab_harness.llm.types import (
+    AssistantMessage,
+    ContentBlock,
+    Message,
+    TextBlock,
+    ThinkingBlock,
+    ToolCallBlock,
+    ToolResultMessage,
+    UserMessage,
+)
 
 #: Per-tool argument shown in the one-line call notice. A tool not listed here
 #: falls back to the first argument it has.
@@ -276,6 +288,47 @@ class EventRenderer:
         for row in self._preview(tool_name, arguments):
             self._console.print(row)
 
+    def replay(self, messages: Sequence[Message]) -> None:
+        """Print a restored history once, the way each turn looked when it ran.
+
+        Straight to scrollback, not through the event stream: the stream is
+        what the session recorder persists, and a resumed session must not
+        re-record the past it was seeded with (docs/sessions.md). Thinking
+        settles the configured way, so what a replay collapses still expands
+        under Ctrl-O like a fresh thought.
+        """
+        calls: dict[str, ToolCallBlock] = {}
+        for message in messages:
+            if isinstance(message, UserMessage):
+                # The input glyph, so a replayed question reads as the prompt
+                # that asked it. Same deliberate character as terminal.py's.
+                self._print(
+                    Text.assemble(("› ", self._theme.muted), (_text(message.content), ""))  # noqa: RUF001
+                )
+            elif isinstance(message, AssistantMessage):
+                self._settle(
+                    [b.thinking for b in message.content if isinstance(b, ThinkingBlock)],
+                    _text(message.content),
+                )
+                if message.error_message:
+                    self._print(Text(message.error_message, style=self._theme.error))
+                for call in message.tool_calls:
+                    calls[call.id] = call
+            elif isinstance(message, ToolResultMessage):
+                # The event shape the drawing code takes, assembled from what
+                # the transcript kept. Its `details` were never recorded, so a
+                # replayed edit shows its result but not its diff.
+                event = ToolExecutionEnd(
+                    tool_call_id=message.tool_call_id,
+                    tool_name=message.tool_name,
+                    content=message.content,
+                    is_error=message.is_error,
+                    duration_ms=message.duration_ms or 0,
+                )
+                call = calls.get(message.tool_call_id)
+                shown = headline(call.name, call.arguments) if call else ""
+                self._settled_call(message.tool_name, shown, event)
+
     def _preview(self, tool_name: str, arguments: dict[str, object]) -> list[RenderableType]:
         """What an edit or write is about to do, from its arguments alone.
 
@@ -388,14 +441,18 @@ class EventRenderer:
     def _finish_tool(self, event: ToolExecutionEnd) -> None:
         running = self._tools.pop(event.tool_call_id, None)
         call = running.headline if running is not None else ""
+        self._refresh()
+        self._settled_call(event.tool_name, call, event)
+
+    def _settled_call(self, name: str, call: str, event: ToolExecutionEnd) -> None:
+        """A finished call in scrollback: its line, then its result."""
         bullet = self._theme.error if event.is_error else self._theme.success
         diff = event.details.get("diff")
         if isinstance(diff, str) and diff and not event.is_error:
             rows = self._changed(_text(event.content), _parse_diff(diff))
         else:
             rows = self._output(event)
-        self._refresh()
-        self._print(Group(self._call_line(event.tool_name, call, bullet), *rows))
+        self._print(Group(self._call_line(name, call, bullet), *rows))
 
     def _output(self, event: ToolExecutionEnd) -> list[RenderableType]:
         lines = _text(event.content).splitlines()
@@ -577,10 +634,11 @@ class _Tail:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         lines = console.render_lines(self._renderable, options, pad=False)
         limit = self._lines if self._lines is not None else options.size.height - 1
-        for number, line in enumerate(lines[-max(limit, 1) :]):
-            if number:
-                yield Segment.line()
+        # A break after every line, the last included, as any renderable ends:
+        # without one, what follows runs on and is cropped at the width.
+        for line in lines[-max(limit, 1) :]:
             yield from line
+            yield Segment.line()
 
 
 def headline(tool_name: str, arguments: dict[str, object]) -> str:

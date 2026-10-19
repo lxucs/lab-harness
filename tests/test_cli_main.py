@@ -5,6 +5,7 @@ because nothing calls `stream()` — construction alone makes no request.
 """
 
 import argparse
+import asyncio
 import logging
 import sys
 from io import StringIO
@@ -433,6 +434,43 @@ async def test_the_gate_guards_the_configured_tools(monkeypatch: pytest.MonkeyPa
     assert isinstance(gate, ApprovalGate)
     assert gate.requires_approval("bash")
     assert not gate.requires_approval("read")
+
+
+def test_interactive_resume_shows_the_restored_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--resume` replays the saved conversation, so the session continues
+    where the eye left off rather than from a one-line note."""
+    provider = FakeProvider([text_response("first answer")])
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    [path] = list_sessions(tmp_path, Config().session)
+
+    captured: dict[str, Agent] = {}
+    replayed: list[tuple] = []
+    terminal: dict[str, object] = {}
+
+    class _RecordingRenderer:
+        def replay(self, messages: object) -> None:
+            replayed.append(tuple(messages))  # type: ignore[arg-type]
+
+    class _FakeTerminal(_StubTerminal):
+        renderer = _RecordingRenderer()
+
+        def __init__(self, console: object, config: Config) -> None:
+            super().__init__(captured)
+            terminal["constructed"] = True
+
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
+
+    assert asyncio.run(run_interactive(_args(resume=path.stem, cwd=str(tmp_path)), Config())) == 0
+
+    assert terminal == {"constructed": True}
+    assert len(replayed) == 1, "the restored history is shown once"
+    assert [m.role for m in replayed[0]] == ["user", "assistant"]
+    assert "first answer" in "".join(
+        b.text for m in replayed[0] for b in getattr(m, "content", ()) if hasattr(b, "text")
+    )
 
 
 # --- text sink helpers ----------------------------------------------------
