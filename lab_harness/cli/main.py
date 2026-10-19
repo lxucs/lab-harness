@@ -18,6 +18,7 @@ from rich.text import Text
 
 from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentEvent, MessageEnd, declarations_for
+from lab_harness.cli.export import export_html
 from lab_harness.cli.json_sink import json_sink
 from lab_harness.cli.terminal import LogStream, Terminal, build_approval_gate
 from lab_harness.config import Config, ConfigError, PromptsConfig, load_config
@@ -29,6 +30,8 @@ from lab_harness.session import (
     ResumeError,
     SessionRecorder,
     TranscriptError,
+    find_session,
+    latest_session,
     list_sessions,
     read_transcript,
     resume,
@@ -105,6 +108,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-save", action="store_true", help="Do not write a transcript for this run."
+    )
+    parser.add_argument(
+        "--export",
+        nargs="?",
+        const="",
+        metavar="SESSION_ID",
+        help=(
+            "Write a saved session as one HTML page beside its transcript, print "
+            "its path, and exit. With no id, this directory's most recent session."
+        ),
     )
     return parser
 
@@ -279,6 +292,26 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
             recorder.close()
 
 
+def export_session(args: argparse.Namespace, config: Config) -> int:
+    """`--export`: write a session's HTML page and print where. Reads only."""
+    try:
+        if args.export:
+            path = find_session(args.cwd, args.export, config.session)
+        else:
+            path = latest_session(args.cwd, config.session)
+        if path is None:
+            raise ResumeError(
+                f"No session matching {args.export!r} for this directory."
+                if args.export
+                else "No saved sessions for this directory."
+            )
+        target = export_html(path, config)
+    except (ValueError, TranscriptError) as exc:  # an ambiguous prefix, a bad file
+        raise ResumeError(str(exc)) from exc
+    print(target)
+    return 0
+
+
 def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
     """`--resume` with no id: print this directory's sessions, newest first.
 
@@ -355,6 +388,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # up that project's .lab-harness/ rather than this directory's.
         config = load_config(args.cwd)
         configure_logging(args.log_level, config.logging)
+        if args.export is not None:
+            return export_session(args, config)
         # `--resume` alone: its value is the flag's const, "".
         if args.resume == "":
             return list_saved_sessions(args, config)

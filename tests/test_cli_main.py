@@ -744,3 +744,30 @@ async def test_a_redirected_stderr_keeps_the_records(monkeypatch: pytest.MonkeyP
     await _interactive(monkeypatch, stderr=StringIO())
 
     assert not any(isinstance(s, LogStream) for s in _streams())
+
+
+# --- export -----------------------------------------------------------------
+
+
+def test_export_writes_the_latest_session_as_a_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    provider = FakeProvider([text_response("the answer")])
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    assert main(["-p", "the question", "--cwd", str(tmp_path)]) == 0
+    [path] = list_sessions(tmp_path, Config().session)
+    capsys.readouterr()
+
+    assert main(["--export", "--cwd", str(tmp_path)]) == 0
+
+    page = path.with_suffix(".html")
+    assert capsys.readouterr().out.strip() == str(page)
+    assert "the question" in page.read_text(encoding="utf-8")
+    assert "the answer" in page.read_text(encoding="utf-8")
+
+
+def test_export_of_an_unknown_session_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["--export", "nope", "--cwd", str(tmp_path)]) == 1
+    assert "nope" in capsys.readouterr().err

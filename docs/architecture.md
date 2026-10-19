@@ -189,7 +189,7 @@ confusing order to read it in — each step only depends on the ones above.
 | 5 | `tools/base.py`, `registry.py`, `fs.py` |
 | 6 | `cli/json_sink.py` — first end-to-end run |
 | 7 | `llm/providers/anthropic.py` — first real run |
-| 8 | `cli/terminal.py`, `usage.py` |
+| 8 | `cli/terminal.py`, `usage.py`, `export.py` |
 | 9 | `tools/shell.py`, `search.py`, `cli/approval.py` |
 | 10 | `session/` |
 | 11 | `tools/web.py`, `html_text.py`, `config.py` loading |

@@ -156,8 +156,9 @@ approval gate, a tool set chosen in config or per run, layered TOML config with
 the prompts and the model catalog as data, a system prompt built from
 configurable sections with the environment filled in and the project's
 `HARNESS.md`/`AGENTS.md` appended, levelled diagnostics on stderr, and durable
-sessions that resume on screen where they left off and record enough to
-rebuild every request they made, changes mid-session included. A step-by-step
+sessions that resume on screen where they left off, export as a searchable
+web page, and record enough to rebuild every request they made, changes
+mid-session included. A step-by-step
 reading order is in [docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval

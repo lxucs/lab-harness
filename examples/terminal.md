@@ -65,6 +65,23 @@ uv run lab-harness --no-save                # write nothing
 Continuing one prints the saved conversation — questions, answers, tool calls —
 before the first prompt, so the session picks up where the eye left off.
 
+### Viewing a session
+
+```bash
+uv run lab-harness --resume <session-id> --no-save   # read it in the terminal, then Ctrl-D
+uv run lab-harness --export <session-id>             # or as a web page; prints its path
+open "$(uv run lab-harness --export)"                # the latest session, in a browser (macOS)
+```
+
+`--resume` with `--no-save` is a read-only view: the whole conversation, Ctrl-O
+to expand every thought, and nothing appended to the file. `--export` writes
+one self-contained HTML page beside the transcript, with more than the terminal
+shows: each invocation's system prompt, tools and config, and tokens and cost
+per request. The page searches the conversation (`/`), folds thinking (`t`) and
+tool calls (`o`), lists the turns down the side, and follows the system's light
+or dark theme. It loads nothing from the network, so it can be mailed or
+attached as it is.
+
 Transcripts live under `~/.lab-harness/sessions/`, one directory per project.
 Each records what every request was sent with;
 [trajectories.py](trajectories.py) exports them as JSONL.

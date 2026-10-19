@@ -28,6 +28,7 @@ what the runtime does.
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |
 | `--resume [ID]` | Continue the session with this id; a unique prefix works. Interactive mode prints the saved conversation on resuming. With no id, list this directory's sessions and exit. |
+| `--export [ID]` | Write the session as one HTML page beside its transcript, print its path, and exit. With no id, this directory's most recent session. |
 | `--no-save` | Do not write a transcript for this run. |
 
 **Exit status is meaningful.** A run whose final turn ended in `error` or
@@ -234,7 +235,24 @@ directory — resuming in one project never surfaces another's history.
 The interactive terminal prints the saved conversation before the first
 prompt: questions, answers, tool calls and their output, thinking settled the
 configured way and expandable with Ctrl-O. An edit shows its result but not
-its diff, which is display-only and never recorded.
+its diff, which is display-only and never recorded. With `--no-save` this is a
+read-only view — nothing is appended to the file.
+
+`--export` turns a session into a web page:
+
+```bash
+lab-harness --export 20261010T11   # writes <session-id>.html beside it, prints the path
+```
+
+One self-contained file — styles and script inline, nothing fetched, a
+Content-Security-Policy that lets only its own script run — so it opens from
+disk and can be shared as it is. It shows what the terminal does not: each
+invocation's system prompt, tool declarations and config (credentials
+redacted), when the context changed and why, tokens and cost per request, and
+turns resume dropped. Thinking and tool calls fold, edits show as diffs, and a
+search box (`/`) filters turns and steps through matches; `t` and `o` fold or
+unfold every thought and every call. Everything from the transcript is escaped:
+it is model and tool output, and the page treats it as untrusted.
 
 Each invocation also records the system prompt, tool declarations, model and
 config (credentials redacted) it ran with, and records them again whenever one

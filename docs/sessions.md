@@ -249,6 +249,17 @@ the event stream would make the session re-record its own past. The interactive
 terminal shows the history anyway, by drawing it directly through the renderer
 — off the event stream, so the recorder never sees it.
 
+## Viewing a session
+
+| Command | Shows |
+|---|---|
+| `lab-harness --resume ID --no-save` | The conversation in the terminal, read-only |
+| `lab-harness --export [ID]` | One self-contained HTML page beside the transcript: the conversation, every segment's context, usage and cost per request |
+| `examples/trajectories.py [ID]` | Every request exactly as sent, one JSON line each |
+
+The page is a view, not a record: it is written next to the `.jsonl`, never
+read back, and safe to delete. See [cli.md](cli.md#sessions).
+
 ## Configuration
 
 | Key | Default | Purpose |
