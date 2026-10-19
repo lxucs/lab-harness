@@ -21,6 +21,7 @@ what the runtime does.
 | `--json` | Emit the raw event stream as JSONL instead of rendered text. |
 | `--model` | Model id. Beats `$LAB_HARNESS_MODEL`, which beats `agent.model` in config. |
 | `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
+| `--reasoning-effort` | How hard a reasoning model thinks, in its provider's terms — `low`, `high`, …. Beats the model's `reasoning_effort` and `agent.reasoning_effort`; `""` sends none. See [Reasoning effort](#reasoning-effort). |
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
 | `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
 | `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. |
@@ -142,6 +143,7 @@ on macOS and the BSDs, would silently drop the run's output.
 | Command | Action |
 |---|---|
 | `:status` | Token, cache and cost totals for the session |
+| `:effort [LEVEL]` | Show the reasoning effort, or set it for the runs after; `:effort default` sends none |
 | `:q`, `:quit`, `exit` | Exit |
 
 The agent runs one turn sequence at a time. Typing while it works is buffered by
@@ -317,6 +319,48 @@ any other endpoint speaking either protocol is a few lines of config —
 Reasoning models differ in what they will show you and what has to be handed
 back; [providers.md](providers.md#how-thinking-is-handled-across-models) has
 the table.
+
+### Reasoning effort
+
+How hard a reasoning model thinks is one setting, resolved like the model
+itself — highest first:
+
+1. `:effort LEVEL` in the terminal, for the runs after it
+2. `--reasoning-effort LEVEL`
+3. the model's `reasoning_effort` in `[models]`
+4. `agent.reasoning_effort`
+
+Empty everywhere — the default — sends nothing, and the model thinks at its
+provider's default. `--reasoning-effort ""` and `:effort default` mean the same
+for one run or the rest of a session, whatever config says.
+
+```bash
+lab-harness --reasoning-effort low            # quick answers
+lab-harness --model glm-5.3 --reasoning-effort high
+```
+
+```toml
+[agent]
+reasoning_effort = "medium"     # any model that sets none
+
+[models."qwen3.8-flash"]
+reasoning_effort = "low"        # this one, wherever it is used
+```
+
+**A level is the provider's word, sent as is.** Chat Completions gets
+`reasoning_effort`, the Responses API `reasoning.effort`, and Claude
+`output_config.effort`; a Claude model older than 4.6 has no effort, so any
+level turns on its budgeted thinking instead
+([providers.md](providers.md#the-thinking-request)). Vendors disagree on the
+words — some take `none` to switch thinking off, some levels beyond `high` —
+so nothing here checks them: a server that rejects one usually says which it
+takes, in the error. A model whose entry sets `supports_reasoning = false` is
+sent no level at all.
+
+A level is part of the model a request goes to, so a session records it with
+the model in each `context` entry: a changed level opens a new segment, the
+export page marks it, and a rebuilt request body carries it. `:status` shows
+the current one.
 
 ## Diagnostics
 

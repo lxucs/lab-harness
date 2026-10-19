@@ -52,7 +52,7 @@ from lab_harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.provider import StreamOptions, reasoning_effort
 from lab_harness.llm.providers._trace import request_shape
 from lab_harness.llm.types import (
     AssistantMessage,
@@ -215,25 +215,27 @@ class AnthropicProvider:
         if opts.temperature is not None:
             request["temperature"] = opts.temperature
         if model.supports_reasoning:
-            thinking = self._thinking(model, opts)
+            effort = reasoning_effort(model, opts)
+            thinking = self._thinking(model, effort)
             if thinking is not None:
                 request["thinking"] = thinking
                 # The API rejects temperature alongside thinking.
                 request.pop("temperature", None)
-            if opts.reasoning is not None and not self._takes_budget(model):
+            if effort and not self._takes_budget(model):
                 # Adaptive thinking has no budget; effort is how deep it goes.
-                request["output_config"] = {"effort": opts.reasoning}
+                request["output_config"] = {"effort": effort}
         return request
 
-    def _thinking(self, model: Model, opts: StreamOptions) -> dict[str, Any] | None:
+    def _thinking(self, model: Model, effort: str) -> dict[str, Any] | None:
         """The `thinking` field for a reasoning model, or None to send none.
 
-        Two request shapes, per model. Adaptive is sent whether or not
-        reasoning was requested, because the models that take it think by
+        Two request shapes, per model. Adaptive is sent whether or not an
+        effort was asked for, because the models that take it think by
         default anyway, and only an explicit request can ask for `display`.
+        A budget model thinks only when asked, at the configured budget.
         """
         if self._takes_budget(model):
-            if opts.reasoning is None:
+            if not effort:
                 return None
             return {"type": "enabled", "budget_tokens": self._config.thinking_budget_tokens}
         thinking: dict[str, Any] = {"type": "adaptive"}

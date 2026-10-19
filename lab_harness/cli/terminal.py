@@ -27,6 +27,10 @@ terminal holds the text and submits it when the run returns. That keeps the
 **Log records print through the console** when stderr is this terminal, so
 they land above the live region rather than inside it — see `LogStream`.
 
+**`:effort` changes the reasoning effort between runs.** It replaces the
+agent's model with one asking for the new level, so the next run's
+`agent_start` carries it and a recorded session opens a new segment there.
+
 **Usage is read from the transcript, not tracked.** The footer after a run
 and `:status` both fold over messages that already carry their `Usage` — see
 `usage.py` — so there is no counter here to fall out of step with history.
@@ -40,7 +44,7 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from prompt_toolkit import PromptSession
@@ -67,6 +71,10 @@ _GLYPH_CLASS = "glyph"
 _PROMPT_MESSAGE = FormattedText([(f"class:{_GLYPH_CLASS}", _PROMPT)])
 _CANCELLED_NOTICE = "^C  turn cancelled"
 _STATUS_COMMAND = ":status"
+_EFFORT_COMMAND = ":effort"
+#: What `:effort` takes to send no level, leaving it to the model. Not "none"
+#: or "off": some APIs take those as levels, meaning no thinking.
+_EFFORT_CLEAR = "default"
 #: Answers accepted at the approval prompt, by first letter. Deliberately no
 #: empty-string entry: a bare Enter is not consent, it is a reflex. Anything
 #: unlisted falls through to "no".
@@ -137,6 +145,9 @@ class Terminal:
             if text == _STATUS_COMMAND:
                 self._print_status()
                 continue
+            if text.split()[0] == _EFFORT_COMMAND:
+                self._set_effort(text.removeprefix(_EFFORT_COMMAND).strip())
+                continue
 
             await self._run_turn(text)
 
@@ -186,6 +197,23 @@ class Terminal:
         summary = summarize(self.agent.state.messages, self.config.models)
         lines = format_status(summary, self.agent.state.model, self.config.terminal.currency_symbol)
         self.console.print(Text("\n".join(lines)))
+        self.console.print()
+
+    def _set_effort(self, level: str) -> None:
+        """`:effort` shows the level, `:effort LEVEL` sets it for the runs after."""
+        model = self.agent.state.model
+        theme = self.config.terminal.theme
+        if level:
+            effort = "" if level == _EFFORT_CLEAR else level
+            model = replace(model, reasoning_effort=effort)
+            self.agent.state.model = model
+        shown = model.reasoning_effort or f"{_EFFORT_CLEAR} (none sent)"
+        self.console.print(Text(f"reasoning effort: {shown}", style=theme.muted))
+        if model.reasoning_effort and not model.supports_reasoning:
+            # The adapters send no level to a model flagged as not reasoning.
+            self.console.print(
+                Text(f"{model.id} does not reason; no level is sent", style=theme.warning)
+            )
         self.console.print()
 
     async def ask_approval(self, tool_name: str, arguments: dict[str, object]) -> str:

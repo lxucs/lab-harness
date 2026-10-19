@@ -252,6 +252,9 @@ class _Page:
             return f'<div class="segment-head">{"".join(chips)}</div>'
         chips.append(_time(context.timestamp, "datetime"))
         chips.append(f'<span class="chip quiet">{_escape(context.model.id)}</span>')
+        if context.model.reasoning_effort:
+            effort = _escape(context.model.reasoning_effort)
+            chips.append(f'<span class="chip quiet">effort {effort}</span>')
         if segment.changed:
             chips.append(
                 f'<span class="chip warn">changed: {_escape(", ".join(segment.changed))}</span>'
@@ -507,6 +510,8 @@ def _changes(previous: SessionContext | None, context: SessionContext) -> tuple[
         changed.append("tools")
     if previous.model.id != context.model.id:
         changed.append("model")
+    if previous.model.reasoning_effort != context.model.reasoning_effort:
+        changed.append("reasoning effort")
     return tuple(changed)
 
 

@@ -11,6 +11,7 @@ import logging
 import re
 import signal
 import threading
+from dataclasses import replace
 
 import pytest
 from prompt_toolkit import PromptSession
@@ -323,6 +324,37 @@ async def test_status_includes_resumed_history() -> None:
     output = buffer.getvalue()
     assert re.search(r"requests\s+1\b", output)
     assert re.search(r"output\s+100\b", output)
+
+
+async def test_effort_changes_the_level_the_next_runs_ask_for() -> None:
+    terminal, buffer = _terminal([":effort low", "first", ":status", ":effort default"])
+    provider = FakeProvider([text_response("one")])
+    model = replace(FAKE_MODEL, supports_reasoning=True)
+    agent = Agent(model=model, provider=provider, config=terminal.config)
+    terminal.attach(agent)
+    efforts: list[str] = []
+
+    async def record(event: object) -> None:
+        if isinstance(event, AgentStart):
+            efforts.append(event.model.reasoning_effort)
+
+    agent.subscribe(record)
+
+    await terminal.run()
+
+    assert efforts == ["low"], "the run after it asks for the level"
+    assert len(provider.requests) == 1, ":effort must not reach the provider"
+    assert re.search(r"effort\s+low\b", buffer.getvalue()), ":status shows it"
+    assert agent.state.model == model, "default sends none again"
+
+
+async def test_effort_says_when_the_model_does_not_reason() -> None:
+    terminal, buffer = _terminal([":effort high"])
+    _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    assert "does not reason" in buffer.getvalue()
 
 
 # --- approval prompt ------------------------------------------------------

@@ -300,6 +300,19 @@ def test_each_invocation_shows_what_it_ran_with(tmp_path: Path) -> None:
     assert "Run a shell command." in page, "the tool declarations are there to read"
 
 
+def test_a_changed_effort_is_shown(tmp_path: Path) -> None:
+    first = (UserMessage(content=text("q")), _reply(TextBlock(text="a")))
+    harder = replace(_context(2), model=replace(FAKE_MODEL, reasoning_effort="high"))
+    path = _write(
+        tmp_path / "s1.jsonl", (_context(), first), (harder, (UserMessage(content=text("q2")),))
+    )
+
+    page = render_html(read_transcript(path), Config())
+
+    assert "changed: reasoning effort" in page
+    assert "effort high" in page
+
+
 def test_a_plain_resume_is_called_one(tmp_path: Path) -> None:
     first = (UserMessage(content=text("q")), _reply(TextBlock(text="a")))
     path = _write(

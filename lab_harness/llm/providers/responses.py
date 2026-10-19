@@ -55,7 +55,7 @@ from lab_harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.provider import StreamOptions, reasoning_effort
 from lab_harness.llm.providers import _http
 from lab_harness.llm.providers._trace import request_shape
 from lab_harness.llm.types import (
@@ -200,8 +200,8 @@ class ResponsesProvider:
             request["temperature"] = opts.temperature
         if model.supports_reasoning:
             reasoning: dict[str, Any] = {}
-            if opts.reasoning is not None:
-                reasoning["effort"] = opts.reasoning
+            if effort := reasoning_effort(model, opts):
+                reasoning["effort"] = effort
             if cfg.reasoning_summary:
                 # Without this the thinking is invisible: the raw chain is
                 # never returned, and the summary is the only readable form.

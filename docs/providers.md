@@ -132,7 +132,7 @@ Two request shapes, chosen per model:
 | Models | Sent | Thinks |
 |---|---|---|
 | Fable 5, Opus 5, Sonnet 5, and any Claude id not listed below | `thinking: {type: "adaptive", display: "summarized"}`, on every request | Always — they think by default |
-| Everything before 4.6 — `budget_thinking_models`, by id prefix | `thinking: {type: "enabled", budget_tokens: …}`, only when reasoning is requested | Only when asked |
+| Everything before 4.6 — `budget_thinking_models`, by id prefix | `thinking: {type: "enabled", budget_tokens: …}`, only when an effort is set | Only when asked |
 
 **Adaptive is sent even though the models think unasked**, because the
 request is the only place to ask for `display`. The 5-series models default it
@@ -142,9 +142,11 @@ raw chain is never returned either way, and billing is the same.
 `providers.anthropic.thinking_display` sets it, and `""` sends no preference.
 
 **A budget never reaches an adaptive model** — the 5-series rejects one with a
-400. Effort is the dial there instead: a requested `StreamOptions.reasoning`
-goes out as `output_config.effort`. Nothing in the harness requests a level
-yet, so they run at the API's default.
+400. Effort is the dial there instead: the model's `reasoning_effort` goes out
+as `output_config.effort`, and none is sent when it is empty, leaving the
+API's default. A budget model has no effort, so any level only switches its
+thinking on, at `thinking_budget_tokens`. Where the level comes from:
+[cli.md](cli.md#reasoning-effort).
 
 **An unlisted id is assumed current**, the catalog's rule everywhere else, so
 it gets adaptive. That is why the budget list names the old models rather
@@ -362,10 +364,12 @@ dialect it speaks — `deepseek-flash` says `deepseek`, not `openai`.
 
 Capability flags live with the model, not at the call site.
 `supports_reasoning` gates the thinking request; for Claude it decides whether
-one is sent at all ([The thinking request](#the-thinking-request)). Nothing in
-the harness asks for a reasoning *level* yet — the loop sets no
-`StreamOptions.reasoning` — and the current Claude 5, DeepSeek and GLM models
-think by default anyway.
+one is sent at all ([The thinking request](#the-thinking-request)). The level
+that request asks for lives there too, as `Model.reasoning_effort` — from the
+model's entry, `agent.reasoning_effort`, or `--reasoning-effort`
+([cli.md](cli.md#reasoning-effort)) — because a level one model takes, another
+rejects. Each adapter sends it in its own dialect; `StreamOptions.reasoning`
+overrides it for a single request, `""` included.
 `supports_server_tools` only records a capability; provider-native
 `web_search` is not planned (see [tools.md](tools.md)).
 

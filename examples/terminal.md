@@ -17,6 +17,7 @@ uv run lab-harness
 | `Ctrl-C` | Cancel the turn in flight; the session carries on |
 | `Ctrl-O` | Expand or collapse the model's thinking |
 | `:status` | Tokens, cache hits and cost so far |
+| `:effort [LEVEL]` | Show or set how hard the model thinks, e.g. `:effort low`; `:effort default` sends none |
 | `Ctrl-D` | Exit |
 
 Mutating tools — `bash`, `write`, `edit` — ask before they run, and anything
@@ -95,6 +96,7 @@ uv run lab-harness --model claude-opus-5
 DEEPSEEK_API_KEY=sk-... uv run lab-harness --model deepseek-flash   # routed by config
 ZHIPUAI_API_KEY=... uv run lab-harness --model glm-5.3
 OPENAI_API_KEY=sk-... uv run lab-harness --model gpt-6-luna
+uv run lab-harness --reasoning-effort low                          # think less
 ```
 
 Adding a vendor or a model is a few lines of config:

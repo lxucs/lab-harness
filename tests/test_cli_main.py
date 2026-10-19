@@ -53,6 +53,7 @@ def _args(**kwargs: object) -> argparse.Namespace:
         "json": False,
         "model": None,
         "provider": None,
+        "reasoning_effort": None,
         "cwd": ".",
         "tools": None,
         "system_prompt": None,
@@ -106,6 +107,7 @@ def test_the_overriding_flags_default_to_unset() -> None:
 
     assert args.model is None
     assert args.provider is None
+    assert args.reasoning_effort is None
     assert args.log_level is None
     assert args.tools is None
     assert args.system_prompt is None
@@ -219,6 +221,15 @@ def test_the_model_flag_beats_the_configured_model() -> None:
     agent = _build_agent(_args(model="claude-opus-5"), config)
 
     assert agent.state.model.id == "claude-opus-5"
+
+
+@pytest.mark.parametrize(("flag", "sent"), [("low", "low"), ("", "")], ids=["level", "empty"])
+def test_the_effort_flag_beats_the_configured_one(flag: str, sent: str) -> None:
+    """An empty flag sends no level, whatever config says."""
+    config = Config(agent=AgentConfig(reasoning_effort="high"))
+
+    assert _build_agent(_args(), config).state.model.reasoning_effort == "high"
+    assert _build_agent(_args(reasoning_effort=flag), config).state.model.reasoning_effort == sent
 
 
 # --- project instructions -------------------------------------------------

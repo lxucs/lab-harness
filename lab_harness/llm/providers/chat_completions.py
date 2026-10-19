@@ -45,7 +45,7 @@ from lab_harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.provider import StreamOptions, reasoning_effort
 from lab_harness.llm.providers import _http
 from lab_harness.llm.providers._trace import request_shape
 from lab_harness.llm.types import (
@@ -213,8 +213,8 @@ class ChatCompletionsProvider:
             ]
         if opts.temperature is not None:
             request["temperature"] = opts.temperature
-        if opts.reasoning is not None and model.supports_reasoning:
-            request["reasoning_effort"] = opts.reasoning
+        if model.supports_reasoning and (effort := reasoning_effort(model, opts)):
+            request["reasoning_effort"] = effort
         return request
 
     def reply_entries(self, message: AssistantMessage) -> list[dict[str, Any]]:

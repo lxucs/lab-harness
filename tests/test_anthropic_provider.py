@@ -598,6 +598,20 @@ async def test_budget_models_match_by_id_prefix(model_id: str) -> None:
     assert "output_config" not in asked
 
 
+async def test_the_models_effort_is_the_request_for_either_kind() -> None:
+    """Set in config rather than per request: effort for adaptive, a budget for the rest."""
+    adaptive = replace(resolve_model("claude-sonnet-5"), reasoning_effort="low")
+    budget = replace(HAIKU, reasoning_effort="low")
+    client = _FakeClient([_msg_start(), _msg_delta("end_turn")])
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
+
+    for model in (adaptive, budget):
+        _ = [event async for event in provider.stream(model, _ctx())]
+
+    assert client.messages.requests[0]["output_config"] == {"effort": "low"}
+    assert client.messages.requests[1]["thinking"]["type"] == "enabled"
+
+
 async def test_a_model_without_reasoning_gets_no_thinking_request() -> None:
     from dataclasses import replace
 

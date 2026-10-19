@@ -77,6 +77,7 @@ parallel_tools = true            # run independent tool calls concurrently
 model = "claude-sonnet-5"        # used when --model and $LAB_HARNESS_MODEL are absent
 model_env = "LAB_HARNESS_MODEL"  # NAME of the variable that overrides `model`
 provider = "anthropic"           # for a model id nothing else routes
+reasoning_effort = ""            # for a model whose entry sets none; "" sends none
 
 [project]
 context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
@@ -148,7 +149,7 @@ prompt = "bold #d77757"
 [session]
 home = "~/.lab-harness" # root for state; $LAB_HARNESS_HOME overrides
 enabled = true          # write transcripts at all
-version = 3             # transcript schema version
+version = 4             # transcript schema version
 
 # Every LLM setting — [providers.anthropic], [providers.openai.<name>] and
 # [models.<id>] — ships in lab_harness/llm/catalog.toml, in this format; see
@@ -315,6 +316,7 @@ the quotes are TOML's, not part of the name.
 | `context_window` | `200000` | Tokens the model reads; the terminal measures context against it |
 | `max_tokens` | `8192` | Output ceiling sent with every request |
 | `supports_reasoning` | `true` | Gates the thinking request an adapter sends |
+| `reasoning_effort` | `""` | The level that request asks for, in the provider's terms; empty leaves it to `agent.reasoning_effort`. See [cli.md](cli.md#reasoning-effort) |
 | `supports_images`, `supports_server_tools` | `false` | Recorded; nothing acts on them |
 | `price` | all zero | USD — or any one currency — per million tokens |
 

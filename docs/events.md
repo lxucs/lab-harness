@@ -58,7 +58,8 @@ agent_end
 ### `agent_start` says what the run sends
 
 Everything a request carries besides the messages: the system prompt, the
-tool declarations in the order sent, and the model. `history` counts the
+tool declarations in the order sent, and the model, with the reasoning effort
+it is asked for. `history` counts the
 messages carried in from before the run; the ones it announces, normally the
 prompt, come after them.
 

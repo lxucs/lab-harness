@@ -13,6 +13,7 @@ reasoning model silently gets worse — nothing errors, the model just forgets.
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -259,6 +260,14 @@ async def test_reasoning_effort_is_forwarded() -> None:
     await collect(provider(recorder), opts=StreamOptions(reasoning="high"), model=REASONING_MODEL)
 
     assert recorder.payload["reasoning"]["effort"] == "high"
+
+
+async def test_the_models_effort_is_sent() -> None:
+    recorder = Recorder(sse(completed()))
+
+    await collect(provider(recorder), model=replace(REASONING_MODEL, reasoning_effort="low"))
+
+    assert recorder.payload["reasoning"]["effort"] == "low"
 
 
 async def test_the_summary_can_be_turned_off() -> None:

@@ -8,6 +8,7 @@ or a network.
 
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -216,6 +217,7 @@ async def test_trajectories_wire_is_the_bodies_the_endpoint_received(
     """A real adapter over a canned transport, recorded, then rebuilt from the file."""
     config = load_config()
     model, _ = route("deepseek-flash", config)
+    model = replace(model, reasoning_effort="max")
     profile = config.providers.openai[model.provider]
     monkeypatch.setenv(profile.api_key_env, TEST_KEY)
     call_ls = {"index": 0, "id": "c1", "function": {"name": "ls", "arguments": "{}"}}
@@ -245,6 +247,7 @@ async def test_trajectories_wire_is_the_bodies_the_endpoint_received(
     assert load("trajectories").main(None, wire=True) == 0
     exported = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [line["request"] for line in exported] == endpoint.payloads
+    assert exported[0]["request"]["reasoning_effort"] == "max"
     first_reply = exported[0]["reply"]
     assert first_reply[0]["reasoning_content"] == "Look first."
     assert endpoint.payloads[1]["messages"][2:3] == first_reply

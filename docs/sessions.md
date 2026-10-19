@@ -11,7 +11,7 @@ Append-only JSONL, one file per session:
 Line 1 is the header; every subsequent line is one entry.
 
 ```jsonc
-{"type": "session", "version": 3, "id": "...", "cwd": "/path",
+{"type": "session", "version": 4, "id": "...", "cwd": "/path",
  "timestamp": "...", "model": "..."}
 {"type": "context", "timestamp": "...", "restored": 0, "system_prompt": "...",
  "tools": [ /* declarations */ ], "model": { /* Model */ }, "config": { /* ... */ }}
@@ -22,8 +22,8 @@ Line 1 is the header; every subsequent line is one entry.
 
 Every invocation — the first run, and each `--resume` after it — writes one
 `context` entry before its messages, and so does every run that starts with a
-different system prompt, tool set or model than the last entry records. That
-entry and the messages after it are a **segment**.
+different system prompt, tool set, model or reasoning effort than the last
+entry records. That entry and the messages after it are a **segment**.
 
 **Append-only, flushed per line.** A crashed or killed run leaves a readable
 transcript up to its last completed message. That is the whole durability
@@ -72,6 +72,8 @@ count of skipped entries is surfaced so a resume can mention it.
 
 `rewrite` is the exception that bumped the version to 3: a reader that skipped
 it would rebuild those requests wrong rather than merely miss something.
+Version 4 added `reasoning_effort` to the recorded model, for the same reason:
+a reader that cannot place it cannot rebuild the request it changed.
 
 ## Trajectories
 
@@ -89,8 +91,8 @@ for step in recorded_requests(read_transcript(path)):
     step.config  # the config snapshot the invocation ran with
 ```
 
-That holds across resumes, an interrupted turn, a prompt, tool set, model or
-config that changed between invocations, one that changed between runs of the
+That holds across resumes, an interrupted turn, a prompt, tool set, model,
+reasoning effort or config that changed between invocations, one that changed between runs of the
 same invocation, and a request a hook rewrote. Tests rebuild sessions with
 each of those and compare against what the provider was actually handed.
 
@@ -123,13 +125,15 @@ and only one serving open weights can return it.
 
 ### Changes mid-session
 
-The system prompt, tools and model can change between runs without starting a
-new session — from Python today, by assigning to the agent's state:
+The system prompt, tools, model and reasoning effort can change between runs
+without starting a new session — from Python by assigning to the agent's
+state, and the effort from the terminal too, with `:effort`:
 
 ```python
 agent.state.system_prompt = "Answer in French."
 agent.state.tools = default_registry().select(["read", "grep"])
 agent.state.model = resolve_model("claude-opus-5")  # same provider
+agent.state.model = replace(agent.state.model, reasoning_effort="high")
 await agent.prompt("...")  # recorded under the new context
 ```
 
@@ -162,7 +166,7 @@ What a `context` entry holds:
 |---|---|
 | `system_prompt` | The prompt in full, project instructions included |
 | `tools` | Every tool declaration — name, description, JSON schema — in the order sent |
-| `model` | The resolved `Model`: id, the provider that served it, limits, capability flags |
+| `model` | The resolved `Model`: id, the provider that served it, limits, capability flags, reasoning effort |
 | `config` | The whole resolved config as plain data, credentials replaced with `[redacted]` |
 | `restored` | How many earlier messages this segment carried forward |
 | `timestamp` | When the invocation started, or the run that changed the context |
@@ -211,8 +215,9 @@ says how long it ran.
 
 ### Older files
 
-Version 2 files are version 3 files without `rewrite` entries, and read as
-such. Files written before the `context` entry (version 1) still read and
+Version 3 files are version 4 files whose models ask for no reasoning effort —
+none was sent then — and version 2 files are those without `rewrite` entries;
+both read as such. Files written before the `context` entry (version 1) still read and
 resume. Their messages count as history for anything appended later, but yield
 no steps of their own: nothing recorded what they were sent with. Their
 timestamps read as empty.
@@ -295,7 +300,7 @@ read back, and safe to delete. See [cli.md](cli.md#sessions).
 | `session.home_env` | `LAB_HARNESS_HOME` | Env var that overrides it |
 | `session.directory_name` | `sessions` | Subdirectory holding projects |
 | `session.enabled` | `true` | Write transcripts at all |
-| `session.version` | `2` | Schema version written to each header |
+| `session.version` | `4` | Schema version written to each header |
 
 Tests redirect `LAB_HARNESS_HOME` through an autouse fixture, so the suite can never
 write to a real `~/.lab-harness`.

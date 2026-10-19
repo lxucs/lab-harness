@@ -161,6 +161,23 @@ def test_an_empty_env_var_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolve_model(config=config).id == "claude-opus-5"
 
 
+def test_a_models_effort_beats_the_agents() -> None:
+    """The ladder routing uses too: the model's entry, then `agent`."""
+    config = agent(reasoning_effort="low")
+    models = {**config.models, "claude-opus-5": model_entry(reasoning_effort="high")}
+    config = replace(config, models=models)
+
+    assert resolve_model("claude-opus-5", config).reasoning_effort == "high"
+    assert resolve_model("claude-sonnet-5", config).reasoning_effort == "low"
+    assert resolve_model("claude-something-7", config).reasoning_effort == "low"
+
+
+def test_no_effort_is_configured_by_default() -> None:
+    """Nothing sent: every model thinks at its provider's default."""
+    assert all(not entry.reasoning_effort for entry in Config().models.values())
+    assert resolve_model().reasoning_effort == ""
+
+
 # --- ids the catalog has never heard of -----------------------------------
 
 

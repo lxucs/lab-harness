@@ -130,6 +130,10 @@ class Model:
     supports_images: bool = False
     #: Provider executes some tools itself (e.g. Anthropic web_search).
     supports_server_tools: bool = False
+    #: How hard a reasoning model is asked to think, in the provider's own
+    #: terms ("low", "high", …), on every request it is sent. Empty asks for
+    #: nothing, leaving it to the model.
+    reasoning_effort: str = ""
 
 
 @dataclass(frozen=True, slots=True)

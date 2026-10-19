@@ -278,6 +278,17 @@ async def test_reasoning_effort_only_for_a_model_that_supports_it() -> None:
     assert recorder.payload["reasoning_effort"] == "high"
 
 
+async def test_the_models_effort_is_sent_unless_a_request_overrides_it() -> None:
+    recorder = Recorder(sse(finish()))
+    model = replace(REASONING_MODEL, reasoning_effort="low")
+
+    await collect(provider(recorder), model=model)
+    assert recorder.payload["reasoning_effort"] == "low"
+
+    await collect(provider(recorder), opts=StreamOptions(reasoning=""), model=model)
+    assert "reasoning_effort" not in recorder.payload, "an empty override sends none"
+
+
 # --- message translation --------------------------------------------------
 
 

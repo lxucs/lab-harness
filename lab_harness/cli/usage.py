@@ -145,6 +145,7 @@ def format_status(summary: UsageSummary, model: Model, symbol: str) -> list[str]
     usage = summary.usage
     rows = [
         ("model", f"{model.id} via {model.provider}"),
+        *([("effort", model.reasoning_effort or "default")] if model.supports_reasoning else []),
         ("requests", str(summary.requests)),
         (
             "input",

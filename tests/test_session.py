@@ -794,9 +794,9 @@ def _contexts(path: Path) -> list[dict[str, object]]:
 async def test_a_change_between_runs_is_recorded_before_the_requests_it_affects(
     tmp_path: Path,
 ) -> None:
-    """Prompt, tools and model may change mid-session, from Python today and from
-    the terminal later; each rebuilt request must carry what it was sent with."""
-    provider = FakeProvider([text_response(f"reply {n}") for n in range(5)])
+    """Prompt, tools, model and effort may change mid-session; each rebuilt
+    request must carry what it was sent with."""
+    provider = FakeProvider([text_response(f"reply {n}") for n in range(6)])
     agent = Agent(
         model=FAKE_MODEL,
         provider=provider,
@@ -815,14 +815,17 @@ async def test_a_change_between_runs_is_recorded_before_the_requests_it_affects(
     agent.state.model = other_model
     await agent.prompt("four")
     await agent.prompt("five")  # nothing changed: nothing extra to record
+    thinking_harder = replace(other_model, reasoning_effort="high")
+    agent.state.model = thinking_harder  # what `:effort high` does
+    await agent.prompt("six")
     recorder.close()
 
     transcript = read_transcript(recorder.path)
     rebuilt = recorded_requests(transcript)
     assert [r.request for r in rebuilt] == provider.requests
-    assert [r.model for r in rebuilt] == [FAKE_MODEL] * 3 + [other_model] * 2
+    assert [r.model for r in rebuilt] == [FAKE_MODEL] * 3 + [other_model] * 2 + [thinking_harder]
     # The opening entry and one per change, each carrying the history so far.
-    assert [c["restored"] for c in _contexts(recorder.path)] == [0, 2, 4, 6]
+    assert [c["restored"] for c in _contexts(recorder.path)] == [0, 2, 4, 6, 10]
     assert transcript.messages == tuple(agent.state.messages)
     assert resume(cwd=str(tmp_path), config=CONFIG).messages == tuple(agent.state.messages)
 

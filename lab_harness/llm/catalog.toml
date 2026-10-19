@@ -43,8 +43,8 @@ budget_thinking_models = [
     "claude-opus-4-0", "claude-opus-4-2025", "claude-sonnet-4-0",
     "claude-sonnet-4-2025", "claude-3",
 ]
-# Budget for those models, in tokens, when reasoning is requested. They do not
-# think otherwise.
+# Budget for those models, in tokens, when a reasoning effort is set — any
+# level. They do not think otherwise.
 thinking_budget_tokens = 4_096
 
 
@@ -154,6 +154,10 @@ context_window = 200_000
 max_tokens = 8_192
 # Gates the thinking request an adapter sends.
 supports_reasoning = true
+# How hard it is asked to think, in its provider's own terms: "low", "high", …
+# — whatever that API takes as an effort, sent as is. Empty leaves it to
+# agent.reasoning_effort, and if that is empty too, nothing is sent.
+reasoning_effort = ""
 # Recorded, not acted on: nothing checks either before sending.
 supports_images = false
 supports_server_tools = false

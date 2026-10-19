@@ -13,10 +13,10 @@ interactive terminal, a one-shot command, or your own Python. Architecturally it
   it — transcript, subscribers, abort — is under 150 lines, in
   [`agent/agent.py`](lab_harness/agent/agent.py). No other framework dependencies.
 - **Every request reproducible.** A session records the system prompt, tools,
-  model and config each request was sent with — including changes mid-session
-  and requests a hook rewrote — so every request it made can be rebuilt exactly
-  as the provider received it, down to the JSON body posted, for replay,
-  analysis, or training data. See [trajectories](docs/sessions.md#trajectories).
+  model, reasoning effort and config each request was sent with — including
+  changes mid-session and requests a hook rewrote — so every request it made
+  can be rebuilt exactly as the provider received it, down to the JSON body
+  posted, for replay, analysis, or training data. See [trajectories](docs/sessions.md#trajectories).
 - **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any
   OpenAI-compatible endpoint, with reasoning carried across tool calls the way
   each vendor requires. Every endpoint and model is a table in
@@ -152,8 +152,9 @@ should also read [AGENTS.md](AGENTS.md).
 pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with streamed, collapsible thinking,
 colored edit diffs and a per-run token, cache and cost readout, a fail-closed
-approval gate, a tool set chosen in config or per run, layered TOML config with
-the prompts and the model catalog as data, a system prompt built from
+approval gate, a tool set chosen in config or per run, a reasoning effort set
+in config, per run or mid-session, layered TOML config with the prompts and
+the model catalog as data, a system prompt built from
 configurable sections with the environment filled in and the project's
 `HARNESS.md`/`AGENTS.md` appended, levelled diagnostics on stderr, and durable
 sessions that resume on screen where they left off, export as a searchable

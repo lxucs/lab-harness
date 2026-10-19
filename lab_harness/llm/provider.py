@@ -22,11 +22,17 @@ from lab_harness.llm.types import Context, Model
 class StreamOptions:
     max_tokens: int | None = None
     temperature: float | None = None
-    #: Reasoning effort, for models that support it.
+    #: Reasoning effort for this request, in place of the model's own; ""
+    #: asks for none. Sent only to a model that supports reasoning.
     reasoning: str | None = None
     #: Cooperative cancellation. Providers should stop and emit a
     #: StreamError(reason="aborted") when this is set.
     signal: asyncio.Event | None = None
+
+
+def reasoning_effort(model: Model, opts: StreamOptions) -> str:
+    """The effort a request asks for: its own, else the model's. Empty asks for none."""
+    return opts.reasoning if opts.reasoning is not None else model.reasoning_effort
 
 
 class Provider(Protocol):

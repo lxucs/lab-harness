@@ -55,6 +55,10 @@ class AgentConfig:
     #: entry, or an entry naming no provider. The last rung of the ladder in
     #: llm/providers/select_provider; `--provider` is the first.
     provider: str = "anthropic"
+    #: Reasoning effort for a model whose `models` entry sets none, in the
+    #: provider's own terms: "low", "high", … Empty asks for nothing, leaving
+    #: it to the model. `--reasoning-effort` beats both.
+    reasoning_effort: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,8 +259,8 @@ class AnthropicConfig:
     #: adaptive, as an uncatalogued id is assumed current — and the 5-series
     #: rejects a budget with a 400.
     budget_thinking_models: tuple[str, ...]
-    #: Budget for those models, in tokens, when reasoning is requested. They
-    #: do not think otherwise.
+    #: Budget for those models, in tokens, when a reasoning effort is set —
+    #: any level. They do not think otherwise.
     thinking_budget_tokens: int
 
 
@@ -364,6 +368,9 @@ class ModelConfig:
     max_tokens: int
     #: Gates the thinking request an adapter sends.
     supports_reasoning: bool
+    #: How hard it is asked to think, in its provider's terms. Empty leaves it
+    #: to `agent.reasoning_effort`.
+    reasoning_effort: str
     #: Recorded, not acted on: nothing checks either before sending.
     supports_images: bool
     supports_server_tools: bool
@@ -580,9 +587,9 @@ class SessionConfig:
     enabled: bool = True
     #: Schema version written into each file's header. Readers use it to refuse
     #: files they do not understand. A genuine protocol constant, not a knob.
-    #: Version 2 added the `context` entry, version 3 the `rewrite` entry;
-    #: older files still read.
-    version: int = 3
+    #: Version 2 added the `context` entry, version 3 the `rewrite` entry,
+    #: version 4 the model's `reasoning_effort`; older files still read.
+    version: int = 4
 
 
 @dataclass(frozen=True, slots=True)

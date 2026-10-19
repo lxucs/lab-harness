@@ -8,6 +8,8 @@ id it does not list gets `[defaults.model]`.
 Capability flags describe the model, so they live with it rather than at a
 call site: `supports_reasoning` gates the thinking request an adapter sends,
 and `supports_images` and `supports_server_tools` only record a capability.
+The level that thinking request asks for, `reasoning_effort`, lives there too:
+a level one model takes, another rejects.
 """
 
 import logging
@@ -32,7 +34,8 @@ def resolve_model(model_id: str | None = None, config: Config | None = None) -> 
     wrong `context_window`.
 
     The returned `provider` is the entry's, which is empty for an unlisted id;
-    routing decides the real one. See `llm/providers/route`.
+    routing decides the real one. See `llm/providers/route`. Its
+    `reasoning_effort` is the entry's, else `agent.reasoning_effort`.
     """
     config = config or Config()
     agent = config.agent
@@ -52,6 +55,10 @@ def resolve_model(model_id: str | None = None, config: Config | None = None) -> 
             entry.context_window,
             entry.max_tokens,
         )
+    effort = entry.reasoning_effort or agent.reasoning_effort
+    if effort:
+        where = f"models.{wanted}" if entry.reasoning_effort else "agent.reasoning_effort"
+        _log.info("Reasoning effort %r, from %s", effort, where)
     return Model(
         id=wanted,
         name=entry.name or wanted,
@@ -61,4 +68,5 @@ def resolve_model(model_id: str | None = None, config: Config | None = None) -> 
         supports_reasoning=entry.supports_reasoning,
         supports_images=entry.supports_images,
         supports_server_tools=entry.supports_server_tools,
+        reasoning_effort=effort,
     )

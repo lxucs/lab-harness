@@ -154,12 +154,12 @@ missing.
 ### Everything a request carries is recorded
 
 A transcript rebuilds every request exactly, so anything that can change what
-a request sends — the system prompt, the tools, the model, the messages — has
-to reach the event stream when it changes: `agent_start` carries the first
-three for every run, and `request_rewritten` carries a hook's rewrite of one
-request. A new way to change one of them mid-session, such as a terminal
-command, needs no recorder change if it changes the agent's state between
-runs; anything subtler needs an event, or `recorded_requests` will rebuild the
+a request sends — the system prompt, the tools, the model (its reasoning
+effort included), the messages — has to reach the event stream when it
+changes: `agent_start` carries the first three for every run, and
+`request_rewritten` carries a hook's rewrite of one request. A new way to
+change one of them mid-session, such as the terminal's `:effort`, needs no
+recorder change if it changes the agent's state between runs; anything subtler needs an event, or `recorded_requests` will rebuild the
 request wrong. `tests/test_session.py` compares rebuilt requests against what
 the provider was actually handed — extend it with the new case.
 

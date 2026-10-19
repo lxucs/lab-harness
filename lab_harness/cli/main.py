@@ -59,6 +59,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--reasoning-effort",
+        metavar="LEVEL",
+        help=(
+            "How hard a reasoning model thinks, in its provider's terms, e.g. low or "
+            "high. Overrides the model's and agent.reasoning_effort; an empty value "
+            "sends none."
+        ),
+    )
+    parser.add_argument(
         "--cwd", default=".", help="Working directory for tools, config, and project instructions."
     )
     parser.add_argument(
@@ -184,6 +193,9 @@ def _build_agent(
             note += f" (truncated to {config.project.max_bytes} bytes)"
         console.print(Text(note, style=config.terminal.theme.muted))
     model, provider = route(args.model, config, args.provider)
+    if args.reasoning_effort is not None:
+        model = replace(model, reasoning_effort=args.reasoning_effort.strip())
+        _log.info("Reasoning effort %r, from --reasoning-effort", model.reasoning_effort)
     environment = detect_environment(args.cwd, model.id)
     system_prompt = build_system_prompt(_prompts(args, config), environment, context)
     _log.debug("System prompt: %d characters", len(system_prompt))

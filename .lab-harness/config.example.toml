@@ -27,6 +27,10 @@ model_env = "LAB_HARNESS_MODEL"
 # Provider for a model id nothing else routes -- one the catalog does not list,
 # or lists without a provider. --provider overrides it.
 provider = "anthropic"
+# Reasoning effort for a model whose [models] entry sets none, in the
+# provider's own terms: "low", "high", ... Empty sends none, leaving it to the
+# model. --reasoning-effort, and :effort in the terminal, override it.
+reasoning_effort = ""
 
 [project]
 # Files read from the working directory for this project's own instructions,
@@ -206,9 +210,9 @@ directory_name = "sessions"
 # Write transcripts to disk at all.
 enabled = true
 # Schema version written into each file header. A protocol constant, not a knob.
-# Version 2 added the `context` entry, version 3 the `rewrite` entry; older
-# files still read.
-version = 3
+# Version 2 added the `context` entry, version 3 the `rewrite` entry, version
+# 4 the model's `reasoning_effort`; older files still read.
+version = 4
 
 # LLMs -- Claude's adapter, the OpenAI-family endpoints, every model, and what
 # an endpoint or a model gets for a key it leaves out -- are all in

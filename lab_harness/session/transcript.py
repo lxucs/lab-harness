@@ -2,7 +2,7 @@
 
 Line 1 is a header; every line after it is one entry:
 
-    {"type": "session", "version": 3, "id": "...", "cwd": "...", ...}
+    {"type": "session", "version": 4, "id": "...", "cwd": "...", ...}
     {"type": "context", "restored": 0, "system_prompt": "...", "tools": [...], ...}
     {"type": "message", "timestamp": "...", "message": {...}}
     {"type": "usage", "usage": {...}, "model": "..."}
@@ -11,11 +11,11 @@ Line 1 is a header; every line after it is one entry:
 **A `context` entry records what requests are sent with** — the system prompt,
 tool declarations, model and config, which are everything a request carries
 besides the messages. Each invocation opens with one, and another follows
-whenever a run starts with a different system prompt, tools or model than the
-last entry says. A context entry and the messages after it form a *segment*.
-Together with `restored`, the number of earlier messages the segment carried
-forward, that is enough to rebuild every request exactly: see
-`recorded_requests`.
+whenever a run starts with a different system prompt, tools or model — its
+reasoning effort included — than the last entry says. A context entry and the
+messages after it form a *segment*. Together with `restored`, the number of
+earlier messages the segment carried forward, that is enough to rebuild every
+request exactly: see `recorded_requests`.
 
 **A `rewrite` entry records what a `prepare_request` hook sent instead** of the
 history or the model, for the one request that follows it. The history itself
@@ -87,7 +87,8 @@ class SessionContext:
     restored: int
     system_prompt: str
     tools: tuple[ToolDeclaration, ...]
-    #: Its limits are the ones requests were sized by.
+    #: Its limits are the ones requests were sized by, and its reasoning effort
+    #: the level they asked for.
     model: Model
     #: `config.snapshot` of the config the invocation ran with: plain data,
     #: credentials redacted. Kept as data rather than rebuilt into a `Config`,
@@ -128,8 +129,8 @@ class RecordedMessage:
 class Segment:
     """A stretch of a session sent with one context, and what it added.
 
-    An invocation opens one; a run that changed the system prompt, tools or
-    model mid-session opens another.
+    An invocation opens one; a run that changed the system prompt, tools,
+    model or reasoning effort mid-session opens another.
     """
 
     context: SessionContext
