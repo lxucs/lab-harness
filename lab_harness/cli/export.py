@@ -288,7 +288,7 @@ class _Page:
             details.append(
                 _fold(
                     "context",
-                    "Config · credentials redacted",
+                    "Config · recorded, not sent to the model · credentials redacted",
                     f'<pre class="long">{_escape(_json(context.config))}</pre>',
                 )
             )

@@ -15,8 +15,8 @@ interactive terminal, a one-shot command, or your own Python. Architecturally it
 - **Every request reproducible.** A session records the system prompt, tools,
   model and config each request was sent with — including changes mid-session
   and requests a hook rewrote — so every request it made can be rebuilt exactly
-  as the provider received it, for replay, analysis, or training data. See
-  [trajectories](docs/sessions.md#trajectories).
+  as the provider received it, down to the JSON body posted, for replay,
+  analysis, or training data. See [trajectories](docs/sessions.md#trajectories).
 - **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any
   OpenAI-compatible endpoint, with reasoning carried across tool calls the way
   each vendor requires. Every endpoint and model is a table in

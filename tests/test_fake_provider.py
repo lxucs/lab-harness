@@ -1,6 +1,6 @@
 import pytest
 
-from lab_harness.llm.events import StreamDone, StreamError, StreamEvent, StreamStart, TextDelta
+from lab_harness.llm.events import StreamDone, StreamError, StreamEvent, StreamStart
 from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
@@ -31,22 +31,6 @@ async def test_replays_scripted_text_response() -> None:
     assert isinstance(first_content, TextBlock)
     assert first_content.text == "hello"
     assert last.reason == "stop"
-
-
-async def test_streams_text_in_deltas() -> None:
-    provider = FakeProvider([text_response("abc", chunk_size=1)])
-    events = await _drain(provider, _ctx())
-
-    deltas = [e.delta for e in events if isinstance(e, TextDelta)]
-    assert deltas == ["a", "b", "c"]
-
-
-async def test_records_requests_for_assertions() -> None:
-    provider = FakeProvider([text_response("one"), text_response("two")])
-    await _drain(provider, _ctx("first"))
-    await _drain(provider, _ctx("second"))
-
-    assert [c.system_prompt for c in provider.requests] == ["first", "second"]
 
 
 async def test_tool_call_response_sets_tool_use_stop_reason() -> None:

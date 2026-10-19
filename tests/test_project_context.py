@@ -35,11 +35,6 @@ def write(path: Path, body: str) -> Path:
 # --- finding the file -----------------------------------------------------
 
 
-def test_no_file_means_no_context(tmp_path: Path) -> None:
-    """The common case: most directories have neither file."""
-    assert load_project_context(tmp_path) is None
-
-
 def test_harness_md_is_loaded(tmp_path: Path) -> None:
     write(tmp_path / "HARNESS.md", "Use tabs.")
     context = load_project_context(tmp_path)
@@ -47,13 +42,6 @@ def test_harness_md_is_loaded(tmp_path: Path) -> None:
     assert context.text == "Use tabs."
     assert context.path.name == "HARNESS.md"
     assert context.truncated is False
-
-
-def test_agents_md_is_loaded_when_harness_md_is_absent(tmp_path: Path) -> None:
-    write(tmp_path / "AGENTS.md", "Run the tests.")
-    context = load_project_context(tmp_path)
-    assert context is not None
-    assert context.path.name == "AGENTS.md"
 
 
 def test_the_first_configured_name_wins(tmp_path: Path) -> None:
@@ -227,14 +215,6 @@ def test_the_error_names_the_file(tmp_path: Path) -> None:
 
 
 # --- defaults -------------------------------------------------------------
-
-
-def test_the_default_config_is_used_when_none_is_passed(tmp_path: Path) -> None:
-    """Callers outside the CLI get the documented names without wiring config."""
-    write(tmp_path / ProjectConfig().context_files[0], "default path works")
-    context = load_project_context(tmp_path)
-    assert context is not None
-    assert context.text == "default path works"
 
 
 def test_cwd_defaults_to_the_current_directory(

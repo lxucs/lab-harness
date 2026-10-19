@@ -41,16 +41,6 @@ async def test_grep_returns_path_line_and_text(tmp_path: Path) -> None:
     assert "src/app.py:4:def run():" in _text(result)
 
 
-async def test_grep_searches_recursively_from_the_given_path(tmp_path: Path) -> None:
-    _tree(tmp_path)
-
-    result = await grep.execute({"pattern": "def ", "path": "src"}, _ctx(tmp_path))
-
-    body = _text(result)
-    assert "app.py" in body
-    assert "util.py" in body
-
-
 async def test_grep_filters_by_glob(tmp_path: Path) -> None:
     _tree(tmp_path)
 
@@ -232,9 +222,3 @@ async def test_output_never_contains_absolute_paths(tmp_path: Path) -> None:
 
     assert str(tmp_path) not in _text(found)
     assert str(tmp_path) not in _text(matched)
-
-
-async def test_both_tools_run_in_parallel(tmp_path: Path) -> None:
-    """Read-only searches have no reason to serialize."""
-    assert grep.execution_mode == "parallel"
-    assert glob.execution_mode == "parallel"

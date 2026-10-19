@@ -76,6 +76,12 @@ core's shapes.
 A new vendor is still normally a *profile*, not a module. See
 [Profiles](#profiles).
 
+Each shipped adapter can also say what it sends, outside a run:
+`request_body(model, ctx)` is the JSON a request posts, and
+`reply_entries(message)` a reply as its dialect writes it into the next
+request's history. That is how a session's requests are rebuilt
+[as the endpoint received them](sessions.md#as-the-provider-received-it).
+
 ## The Anthropic adapter
 
 `lab_harness/llm/providers/anthropic.py`. Credentials come from the environment,
@@ -397,8 +403,13 @@ setting `replay_reasoning_field` — see [Profiles](#profiles).
 4. Decide the reasoning regime from the table above, and say so in the module
    docstring. Replaying something the server cannot decrypt is a 400; dropping
    something it needed is a silent loss of context.
-5. Register it in `PROTOCOLS` so a profile can name it.
-6. Add its models to `llm/catalog.toml` and update the table above.
+5. Expose `request_body`, the JSON `stream` posts, and `reply_entries`, a reply
+   as the next request carries it, and add the class to `Adapter` — they are
+   how a session's requests are rebuilt
+   [as the endpoint received them](sessions.md#as-the-provider-received-it).
+   Test the first against what `stream` actually posts.
+6. Register it in `PROTOCOLS` so a profile can name it.
+7. Add its models to `llm/catalog.toml` and update the table above.
 
 ## Testing
 

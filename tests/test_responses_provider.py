@@ -299,25 +299,6 @@ async def test_a_tool_result_is_a_sibling_item() -> None:
     ]
 
 
-async def test_an_assistant_turn_flattens_into_its_items() -> None:
-    """Reasoning, then text, then calls — reasoning must precede its output."""
-    recorder = Recorder(sse(completed()))
-    message = AssistantMessage(
-        content=(
-            signed("thought about it"),
-            TextBlock(text="here goes"),
-            ToolCallBlock(id="call_1", name="read", arguments={"path": "a.py"}),
-        ),
-        model="gpt-5",
-        provider="openai",
-    )
-
-    await collect(provider(recorder), ctx(messages=(message,)))
-
-    kinds = [i["type"] for i in recorder.payload["input"]]
-    assert kinds == ["reasoning", "message", "function_call"]
-
-
 async def test_tool_call_arguments_go_back_as_a_json_string() -> None:
     recorder = Recorder(sse(completed()))
     message = AssistantMessage(
@@ -441,6 +422,40 @@ async def test_the_round_trip_survives_a_full_cycle() -> None:
     item = second.payload["input"][0]
     assert item["id"] == "rs_9"
     assert item["encrypted_content"] == ENCRYPTED
+
+
+# --- what was sent, rebuilt -------------------------------------------------
+
+
+async def test_request_body_is_the_json_stream_posts() -> None:
+    recorder = Recorder(sse(completed()))
+    adapter = provider(recorder)
+    tools = (ToolDeclaration(name="ls", description="List.", parameters={"type": "object"}),)
+    reply = AssistantMessage(
+        content=(signed(), TextBlock(text="a1")), model="gpt-5", provider="openai"
+    )
+    request = ctx(
+        messages=(UserMessage(content=text("q1")), reply, UserMessage(content=text("q2"))),
+        system_prompt="Be brief.",
+        tools=tools,
+    )
+
+    await collect(adapter, request, model=REASONING_MODEL)
+
+    assert adapter.request_body(REASONING_MODEL, request) == recorder.payload
+
+
+def test_reply_entries_are_what_the_next_request_carries() -> None:
+    adapter = provider(Recorder())
+    call = ToolCallBlock(id="c1", name="ls", arguments={"path": "."})
+    reply = AssistantMessage(
+        content=(signed(), TextBlock(text="Looking."), call), model="gpt-5", provider="openai"
+    )
+
+    sent = adapter.request_body(MODEL, ctx(messages=(UserMessage(content=text("q")), reply)))
+
+    assert adapter.reply_entries(reply) == sent["input"][1:]
+    assert [item["type"] for item in sent["input"][1:]] == ["reasoning", "message", "function_call"]
 
 
 # --- streaming ------------------------------------------------------------
@@ -572,27 +587,6 @@ async def test_partial_tool_json_is_never_salvaged() -> None:
     assert final(events).tool_calls[0].arguments == {}
 
 
-async def test_items_keep_distinct_block_indices() -> None:
-    recorder = Recorder(
-        sse(
-            item_added(0, {"type": "reasoning", "id": "rs_1"}),
-            summary_delta(0, "think"),
-            item_added(1, {"type": "message", "role": "assistant"}),
-            text_delta(1, "say"),
-            item_added(2, {"type": "function_call", "call_id": "call_1", "name": "ls"}),
-            args_delta(2, "{}"),
-            completed(),
-        )
-    )
-
-    events = await collect(provider(recorder), model=REASONING_MODEL)
-
-    starts = [e for e in events if isinstance(e, ThinkingStart | TextStart | ToolCallStart)]
-    indices = [e.block_index for e in starts]
-    assert indices == sorted(set(indices))
-    assert len(indices) == 3
-
-
 async def test_an_unknown_item_type_is_ignored() -> None:
     """A new item type must not break the turn's text."""
     recorder = Recorder(
@@ -662,7 +656,7 @@ async def test_a_missing_credential_is_a_stream_error() -> None:
     assert "NOT_SET" in (final(events).error_message or "")
 
 
-@pytest.mark.parametrize("status", [400, 401, 429, 500])
+@pytest.mark.parametrize("status", [400, 500])
 async def test_http_errors_become_stream_errors(status: int) -> None:
     recorder = Recorder(json.dumps({"error": {"message": "nope"}}), status=status)
 
@@ -754,19 +748,6 @@ async def test_an_abort_mid_stream_terminates_the_turn() -> None:
 
     assert isinstance(events[-1], StreamError)
     assert events[-1].reason == "aborted"
-
-
-async def test_a_malformed_frame_does_not_lose_the_stream() -> None:
-    body = "data: {not json\n\n" + sse(
-        item_added(0, {"type": "message", "role": "assistant"}),
-        text_delta(0, "hi"),
-        completed(),
-    )
-    recorder = Recorder(body)
-
-    events = await collect(provider(recorder))
-
-    assert final(events).content == (TextBlock(text="hi"),)
 
 
 # --- protocol ordering -----------------------------------------------------

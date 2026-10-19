@@ -117,7 +117,7 @@ class ResponsesProvider:
             return
 
         try:
-            request = self._build_request(model, ctx, options)
+            request = self.request_body(model, ctx, options)
         except Exception as exc:
             yield _http.failure(model, self.name, f"Could not build request: {exc}")
             return
@@ -168,7 +168,11 @@ class ResponsesProvider:
             yield closing
         yield StreamDone(message=accumulator.message(), reason=accumulator.stop_reason)
 
-    def _build_request(self, model: Model, ctx: Context, opts: StreamOptions) -> dict[str, Any]:
+    def request_body(
+        self, model: Model, ctx: Context, opts: StreamOptions | None = None
+    ) -> dict[str, Any]:
+        """The JSON body `stream` posts for this request."""
+        opts = opts if opts is not None else StreamOptions()
         cfg = self._config
         request: dict[str, Any] = {
             "model": model.id,
@@ -209,6 +213,11 @@ class ResponsesProvider:
                 # otherwise the chain is referenced by id instead.
                 request["include"] = ["reasoning.encrypted_content"]
         return request
+
+    def reply_entries(self, message: AssistantMessage) -> list[dict[str, Any]]:
+        """A reply as this dialect writes it into `input`: its reasoning,
+        message and function_call items, as the next request carries them."""
+        return _assistant_items(message)
 
 
 def _fatal(payload: dict[str, Any]) -> str | None:

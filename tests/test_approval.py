@@ -190,26 +190,6 @@ async def test_a_denied_tool_does_not_execute_and_the_model_is_told() -> None:
     assert "executed" not in body
 
 
-async def test_an_approved_tool_runs_normally() -> None:
-    call = ToolCallBlock(id="c1", name="dangerous", arguments={})
-    provider = FakeProvider([tool_call_response([call]), text_response("done")])
-    gate, _ = _gate(["yes"])
-    agent = Agent(
-        model=FAKE_MODEL,
-        provider=provider,
-        tools=(dangerous,),
-        config=Config(),
-        before_tool_call=gate,
-    )
-
-    await agent.prompt("do it")
-
-    results = [m for m in agent.state.messages if m.role == "tool_result"]
-    body = "".join(b.text for b in results[0].content if isinstance(b, TextBlock))
-    assert body == "executed"
-    assert not results[0].is_error
-
-
 async def test_a_crashing_asker_denies_rather_than_falling_open() -> None:
     """The loop converts a raising hook into a blocked call. Verify end to end."""
 

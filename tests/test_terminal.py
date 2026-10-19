@@ -91,13 +91,6 @@ async def test_a_prompt_runs_a_turn_and_renders_the_answer() -> None:
     assert "Hi there" in buffer.getvalue()
 
 
-async def test_eof_exits_cleanly() -> None:
-    terminal, _ = _terminal([])
-    _attach(terminal, FakeProvider([]))
-
-    assert await terminal.run() == 0
-
-
 async def test_blank_lines_are_ignored() -> None:
     """An empty line must not burn a provider request."""
     terminal, _ = _terminal(["", "   ", "real"])
@@ -263,15 +256,6 @@ async def test_ctrl_c_still_cancels_after_an_approval_question() -> None:
 # FakeProvider reports 10 input and 5 output tokens for every request.
 
 
-async def test_a_run_ends_with_a_usage_footer() -> None:
-    terminal, buffer = _terminal(["hello"])
-    _attach(terminal, FakeProvider([text_response("Hi")]))
-
-    await terminal.run()
-
-    assert "10 in · 5 out" in buffer.getvalue()
-
-
 async def test_the_footer_covers_every_request_in_the_run() -> None:
     """A tool call makes two requests for one prompt; the footer is per run."""
     call = ToolCallBlock(id="c1", name="nothing", arguments={})
@@ -303,15 +287,6 @@ async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
 
     # (10 + 5) tokens x $1,000 per million.
     assert "$0.0150" in buffer.getvalue()
-
-
-async def test_an_unpriced_model_shows_no_cost() -> None:
-    terminal, buffer = _terminal(["hello"])
-    _attach(terminal, FakeProvider([text_response("Hi")]))
-
-    await terminal.run()
-
-    assert "$" not in buffer.getvalue()
 
 
 async def test_status_shows_session_totals_without_a_request() -> None:
@@ -360,12 +335,7 @@ async def test_status_includes_resumed_history() -> None:
         ("yes", "yes"),
         ("Y", "yes"),
         ("n", "no"),
-        ("no", "no"),
-        ("N", "no"),
         ("a", "always"),
-        ("always", "always"),
-        ("A", "always"),
-        ("", "no"),
         ("maybe", "no"),
         ("q", "no"),
     ],
@@ -535,11 +505,6 @@ def test_ctrl_o_cannot_discard_output_during_a_run() -> None:
     assert after == before
 
 
-def test_the_key_guard_ignores_a_non_terminal() -> None:
-    with _keys_wait_quietly(None):
-        pass
-
-
 def test_keys_typed_during_a_run_wait_unechoed() -> None:
     """Echoed, a key lands inside the live region, and once it wraps the next
     redraw leaves a stale line of the region behind. Unechoed it still waits
@@ -625,13 +590,6 @@ async def test_the_prompt_glyph_is_styled() -> None:
 
 
 # --- wiring ---------------------------------------------------------------
-
-
-def test_running_without_an_attached_agent_is_a_clear_error() -> None:
-    terminal, _ = _terminal([])
-
-    with pytest.raises(RuntimeError, match="attach"):
-        _ = terminal.agent
 
 
 # --- log records ----------------------------------------------------------

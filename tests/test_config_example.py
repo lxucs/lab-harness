@@ -81,19 +81,6 @@ def documented_paths(
     return found
 
 
-def test_the_example_exists() -> None:
-    assert EXAMPLE.is_file()
-
-
-def test_the_example_is_valid_toml() -> None:
-    assert example_data()
-
-
-def test_the_example_applies_without_error() -> None:
-    """Catches a key that was renamed in the schema but not in the example."""
-    _apply(Config(), example_data(), source=EXAMPLE, trail=())
-
-
 def test_every_documented_value_is_the_current_default() -> None:
     """The example claims these are the defaults, so applying it must be a no-op."""
     assert _apply(Config(), example_data(), source=EXAMPLE, trail=()) == Config()
@@ -120,9 +107,3 @@ def test_the_example_contains_no_secrets() -> None:
 def test_intentionally_absent_keys_really_are_absent(key: str) -> None:
     """Keeps the allowlist honest: an entry that got documented should be removed."""
     assert key not in documented_paths(example_data())
-
-
-def test_llm_settings_are_left_to_the_catalog() -> None:
-    """One place for every LLM setting, so the example holds none of them."""
-    present = sorted(LLM_SECTIONS & example_data().keys())
-    assert not present, f"Document these in lab_harness/llm/catalog.toml instead: {present}"

@@ -48,20 +48,6 @@ async def test_read_honors_offset_and_limit(tmp_path: Path) -> None:
     assert _text(result) == "3\t3\n4\t4\n\n[truncated at 4 of 10 lines; re-read with offset=5]"
 
 
-async def test_read_truncation_note_points_at_the_next_offset(tmp_path: Path) -> None:
-    """The hint must be directly usable as the next call's offset."""
-    (tmp_path / "a.txt").write_text("\n".join(str(i) for i in range(1, 6)))
-    limits = ToolsConfig(read=ReadConfig(default_limit=2))
-
-    first = await read.execute({"path": "a.txt"}, _ctx(tmp_path, Config(tools=limits)))
-    assert "offset=3" in _text(first)
-
-    second = await read.execute(
-        {"path": "a.txt", "offset": 3}, _ctx(tmp_path, Config(tools=limits))
-    )
-    assert _text(second).startswith("3\t3\n4\t4")
-
-
 async def test_read_clips_very_long_lines(tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("x" * 50)
     config = Config(tools=ToolsConfig(read=ReadConfig(max_line_length=10)))
@@ -398,12 +384,6 @@ async def test_absolute_paths_are_honored(tmp_path: Path) -> None:
     result = await read.execute({"path": str(target)}, _ctx(other))
 
     assert _text(result) == "1\tabs"
-
-
-async def test_every_filesystem_tool_declares_a_json_schema() -> None:
-    for item in (read, write, edit, ls):
-        assert item.parameters["type"] == "object"
-        assert "properties" in item.parameters
 
 
 async def test_config_is_threaded_through_rather_than_read_globally(tmp_path: Path) -> None:

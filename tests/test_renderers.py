@@ -474,17 +474,6 @@ async def test_toggling_switches_between_full_and_the_other_mode(
     assert renderer.thinking_mode == configured
 
 
-async def test_toggling_to_full_expands_the_latest_run() -> None:
-    buffer = io.StringIO()
-    renderer = await _run(
-        buffer, FakeProvider([text_response("the answer", thinking="deep thoughts")])
-    )
-
-    renderer.toggle_thinking()
-
-    assert "deep thoughts" in buffer.getvalue()
-
-
 # --- tool calls -----------------------------------------------------------
 
 

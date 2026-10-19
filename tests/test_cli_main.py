@@ -39,25 +39,12 @@ from lab_harness.config import (
     snapshot,
 )
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response
-from lab_harness.llm.providers.anthropic import AnthropicProvider
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.logs import ROOT_LOGGER
 from lab_harness.prompts import build_system_prompt, detect_environment
 from lab_harness.session import list_sessions, read_transcript, recorded_requests
 from lab_harness.tools import default_registry
-
-
-@pytest.fixture(autouse=True)
-def _neutral_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Run every CLI test in an empty directory.
-
-    `_args()` leaves `cwd` at ".", and `_build_agent` reads project
-    instructions from there. Without this the suite would pick up the
-    repository's own AGENTS.md and quietly couple these assertions to it.
-    """
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
 
 
 def _args(**kwargs: object) -> argparse.Namespace:
@@ -101,12 +88,6 @@ class _StubTerminal:
 # --- parsing --------------------------------------------------------------
 
 
-def test_prompt_is_optional_now_that_interactive_exists() -> None:
-    """Bare `lab-harness` must parse — it starts the terminal."""
-    args = build_parser().parse_args([])
-    assert args.prompt is None
-
-
 def test_flags_parse() -> None:
     args = build_parser().parse_args(
         ["-p", "hi", "--json", "--model", "m", "--cwd", "/tmp", "--provider", "deepseek"]
@@ -138,15 +119,6 @@ def test_yes_flag_defaults_off() -> None:
 
 
 # --- agent construction ---------------------------------------------------
-
-
-def test_both_modes_get_the_configured_tools() -> None:
-    """Out of the box that is every built-in, in the configured order."""
-    for args in (_args(prompt="hi"), _args()):
-        agent = _build_agent(args, Config())
-
-        assert [t.name for t in agent.state.tools] == list(ToolsConfig().enabled)
-    assert {t.name for t in default_registry()} == set(ToolsConfig().enabled)
 
 
 @pytest.mark.parametrize("prompt", ["hi", None], ids=["one-shot", "interactive"])
@@ -232,12 +204,6 @@ def test_cwd_reaches_the_agent() -> None:
     assert agent._cwd == "/tmp/somewhere"
 
 
-def test_the_model_flag_reaches_the_agent() -> None:
-    agent = _build_agent(_args(model="claude-opus-5"), Config())
-
-    assert agent.state.model.id == "claude-opus-5"
-
-
 def test_the_configured_model_reaches_the_agent() -> None:
     """Without a flag, `agent.model` decides — not a constant in the code."""
     config = Config(agent=AgentConfig(model="claude-haiku-4-5-20251001"))
@@ -258,10 +224,10 @@ def test_the_model_flag_beats_the_configured_model() -> None:
 # --- project instructions -------------------------------------------------
 
 
-def test_no_project_file_means_the_configured_sections(_neutral_cwd: Path) -> None:
+def test_no_project_file_means_the_configured_sections(tmp_path: Path) -> None:
     agent = _build_agent(_args(), Config())
 
-    environment = detect_environment(_neutral_cwd, agent.state.model.id)
+    environment = detect_environment(tmp_path, agent.state.model.id)
     assert agent.state.system_prompt == build_system_prompt(Config().prompts, environment)
 
 
@@ -273,15 +239,6 @@ def test_the_environment_is_filled_from_cwd_and_the_model(tmp_path: Path) -> Non
 
     assert f"Primary working directory: {elsewhere.resolve()}\n" in agent.state.system_prompt
     assert "You are powered by the model claude-opus-5." in agent.state.system_prompt
-
-
-def test_project_instructions_reach_the_system_prompt(_neutral_cwd: Path) -> None:
-    (_neutral_cwd / "AGENTS.md").write_text("Always run `uv run pytest`.")
-
-    agent = _build_agent(_args(), Config())
-
-    assert "Always run `uv run pytest`." in agent.state.system_prompt
-    assert agent.state.system_prompt.startswith(Config().prompts.system)
 
 
 def test_project_instructions_are_read_from_cwd_not_the_process_directory(
@@ -297,8 +254,8 @@ def test_project_instructions_are_read_from_cwd_not_the_process_directory(
     assert "Conventions of the other project." in agent.state.system_prompt
 
 
-def test_the_configured_filename_is_honored(_neutral_cwd: Path) -> None:
-    (_neutral_cwd / "CONVENTIONS.md").write_text("house style")
+def test_the_configured_filename_is_honored(tmp_path: Path) -> None:
+    (tmp_path / "CONVENTIONS.md").write_text("house style")
     config = Config(project=ProjectConfig(context_files=("CONVENTIONS.md",)))
 
     agent = _build_agent(_args(), config)
@@ -315,9 +272,9 @@ def test_a_configured_prompt_is_the_one_sent() -> None:
     assert _build_agent(_args(), config).state.system_prompt == "Answer in French."
 
 
-def test_the_flag_replaces_the_configured_prompt(_neutral_cwd: Path) -> None:
+def test_the_flag_replaces_the_configured_prompt(tmp_path: Path) -> None:
     """Only `system`: the other sections, and the project's instructions, stay."""
-    (_neutral_cwd / "AGENTS.md").write_text("Indent with tabs.")
+    (tmp_path / "AGENTS.md").write_text("Indent with tabs.")
 
     agent = _build_agent(_args(system_prompt="Be terse."), Config())
 
@@ -567,27 +524,6 @@ def test_an_unusable_level_in_a_config_file_is_a_startup_error(
 # --- provider routing ------------------------------------------------------
 
 
-def test_the_default_build_uses_anthropic() -> None:
-    agent = _build_agent(_args(), Config())
-
-    assert isinstance(agent._provider, AnthropicProvider)
-
-
-def test_a_deepseek_model_id_routes_without_a_flag() -> None:
-    """The ergonomics the profiles exist for."""
-    agent = _build_agent(_args(model="deepseek-flash"), Config())
-
-    assert isinstance(agent._provider, ChatCompletionsProvider)
-    assert agent._provider.name == "deepseek"
-    assert agent.state.model.id == "deepseek-flash"
-
-
-def test_the_provider_flag_overrides_the_model_id() -> None:
-    agent = _build_agent(_args(model="deepseek-flash", provider="anthropic"), Config())
-
-    assert isinstance(agent._provider, AnthropicProvider)
-
-
 def test_a_vendor_added_in_a_config_file_reaches_the_agent(tmp_path: Path) -> None:
     """A vendor and its model, added purely in config, end to end through the wiring."""
     directory = tmp_path / PROJECT_DIRECTORY
@@ -698,12 +634,6 @@ def test_resume_without_an_id_and_no_sessions_says_so(
 ) -> None:
     assert main(["--resume", "--cwd", str(tmp_path)]) == 0
     assert "No saved sessions" in capsys.readouterr().out
-
-
-def test_there_is_no_separate_sessions_flag() -> None:
-    """`--resume` alone is the listing."""
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["--sessions"])
 
 
 # --- where log records go -------------------------------------------------

@@ -182,6 +182,19 @@ class AnthropicProvider:
 
         yield StreamDone(message=accumulator.message(), reason=accumulator.stop_reason)
 
+    def request_body(
+        self, model: Model, ctx: Context, opts: StreamOptions | None = None
+    ) -> dict[str, Any]:
+        """The JSON body `stream` posts for this request: the SDK's arguments,
+        plus the `stream` flag the SDK adds to them."""
+        options = opts if opts is not None else StreamOptions()
+        return {**self._build_request(model, ctx, options), "stream": True}
+
+    def reply_entries(self, message: AssistantMessage) -> list[dict[str, Any]]:
+        """A reply as this dialect writes it into `messages`, signed thinking
+        included, as the next request carries it. Empty for an empty reply."""
+        return _to_wire_messages((message,))
+
     def _build_request(self, model: Model, ctx: Context, opts: StreamOptions) -> dict[str, Any]:
         # dict[str, Any] rather than a typed kwargs mapping: this is a wire
         # payload assembled key by key and splatted into the SDK, which types

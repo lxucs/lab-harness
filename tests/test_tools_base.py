@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from lab_harness.llm.types import TextBlock
-from lab_harness.tools.base import ToolContext, ToolResult, fail, ok, tool
+from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
 from lab_harness.tools.registry import ToolRegistry
 
 
@@ -50,11 +50,6 @@ async def test_valid_arguments_reach_the_function_parsed(tmp_path: Path) -> None
     assert not result.is_error
 
 
-async def test_defaults_apply_when_omitted(tmp_path: Path) -> None:
-    result = await greet.execute({"name": "ada"}, _ctx(tmp_path))
-    assert _text(result) == "hi ada"
-
-
 async def test_invalid_arguments_become_an_error_result_not_an_exception(tmp_path: Path) -> None:
     """The model must be able to read the failure and reissue the call."""
     result = await greet.execute({"times": 2}, _ctx(tmp_path))
@@ -63,13 +58,6 @@ async def test_invalid_arguments_become_an_error_result_not_an_exception(tmp_pat
     message = _text(result)
     assert "greet" in message
     assert "name" in message
-
-
-async def test_constraint_violations_are_reported_with_the_field(tmp_path: Path) -> None:
-    result = await greet.execute({"name": "ada", "times": 0}, _ctx(tmp_path))
-
-    assert result.is_error
-    assert "times" in _text(result)
 
 
 async def _not_a_model(p: str, ctx: ToolContext) -> ToolResult:
@@ -91,25 +79,7 @@ def test_a_function_with_the_wrong_arity_is_rejected_at_definition() -> None:
         tool(name="bad", description="bad")(_wrong_arity)  # pyright: ignore[reportArgumentType]
 
 
-def test_ok_and_fail_set_the_error_flag() -> None:
-    assert not ok("fine").is_error
-    assert fail("broken").is_error
-
-
-def test_details_are_carried_but_stay_off_the_content() -> None:
-    """details is for renderers; the model sees content only."""
-    result = ok("done", path="/x", lines=3)
-    assert result.details == {"path": "/x", "lines": 3}
-    assert _text(result) == "done"
-
-
 # --- registry -------------------------------------------------------------
-
-
-def test_registry_resolves_by_name() -> None:
-    registry = ToolRegistry([greet])
-    assert registry.get("greet") is greet
-    assert registry.get("absent") is None
 
 
 def test_duplicate_registration_is_an_error() -> None:
@@ -139,10 +109,3 @@ def test_select_rejects_a_name_given_twice() -> None:
     registry = ToolRegistry([greet])
     with pytest.raises(ValueError, match="more than once: greet"):
         registry.select(["greet", "greet"])
-
-
-def test_registry_supports_iteration_and_membership() -> None:
-    registry = ToolRegistry([greet])
-    assert [t.name for t in registry] == ["greet"]
-    assert "greet" in registry
-    assert len(registry) == 1

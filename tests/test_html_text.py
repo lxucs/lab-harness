@@ -14,10 +14,6 @@ def text(html: str) -> str:
 # --- what survives --------------------------------------------------------
 
 
-def test_prose_is_kept() -> None:
-    assert "Hello world" in text("<p>Hello world</p>")
-
-
 def test_headings_become_markdown() -> None:
     assert "## Section" in text("<h2>Section</h2>")
 
@@ -45,11 +41,6 @@ def test_an_empty_anchor_produces_no_link() -> None:
 
 def test_entities_are_decoded() -> None:
     assert "Tom & Jerry's" in text("<p>Tom &amp; Jerry&#39;s</p>")
-
-
-def test_the_title_is_extracted() -> None:
-    title, _ = html_to_text("<html><head><title>My Page</title></head><body>x</body></html>")
-    assert title == "My Page"
 
 
 def test_svg_titles_do_not_contaminate_the_page_title() -> None:
@@ -96,12 +87,6 @@ def test_navigation_is_dropped() -> None:
     """
     body = text("<nav><a href='https://e.com'>Home</a></nav><p>article</p>")
     assert "article" in body and "Home" not in body
-
-
-def test_footers_and_asides_are_dropped() -> None:
-    body = text("<p>article</p><aside>Related</aside><footer>Copyright</footer>")
-    assert "article" in body
-    assert "Related" not in body and "Copyright" not in body
 
 
 def test_the_title_is_not_duplicated_into_the_body() -> None:

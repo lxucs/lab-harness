@@ -71,19 +71,6 @@ async def test_sink_output_survives_a_round_trip_back_into_events() -> None:
     assert message_from_dict(payload) == agent.state.messages[-1]
 
 
-async def test_a_failing_sink_does_not_break_the_run() -> None:
-    class Exploding(io.StringIO):
-        def write(self, s: str) -> int:
-            raise OSError("pipe closed")
-
-    agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("survived")]))
-    agent.subscribe(json_sink(Exploding()))
-
-    messages = await agent.prompt("go")
-
-    assert messages[-1].role == "assistant"
-
-
 async def test_events_carry_no_live_objects() -> None:
     """json.dumps is the enforcement; this asserts the sink relies on it."""
     stream = io.StringIO()

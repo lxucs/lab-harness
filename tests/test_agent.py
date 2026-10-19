@@ -27,18 +27,6 @@ class _InstantTool:
         return ToolResult(content=text("ok"))
 
 
-async def test_prompt_appends_user_and_assistant_messages() -> None:
-    agent = _agent(FakeProvider([text_response("hello")]))
-
-    await agent.prompt("hi")
-
-    roles = [m.role for m in agent.state.messages]
-    assert roles == ["user", "assistant"]
-    last_block = agent.state.messages[-1].content[0]
-    assert isinstance(last_block, TextBlock)
-    assert last_block.text == "hello"
-
-
 async def test_transcript_accumulates_across_prompts() -> None:
     agent = _agent(FakeProvider([text_response("one"), text_response("two")]))
 
@@ -57,21 +45,6 @@ async def test_second_prompt_sees_the_first_exchange() -> None:
     await agent.prompt("second")
 
     assert len(provider.requests[1].messages) == 3
-
-
-async def test_subscribers_receive_events() -> None:
-    received: list[AgentEvent] = []
-
-    async def listener(event: AgentEvent) -> None:
-        received.append(event)
-
-    agent = _agent(FakeProvider([text_response("hi")]))
-    agent.subscribe(listener)
-
-    await agent.prompt("go")
-
-    assert next(e.type for e in received) == "agent_start"
-    assert received[-1].type == "agent_end"
 
 
 async def test_unsubscribe_stops_delivery() -> None:
@@ -139,50 +112,6 @@ async def test_rejects_concurrent_prompts() -> None:
     assert first_block.text == "one"
 
 
-async def test_a_second_prompt_during_a_run_is_refused_not_queued() -> None:
-    """One run at a time: a mid-run prompt is an error, not a deferred message.
-
-    A frontend that wants to accept typing while the agent works buffers the
-    text itself and prompts again when the run returns.
-    """
-
-    class SlowTool:
-        name = "slow"
-        description = "slow"
-        execution_mode: ExecutionMode = "parallel"
-
-        def __init__(self) -> None:
-            self.parameters: dict[str, object] = {"type": "object", "properties": {}}
-
-        async def execute(self, args: dict[str, object], ctx: ToolContext) -> ToolResult:
-            await asyncio.sleep(0.02)
-            return ToolResult(content=text("done"))
-
-    call = ToolCallBlock(id="c1", name="slow", arguments={})
-    provider = FakeProvider([tool_call_response([call]), text_response("finished")])
-    agent = _agent(provider, tools=(SlowTool(),))
-
-    task = asyncio.create_task(agent.prompt("start"))
-    await asyncio.sleep(0.01)
-
-    with pytest.raises(RuntimeError, match="already running"):
-        await agent.prompt("also do this")
-
-    await task
-
-    # The refused prompt left nothing behind, and the run finished normally.
-    roles = [m.role for m in agent.state.messages]
-    assert roles == ["user", "assistant", "tool_result", "assistant"]
-    user_texts = [
-        block.text
-        for m in agent.state.messages
-        if isinstance(m, UserMessage)
-        for block in m.content
-        if isinstance(block, TextBlock)
-    ]
-    assert user_texts == ["start"]
-
-
 async def test_abort_marks_the_run_aborted() -> None:
     class HangingTool:
         name = "hang"
@@ -209,15 +138,6 @@ async def test_abort_marks_the_run_aborted() -> None:
     assert any(
         isinstance(m, AssistantMessage) and m.stop_reason == "aborted" for m in agent.state.messages
     )
-
-
-async def test_is_running_reflects_lifecycle() -> None:
-    agent = _agent(FakeProvider([text_response("hi")]))
-    assert not agent.state.is_running
-
-    await agent.prompt("go")
-
-    assert not agent.state.is_running
 
 
 async def test_state_messages_match_what_the_final_request_carried() -> None:

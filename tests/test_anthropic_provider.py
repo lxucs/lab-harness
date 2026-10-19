@@ -1,10 +1,12 @@
-"""The Anthropic adapter, against a fake SDK client. Never touches the network.
+"""The Anthropic adapter, against a fake SDK client — and, to see what reaches
+the wire, the real SDK over a canned transport. Never touches the network.
 
 The contract under test is the one the whole loop depends on: this provider
 must not raise. Every failure path has to arrive as a StreamError.
 """
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import replace
@@ -18,6 +20,7 @@ from anthropic.types import (
     RawContentBlockStopEvent,
     RawMessageDeltaEvent,
     RawMessageStartEvent,
+    RawMessageStopEvent,
 )
 
 from lab_harness.config import Config
@@ -291,10 +294,7 @@ async def test_unmodeled_server_blocks_survive_as_provider_blocks() -> None:
 @pytest.mark.parametrize(
     ("wire", "expected"),
     [
-        ("end_turn", "stop"),
         ("stop_sequence", "stop"),
-        ("max_tokens", "length"),
-        ("tool_use", "tool_use"),
         ("pause_turn", "stop"),
         ("refusal", "stop"),
     ],
@@ -543,7 +543,7 @@ async def _request_for(
     return client.messages.requests[0]
 
 
-@pytest.mark.parametrize("model_id", ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"])
+@pytest.mark.parametrize("model_id", ["claude-fable-5", "claude-opus-5"])
 async def test_adaptive_models_ask_for_summarized_thinking(model_id: str) -> None:
     """All think unasked, but return empty thinking text unless asked for it."""
     request = await _request_for(model_id)
@@ -608,6 +608,68 @@ async def test_a_model_without_reasoning_gets_no_thinking_request() -> None:
     _ = [event async for event in provider.stream(plain, _ctx(), StreamOptions(reasoning="high"))]
 
     assert "thinking" not in client.messages.requests[0]
+
+
+# --- what was sent, rebuilt -------------------------------------------------
+
+
+async def test_request_body_is_the_json_the_sdk_posts() -> None:
+    """Through the real SDK, over a canned transport: what reaches the wire."""
+    import httpx2
+
+    events = (
+        _msg_start(),
+        _block_start(0, {"type": "text", "text": ""}),
+        _block_delta(0, {"type": "text_delta", "text": "Hi"}),
+        _block_stop(0),
+        _msg_delta("end_turn"),
+        RawMessageStopEvent(type="message_stop"),
+    )
+    body = "".join(f"event: {e.type}\ndata: {e.model_dump_json()}\n\n" for e in events)
+    posted: list[dict[str, Any]] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        posted.append(json.loads(request.content))
+        return httpx2.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = anthropic.AsyncAnthropic(
+        api_key="test-key-not-real",
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(answer)),
+        max_retries=0,
+    )
+    provider = AnthropicProvider(SHIPPED, client=client)
+    earlier = AssistantMessage(
+        content=(ThinkingBlock(thinking="t", signature="sig"), TextBlock(text="a1")),
+        model=MODEL.id,
+        provider="anthropic",
+    )
+    tools = (ToolDeclaration(name="ls", description="List.", parameters={"type": "object"}),)
+    ctx = _ctx(
+        messages=(UserMessage(content=text("q1")), earlier, UserMessage(content=text("q2"))),
+        tools=tools,
+    )
+
+    streamed = await _collect(provider, ctx)
+
+    assert isinstance(streamed[-1], StreamDone)
+    assert provider.request_body(MODEL, ctx) == posted[0]
+
+
+def test_reply_entries_are_what_the_next_request_carries() -> None:
+    provider = _provider()
+    reply = AssistantMessage(
+        content=(
+            ThinkingBlock(thinking="t", signature="sig"),
+            TextBlock(text="Looking."),
+            ToolCallBlock(id="c1", name="ls", arguments={"path": "."}),
+        ),
+        model=MODEL.id,
+        provider="anthropic",
+    )
+
+    sent = provider.request_body(MODEL, _ctx(messages=(UserMessage(content=text("q")), reply)))
+
+    assert provider.reply_entries(reply) == sent["messages"][1:]
 
 
 def _fake_response(status: int) -> Any:

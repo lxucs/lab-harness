@@ -118,10 +118,11 @@ real chain of thought; OpenAI's Responses API and Claude send a summary; OpenAI
 via Chat Completions sends nothing. Claude Fable 5, Opus 5 and Sonnet 5 return
 empty thinking unless asked for a summary, which the adapter does by default —
 `providers.anthropic.thinking_display`, see
-[providers.md](providers.md#the-thinking-request). Some servers also end the
-reasoning mid-sentence, where the answer begins. Expanding shows everything
-that arrived, and nothing is cut on this side; the transcript holds the same
-text.
+[providers.md](providers.md#the-thinking-request). Some gateways also drop the
+last few words of reasoning when streaming — the same request sent unstreamed
+ends cleanly — so a thought can stop mid-sentence where the answer begins.
+Expanding shows everything that arrived, and nothing is cut on this side; the
+transcript holds the same text, and it is what goes back on the next turn.
 
 Ctrl-O is a prompt key binding. Pressed mid-run it waits in the input queue and
 takes effect when the prompt returns; nothing reads keys during a run, which is

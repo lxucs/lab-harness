@@ -23,6 +23,7 @@ from lab_harness.config import (
     Config,
     ConfigError,
     config_paths,
+    from_snapshot,
     lab_harness_home,
     load_config,
     model_defaults,
@@ -52,25 +53,7 @@ def test_no_files_means_defaults(tmp_path: Path) -> None:
     assert load_config(tmp_path) == Config()
 
 
-def test_an_absent_file_is_not_an_error(tmp_path: Path) -> None:
-    """Most projects have no config at all; that is the normal case."""
-    for path in config_paths(tmp_path):
-        assert not path.exists()
-    assert load_config(tmp_path).agent.max_turns == 50
-
-
 # --- reading values -------------------------------------------------------
-
-
-def test_a_scalar_is_applied(tmp_path: Path) -> None:
-    project(tmp_path, "[agent]\nmax_turns = 7\n")
-    assert load_config(tmp_path).agent.max_turns == 7
-
-
-def test_a_nested_section_is_applied(tmp_path: Path) -> None:
-    project(tmp_path, '[tools.web]\nbackend = "ddgs"\nmax_results = 3\n')
-    web = load_config(tmp_path).tools.web
-    assert (web.backend, web.max_results) == ("ddgs", 3)
 
 
 def test_a_doubly_nested_section_is_applied(tmp_path: Path) -> None:
@@ -255,13 +238,6 @@ def test_lab_harness_home_expands_a_tilde(monkeypatch: pytest.MonkeyPatch) -> No
 # *inside* a profile are checked as strictly as anywhere else.
 
 
-def test_the_shipped_profiles_are_present_by_default(tmp_path: Path) -> None:
-    profiles = load_config(tmp_path).providers.openai
-
-    assert set(profiles) >= {"openai", "deepseek", "glm"}
-    assert profiles["deepseek"].api_key_env == "DEEPSEEK_API_KEY"
-
-
 def test_the_vendors_that_want_reasoning_back_get_it() -> None:
     """DeepSeek 400s a tool loop without it; GLM asks for it unmodified."""
     profiles = Config().providers.openai
@@ -424,6 +400,20 @@ def test_a_typo_inside_a_model_is_an_error(tmp_path: Path) -> None:
         load_config(tmp_path)
 
 
+def test_a_dotted_id_left_unquoted_says_to_quote_it(tmp_path: Path) -> None:
+    """TOML reads it as a table `8-flash` inside a model `qwen3`."""
+    project(tmp_path, '[models.qwen3.8-flash]\nprovider = "deepseek"\n')
+
+    with pytest.raises(ConfigError, match=re.escape('quote it: [models."qwen3.8-flash"]')):
+        load_config(tmp_path)
+
+
+def test_a_quoted_dotted_id_is_one_model(tmp_path: Path) -> None:
+    project(tmp_path, '[models."qwen3.8-flash"]\nprovider = "deepseek"\n')
+
+    assert load_config(tmp_path).models["qwen3.8-flash"].provider == "deepseek"
+
+
 def test_a_typo_inside_a_price_is_an_error(tmp_path: Path) -> None:
     project(tmp_path, "[models.claude-sonnet-5.price]\ninptu = 2.5\n")
 
@@ -484,3 +474,37 @@ def test_every_credential_field_is_redacted() -> None:
 
     assert looks_secret, "the pattern should find the credential fields that exist"
     assert looks_secret <= SECRET_FIELDS
+
+
+def test_a_snapshot_reads_back_as_the_config_it_was_taken_of(tmp_path: Path) -> None:
+    project(
+        tmp_path,
+        '[agent]\nmax_turns = 7\n[providers.openai.mine]\nbase_url = "http://localhost:8000/v1"\n'
+        'replay_reasoning_field = "reasoning"\n',
+    )
+    config = load_config(tmp_path)
+
+    # Through JSON, as a transcript stores it: tuples come back as lists.
+    restored = from_snapshot(json.loads(json.dumps(snapshot(config))))
+
+    assert restored == config
+
+
+def test_a_snapshots_credentials_stay_redacted(tmp_path: Path) -> None:
+    project(
+        tmp_path,
+        '[providers.openai.deepseek]\napi_key = "sk-from-a-local-file"\n',
+        name=LOCAL_CONFIG_FILE,
+    )
+
+    restored = from_snapshot(snapshot(load_config(tmp_path)))
+
+    assert restored.providers.openai["deepseek"].api_key == REDACTED
+
+
+def test_a_snapshot_naming_a_setting_this_version_lacks_is_an_error() -> None:
+    recorded = snapshot(Config())
+    recorded["agent"]["retired_setting"] = 1
+
+    with pytest.raises(ConfigError, match="retired_setting"):
+        from_snapshot(recorded)

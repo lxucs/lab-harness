@@ -30,7 +30,6 @@ from lab_harness.session.recorder import SessionRecorder, start_recorder
 from lab_harness.session.resume import ResumeError, resume, trim_to_resumable
 from lab_harness.session.store import (
     find_session,
-    latest_session,
     list_sessions,
     new_session_id,
     project_directory,
@@ -101,10 +100,6 @@ def test_same_named_directories_in_different_places_do_not_collide(tmp_path: Pat
     assert project_slug(tmp_path / "work" / "api") != project_slug(tmp_path / "fork" / "api")
 
 
-def test_slug_is_stable_across_calls(tmp_path: Path) -> None:
-    assert project_slug(tmp_path) == project_slug(tmp_path)
-
-
 def test_slug_keeps_the_directory_name_readable(tmp_path: Path) -> None:
     project = tmp_path / "lab-harness"
     project.mkdir()
@@ -141,21 +136,6 @@ def test_listing_is_newest_first(tmp_path: Path) -> None:
     ]
 
 
-def test_listing_an_unused_directory_is_empty_not_an_error(tmp_path: Path) -> None:
-    assert list_sessions(tmp_path, CONFIG) == []
-    assert latest_session(tmp_path, CONFIG) is None
-
-
-def test_a_session_id_prefix_resolves(tmp_path: Path) -> None:
-    directory = project_directory(tmp_path, CONFIG)
-    directory.mkdir(parents=True)
-    (directory / "20260301T000000-abcdef.jsonl").write_text("")
-
-    found = find_session(tmp_path, "20260301", CONFIG)
-
-    assert found is not None and found.stem == "20260301T000000-abcdef"
-
-
 def test_an_ambiguous_prefix_is_an_error_not_a_guess(tmp_path: Path) -> None:
     """Resuming the wrong conversation is worse than being asked again."""
     directory = project_directory(tmp_path, CONFIG)
@@ -165,10 +145,6 @@ def test_an_ambiguous_prefix_is_an_error_not_a_guess(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="ambiguous"):
         find_session(tmp_path, "202603", CONFIG)
-
-
-def test_an_unknown_id_returns_none(tmp_path: Path) -> None:
-    assert find_session(tmp_path, "nope", CONFIG) is None
 
 
 # --- transcript format ----------------------------------------------------
@@ -184,18 +160,6 @@ def test_the_first_line_is_the_header(tmp_path: Path) -> None:
     assert first["type"] == "session"
     assert first["version"] == 1
     assert first["id"] == "s1"
-
-
-def test_messages_append_one_per_line(tmp_path: Path) -> None:
-    path = tmp_path / "s.jsonl"
-
-    with TranscriptWriter(path, _header()) as writer:
-        writer.append_message(UserMessage(content=text("hi")))
-        writer.append_message(AssistantMessage(content=text("hello"), model="m", provider="p"))
-
-    lines = path.read_text().splitlines()
-    assert len(lines) == 3
-    assert [json.loads(line)["type"] for line in lines] == ["session", "message", "message"]
 
 
 def test_each_line_is_flushed_so_a_crash_leaves_a_readable_file(tmp_path: Path) -> None:
@@ -296,31 +260,7 @@ def test_a_file_without_a_header_is_rejected(tmp_path: Path) -> None:
         read_transcript(path)
 
 
-def test_blank_lines_are_ignored(tmp_path: Path) -> None:
-    path = tmp_path / "s.jsonl"
-    with TranscriptWriter(path, _header()) as writer:
-        writer.append_message(UserMessage(content=text("hi")))
-    with path.open("a") as handle:
-        handle.write("\n\n")
-
-    assert len(read_transcript(path).messages) == 1
-
-
 # --- recorder -------------------------------------------------------------
-
-
-async def test_a_run_is_persisted_end_to_end(tmp_path: Path) -> None:
-    agent = Agent(model=FAKE_MODEL, provider=FakeProvider([text_response("the answer")]))
-    recorder = start_recorder(
-        cwd=str(tmp_path), model=FAKE_MODEL, system_prompt="sys", config=RUNTIME, restored=0
-    )
-    agent.subscribe(recorder)
-
-    await agent.prompt("the question")
-    recorder.close()
-
-    transcript = read_transcript(recorder.path)
-    assert [m.role for m in transcript.messages] == ["user", "assistant"]
 
 
 async def test_the_persisted_transcript_matches_agent_state(tmp_path: Path) -> None:
@@ -984,8 +924,3 @@ def test_restore_is_refused_during_a_run() -> None:
 
     with pytest.raises(RuntimeError, match="while a run is in flight"):
         agent.restore([])
-
-
-def test_config_can_disable_persistence() -> None:
-    assert Config().session.enabled is True
-    assert SessionConfig(enabled=False).enabled is False

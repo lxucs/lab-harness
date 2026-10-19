@@ -84,7 +84,9 @@ attached as it is.
 
 Transcripts live under `~/.lab-harness/sessions/`, one directory per project.
 Each records what every request was sent with;
-[trajectories.py](trajectories.py) exports them as JSONL.
+[trajectories.py](trajectories.py) exports them as JSONL, and with `--wire` as the
+JSON bodies the endpoint received — OpenAI-format messages and tools, for a
+Chat Completions model.
 
 ## Other models
 

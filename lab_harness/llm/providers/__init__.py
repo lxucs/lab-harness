@@ -30,8 +30,13 @@ _log = logging.getLogger(__name__)
 #: The one provider name that is not an OpenAI-family profile.
 ANTHROPIC = "anthropic"
 
+#: Every adapter shipped. Beyond `Provider`, each can say what it sends:
+#: `request_body` is the JSON a request posts, and `reply_entries` a reply as
+#: its dialect writes it into the next request's history.
+Adapter = AnthropicProvider | ChatCompletionsProvider | ResponsesProvider
+
 #: `api` value -> adapter. A profile names one of these keys.
-PROTOCOLS = {
+PROTOCOLS: dict[str, type[ChatCompletionsProvider] | type[ResponsesProvider]] = {
     "chat_completions": ChatCompletionsProvider,
     "responses": ResponsesProvider,
 }
@@ -63,7 +68,7 @@ def select_provider(model_id: str, config: Config, override: str | None = None) 
     return fallback
 
 
-def build_provider(name: str, config: Config) -> Provider:
+def build_provider(name: str, config: Config) -> Adapter:
     """Construct the named provider.
 
     Raises `ConfigError` for a name that is neither `anthropic` nor a
@@ -79,7 +84,7 @@ def build_provider(name: str, config: Config) -> Provider:
     return build_protocol(profile, name)
 
 
-def build_protocol(profile: OpenAIConfig, name: str) -> Provider:
+def build_protocol(profile: OpenAIConfig, name: str) -> Adapter:
     """The adapter for a profile's `api`, or a `ConfigError` naming the options.
 
     Checked here rather than in the adapter so a typo fails at startup, like
@@ -114,6 +119,7 @@ def route(
 __all__ = [
     "ANTHROPIC",
     "PROTOCOLS",
+    "Adapter",
     "AnthropicProvider",
     "ChatCompletionsProvider",
     "ResponsesProvider",

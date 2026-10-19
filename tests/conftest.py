@@ -1,8 +1,9 @@
 """Shared fixtures.
 
-Two autouse guards make the suite safe by construction rather than by
-convention: it cannot reach the network, and it cannot write to the real
-`~/.lab-harness`.
+Autouse guards make the suite safe by construction rather than by convention:
+it cannot reach the network, and it cannot read or write the developer's own
+state — the real `~/.lab-harness`, this repository's `.lab-harness/`, or the
+variables their shell exports.
 """
 
 import logging
@@ -48,6 +49,19 @@ def _isolate_lab_harness_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     isolated = tmp_path / "lab-harness-home"
     monkeypatch.setenv(SessionConfig().home_env, str(isolated))
     return isolated
+
+
+@pytest.fixture(autouse=True)
+def _run_in_an_empty_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Start every test in its own empty working directory.
+
+    Project config, `AGENTS.md` and sessions are found from the working
+    directory, and `Agent()` given no config loads one from there. Run from
+    the repository root, the suite would read this repository's
+    `.lab-harness/config.local.toml` — a developer's own models and settings —
+    and pass or fail by what it holds.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 #: Env vars cleared before every test: credentials, plus the overrides that

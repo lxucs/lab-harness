@@ -91,7 +91,8 @@ class SessionContext:
     model: Model
     #: `config.snapshot` of the config the invocation ran with: plain data,
     #: credentials redacted. Kept as data rather than rebuilt into a `Config`,
-    #: so a schema that has since changed cannot make an old record unreadable.
+    #: so a schema that has since changed cannot make an old record unreadable;
+    #: `config.from_snapshot` rebuilds one on demand.
     config: dict[str, Any]
 
 
@@ -246,6 +247,10 @@ def recorded_requests(transcript: Transcript) -> tuple[RecordedRequest, ...]:
 
     A request a `prepare_request` hook rewrote is rebuilt as sent: with the
     hook's messages and model, not the history and the segment's model.
+
+    A step is provider-neutral. The adapter that sent it gives the JSON body
+    it posted — `request_body`, on the provider `build_provider` makes from
+    `config.from_snapshot(step.config)`.
 
     Messages from before any `context` entry (a version 1 file) count as
     history for what follows, but yield no requests of their own: nothing

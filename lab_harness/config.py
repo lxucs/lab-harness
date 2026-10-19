@@ -698,9 +698,9 @@ REDACTED = "[redacted]"
 def snapshot(config: Config) -> dict[str, Any]:
     """The config as plain, JSON-safe data, with every credential replaced.
 
-    For recording what a run was configured with. Credentials read from the
-    environment never reach a `Config` at all; this covers the ones a
-    config.local.toml supplied.
+    For recording what a run was configured with; `from_snapshot` reads one
+    back. Credentials read from the environment never reach a `Config` at all;
+    this covers the ones a config.local.toml supplied.
     """
     return _redact(asdict(config))
 
@@ -718,6 +718,17 @@ def _redact(data: dict[str, Any]) -> dict[str, Any]:
         else:
             redacted[key] = value
     return redacted
+
+
+def from_snapshot(data: Mapping[str, Any]) -> Config:
+    """The config a `snapshot` was taken of, its credentials still redacted.
+
+    For rebuilding what a recorded run sent: a session holds the snapshot of
+    every invocation, and the provider settings in it shape each request body.
+    Read as strictly as a config file, so a snapshot naming a setting this
+    version no longer has is an error rather than a silently different body.
+    """
+    return _apply(Config(), data, source=Path("recorded config"), trail=())
 
 
 #: Per-project config directory, relative to the working directory.
@@ -856,8 +867,29 @@ def _apply_named(
         base = merged.get(name)
         if base is None:
             base = _new_entry(member)
+        if (split := _split_name(name, section, member)) is not None:
+            raise ConfigError(
+                f"{source}: [{where}.{split}] reads as entry {name!r} holding a table "
+                f"{split.removeprefix(name + '.')!r}, which is not a setting. If "
+                f'{split!r} is one name, quote it: [{where}."{split}"]'
+            )
         merged[name] = _apply(base, section, source=source, trail=(*trail, name))
     return merged
+
+
+def _split_name(name: str, section: Mapping[str, Any], member: type) -> str | None:
+    """The dotted name an unquoted header split, or None.
+
+    A bare TOML key cannot hold a dot, so `[models.qwen3.8-flash]` is a table
+    `8-flash` inside an entry `qwen3`. A table under a key the entry does not
+    have is that, or a typo for a section; the message covers both. Followed
+    down, so `[models.a.b.c]` names `a.b.c`.
+    """
+    known = {spec.name for spec in fields(member)}
+    for key, value in section.items():
+        if key not in known and isinstance(value, Mapping):
+            return f"{name}.{_split_name(key, value, member) or key}"
+    return None
 
 
 def _new_entry(member: type) -> Any:

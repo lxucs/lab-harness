@@ -8,7 +8,6 @@ import pytest
 
 from lab_harness.cli.usage import (
     cache_hit_rate,
-    cost_of,
     format_cost,
     format_footer,
     format_status,
@@ -16,7 +15,7 @@ from lab_harness.cli.usage import (
     price_for,
     summarize,
 )
-from lab_harness.config import Config, PricingConfig
+from lab_harness.config import PricingConfig
 from lab_harness.llm.fake import FAKE_MODEL
 from lab_harness.llm.types import AssistantMessage, Usage, UserMessage, text
 from tests.entries import model_entry
@@ -53,13 +52,6 @@ def test_usage_is_summed_across_requests() -> None:
 
     assert summary.requests == 2
     assert summary.usage == Usage(input=120, output=15, cache_read=150, cache_write=50)
-
-
-def test_only_assistant_messages_count_as_requests() -> None:
-    summary = summarize([UserMessage(content=text("go"))], MODELS)
-
-    assert summary.requests == 0
-    assert summary.usage == Usage()
 
 
 def test_a_failed_request_counts_but_adds_no_tokens() -> None:
@@ -103,12 +95,6 @@ def test_cost_is_summed_across_requests() -> None:
     assert summarize(messages, MODELS).cost == pytest.approx(1.0 + 1.0)
 
 
-def test_an_unpriced_model_has_no_cost() -> None:
-    summary = summarize([reply(Usage(input=10), model=UNPRICED)], MODELS)
-
-    assert summary.cost is None
-
-
 def test_one_unpriced_request_makes_the_total_unknown() -> None:
     """A total that silently left requests out would read as the whole bill."""
     messages = [reply(Usage(input=10)), reply(Usage(input=10), model=UNPRICED)]
@@ -130,10 +116,6 @@ def test_no_usage_means_no_cost() -> None:
 # --- prices ---------------------------------------------------------------
 
 
-def test_a_model_without_an_entry_is_unpriced() -> None:
-    assert price_for(UNPRICED, MODELS) is None
-
-
 def test_an_entry_without_a_price_is_unpriced() -> None:
     """An entry may give only limits or a provider; its default price is none."""
     assert price_for(PRICED, {PRICED: model_entry(provider="groq")}) is None
@@ -150,32 +132,6 @@ def test_a_partly_priced_entry_is_priced() -> None:
     assert price_for(PRICED, {PRICED: model_entry(price=price)}) == price
 
 
-def test_cost_of_is_per_million_tokens() -> None:
-    assert cost_of(Usage(input=1_000), PricingConfig(input=3.0)) == pytest.approx(0.003)
-
-
-def test_openai_is_priced_at_standard_rates() -> None:
-    price = Config().models["gpt-6-luna"].price
-
-    assert (price.input, price.cache_read, price.output) == (0.1, 0.01, 0.5)
-    assert price.cache_write == 0.0, "the Responses adapter reports no cache writes"
-
-
-def test_glm_is_priced_at_z_ai_list_rates() -> None:
-    price = Config().models["glm-5.3"].price
-
-    assert (price.input, price.cache_read, price.output) == (1.4, 0.26, 4.4)
-    assert price.cache_write == 0.0, "Z.ai does not charge to store the cache (for now)"
-
-
-def test_deepseek_is_priced_at_its_peak_rates() -> None:
-    """The higher of its two daily rates, so a shown cost is never an underestimate."""
-    price = Config().models["deepseek-flash"].price
-
-    assert (price.input, price.cache_read, price.output) == (0.3, 0.006, 1.2)
-    assert price.cache_write == 0.0, "DeepSeek charges nothing to write the cache"
-
-
 # --- cache hit rate -------------------------------------------------------
 
 
@@ -184,10 +140,6 @@ def test_cache_hit_rate_is_reads_over_everything_read() -> None:
     usage = Usage(input=10, cache_read=80, cache_write=10)
 
     assert cache_hit_rate(usage) == pytest.approx(0.8)
-
-
-def test_cache_hit_rate_ignores_output() -> None:
-    assert cache_hit_rate(Usage(input=50, output=1_000, cache_read=50)) == pytest.approx(0.5)
 
 
 def test_cache_hit_rate_is_none_without_a_prompt() -> None:

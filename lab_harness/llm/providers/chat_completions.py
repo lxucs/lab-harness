@@ -122,7 +122,7 @@ class ChatCompletionsProvider:
             return
 
         try:
-            request = self._build_request(model, ctx, options)
+            request = self.request_body(model, ctx, options)
         except Exception as exc:
             # Translation bugs surface as an error turn rather than taking the
             # run down. The loop cannot repair them either way.
@@ -179,7 +179,12 @@ class ChatCompletionsProvider:
             yield closing
         yield StreamDone(message=accumulator.message(), reason=accumulator.stop_reason)
 
-    def _build_request(self, model: Model, ctx: Context, opts: StreamOptions) -> dict[str, Any]:
+    def request_body(
+        self, model: Model, ctx: Context, opts: StreamOptions | None = None
+    ) -> dict[str, Any]:
+        """The JSON body `stream` posts for this request — what the server's
+        chat template is applied to."""
+        opts = opts if opts is not None else StreamOptions()
         request: dict[str, Any] = {
             "model": model.id,
             "messages": _to_wire_messages(
@@ -211,6 +216,18 @@ class ChatCompletionsProvider:
         if opts.reasoning is not None and model.supports_reasoning:
             request["reasoning_effort"] = opts.reasoning
         return request
+
+    def reply_entries(self, message: AssistantMessage) -> list[dict[str, Any]]:
+        """A reply as this dialect writes it into `messages`.
+
+        What the next request carries for it, except that the reasoning is
+        always included — as the profile's `replay_reasoning_field`, else as
+        `reasoning_content` — since a reply without it is not what the model
+        generated. Empty for a reply with no answer and no calls.
+        """
+        field = self._config.replay_reasoning_field or _REASONING_FIELDS[0]
+        entry = _assistant_entry(message, field)
+        return [] if entry is None else [entry]
 
 
 # --- request translation --------------------------------------------------

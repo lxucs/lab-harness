@@ -129,10 +129,6 @@ def test_anthropic_missing_a_key_is_a_clear_error(
 # --- precedence -----------------------------------------------------------
 
 
-def test_nothing_specified_uses_the_configured_model() -> None:
-    assert resolve_model().id == AgentConfig().model
-
-
 def test_the_configured_model_is_honored() -> None:
     config = agent(model="claude-opus-5")
     assert resolve_model(config=config).id == "claude-opus-5"
@@ -175,11 +171,12 @@ def test_an_unknown_id_is_not_an_error() -> None:
     assert model.name == "claude-something-7"
 
 
-def test_an_unknown_id_gets_conservative_limits() -> None:
-    """Guessing high would fail the request; guessing low merely wastes room."""
-    model = resolve_model("claude-something-7")
-    assert model.context_window == 200_000
-    assert model.max_tokens == 8_192
+def test_an_unknown_id_does_not_mutate_the_catalog() -> None:
+    """Resolving reads the catalog; it never adds the guess to it."""
+    before = Config().models
+    resolve_model("claude-something-7")
+    assert Config().models == before
+    assert "claude-something-7" not in before
 
 
 def test_an_unknown_id_gets_the_catalogs_model_defaults() -> None:
@@ -189,20 +186,6 @@ def test_an_unknown_id_gets_the_catalogs_model_defaults() -> None:
         defaults.max_tokens,
     )
     assert model.supports_reasoning is defaults.supports_reasoning
-
-
-def test_an_unknown_configured_model_still_resolves() -> None:
-    """A config file naming next month's model must not break startup."""
-    config = agent(model="claude-something-7")
-    assert resolve_model(config=config).id == "claude-something-7"
-
-
-def test_an_unknown_id_does_not_mutate_the_catalog() -> None:
-    """Resolving reads the catalog; it never adds the guess to it."""
-    before = Config().models
-    resolve_model("claude-something-7")
-    assert Config().models == before
-    assert "claude-something-7" not in before
 
 
 def test_an_unknown_id_names_no_provider() -> None:

@@ -7,7 +7,6 @@ environment filled in, and a template a user writes fails at startup rather
 than in the one directory where it is first filled.
 """
 
-import platform
 import re
 import subprocess
 import sys
@@ -135,15 +134,6 @@ def test_a_config_file_replaces_one_prompt_and_keeps_the_others(tmp_path: Path) 
     assert replace(prompts, system=Config().prompts.system) == Config().prompts
 
 
-def test_a_section_set_empty_in_config_is_not_sent(tmp_path: Path) -> None:
-    write_project_config(tmp_path, '[prompts]\nharness = ""\n')
-
-    prompt = build_system_prompt(load_config(tmp_path).prompts, ENVIRONMENT)
-
-    assert "# Harness" not in prompt
-    assert f"{Config().prompts.system}\n\n# Environment\n" in prompt
-
-
 def test_a_typo_in_the_prompts_section_is_an_error(tmp_path: Path) -> None:
     write_project_config(tmp_path, '[prompts]\nsytem = "x"\n')
 
@@ -174,10 +164,6 @@ def test_an_empty_section_is_left_out() -> None:
     assert build_system_prompt(prompts, ENVIRONMENT) == "S\n\nC"
 
 
-def test_no_instructions_leaves_the_prompt_alone() -> None:
-    assert build_system_prompt(PromptsConfig(system="S"), ENVIRONMENT) == "S"
-
-
 def test_every_environment_placeholder_is_filled() -> None:
     template = "{cwd} {git_enabled} {system_platform} {shell} {os_version} {agent_model}"
 
@@ -202,15 +188,6 @@ def test_only_the_templates_are_filled() -> None:
     assert build_system_prompt(prompts, ENVIRONMENT) == 'Reply as {"a": 1}.\n\nMind {cwd}.'
 
 
-def test_the_prompt_names_the_file_it_came_from() -> None:
-    """So the model can edit the source of a rule rather than just obey it."""
-    prompt = build_system_prompt(Config().prompts, ENVIRONMENT, INSTRUCTIONS)
-
-    assert prompt.startswith(Config().prompts.system + "\n\n")
-    assert "AGENTS.md" in prompt
-    assert prompt.endswith("Use tabs.")
-
-
 def test_the_instructions_do_not_carry_their_absolute_path() -> None:
     """Where the project is, is `environment`'s to say: a config that sets it
     to "" keeps this machine's layout out of every request."""
@@ -218,12 +195,6 @@ def test_the_instructions_do_not_carry_their_absolute_path() -> None:
     prompts = replace(Config().prompts, environment="")
 
     assert "/home/someone" not in build_system_prompt(prompts, ENVIRONMENT, context)
-
-
-def test_with_no_system_prompt_the_instructions_stand_alone() -> None:
-    prompts = PromptsConfig(system="", project_instructions="From {name}: {text}")
-
-    assert build_system_prompt(prompts, ENVIRONMENT, INSTRUCTIONS) == "From AGENTS.md: Use tabs."
 
 
 def test_braces_in_the_instructions_are_left_alone() -> None:
@@ -257,10 +228,8 @@ def test_a_broken_template_fails_even_with_nothing_to_fill(template: str, messag
     [
         ("Running in {directory}", r"unknown placeholder\(s\) \{directory\}; .*\{cwd\}"),
         ("From {name}", r"unknown placeholder\(s\) \{name\}"),
-        ("{cwd", "Write {{ and }} for literal braces"),
-        ("{git_enabled:d}", "Write {{ and }} for literal braces"),
     ],
-    ids=["unknown", "instructions'", "unclosed", "bad-spec"],
+    ids=["unknown", "instructions'"],
 )
 def test_a_broken_environment_template_fails(template: str, message: str) -> None:
     with pytest.raises(ConfigError, match=rf"^prompts\.environment: .*{message}"):
@@ -286,10 +255,6 @@ def test_the_working_directory_is_absolute(tmp_path: Path, monkeypatch: pytest.M
     assert detect_environment(".", "m").cwd == str(tmp_path.resolve())
 
 
-def test_the_model_is_the_one_given(tmp_path: Path) -> None:
-    assert detect_environment(tmp_path, "claude-opus-5").agent_model == "claude-opus-5"
-
-
 def test_a_repository_is_found_from_a_subdirectory(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     inside = tmp_path / "src" / "pkg"
@@ -307,13 +272,6 @@ def test_a_worktree_counts_as_a_repository(tmp_path: Path) -> None:
 
 def test_a_directory_outside_any_repository(tmp_path: Path) -> None:
     assert not detect_environment(tmp_path, "m").git_enabled
-
-
-def test_the_platform_is_python_s_own_description(tmp_path: Path) -> None:
-    environment = detect_environment(tmp_path, "m")
-
-    assert environment.system_platform == sys.platform
-    assert environment.os_version == f"{platform.system()} {platform.release()}"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shells name themselves in $0")

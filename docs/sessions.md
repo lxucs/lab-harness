@@ -59,7 +59,7 @@ every candidate.
 | Type | Purpose |
 |---|---|
 | `session` | Header. One per file, first line. |
-| `context` | What a segment's requests were sent with. Opens the segment. |
+| `context` | What a segment's requests were sent with, and the config they ran under — recorded, never sent. Opens the segment. |
 | `message` | One transcript message, stamped with when it was written |
 | `usage` | Token usage for a request, written beside its assistant message. Repeats the message's own `usage`. |
 | `rewrite` | What a `prepare_request` hook sent instead, for the request after it. See below. |
@@ -93,6 +93,33 @@ That holds across resumes, an interrupted turn, a prompt, tool set, model or
 config that changed between invocations, one that changed between runs of the
 same invocation, and a request a hook rewrote. Tests rebuild sessions with
 each of those and compare against what the provider was actually handed.
+
+### As the provider received it
+
+A step is provider-neutral. The adapter that sent it turns it back into the
+JSON body it posted — for a Chat Completions endpoint, OpenAI-format
+`messages` and `tools`, the input the server's chat template was applied to
+and the format training frameworks read:
+
+```python
+from lab_harness.config import from_snapshot
+from lab_harness.llm.providers import build_provider
+
+adapter = build_provider(step.model.provider, from_snapshot(step.config))
+adapter.request_body(step.model, step.request)  # the body, as posted
+adapter.reply_entries(step.response)  # the reply, as that dialect writes it
+```
+
+`from_snapshot` reads back the config the invocation recorded, so the body is
+rebuilt under the provider settings it was sent with, not today's. A reply's
+entries are what the next request carries for it, with one difference: they
+always include the reasoning, even under a profile that sends none back.
+[trajectories.py](../examples/trajectories.py) `--wire` writes both, one line
+per request. Tests check the rebuilt body against what each adapter posted.
+
+The token sequence itself — after the chat template, with the model's special
+tokens — is not recoverable from a session. Only the inference server has it,
+and only one serving open weights can return it.
 
 ### Changes mid-session
 
@@ -144,7 +171,7 @@ What a `context` entry holds:
 
 - **The wire translation.** A step is the provider-neutral request; the bytes
   sent are what the adapter makes of it under the provider settings in
-  `config`.
+  `config` — which it does again on demand, [above](#as-the-provider-received-it).
 - **Values read from the environment** — credentials and `*_BASE_URL`
   overrides. The snapshot holds the variables' names, not their values.
 - **Streaming deltas.** The assembled message is kept instead.
@@ -255,7 +282,7 @@ terminal shows the history anyway, by drawing it directly through the renderer
 |---|---|
 | `lab-harness --resume ID --no-save` | The conversation in the terminal, read-only |
 | `lab-harness --export [ID]` | One self-contained HTML page beside the transcript: the conversation, every segment's context, usage and cost per request |
-| `examples/trajectories.py [ID]` | Every request exactly as sent, one JSON line each |
+| `examples/trajectories.py [ID]` | Every request exactly as sent, one JSON line each; `--wire` as the endpoint received it |
 
 The page is a view, not a record: it is written next to the `.jsonl`, never
 read back, and safe to delete. See [cli.md](cli.md#sessions).

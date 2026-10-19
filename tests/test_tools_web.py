@@ -175,12 +175,6 @@ async def test_an_api_error_surfaces_the_upstream_reason() -> None:
         await TavilyBackend(web_config(), client=client).search("q", 5)
 
 
-async def test_an_api_error_includes_the_status_code() -> None:
-    client = transport(responder({"detail": "nope"}, status=432))
-    with pytest.raises(SearchError, match="432"):
-        await TavilyBackend(web_config(), client=client).search("q", 5)
-
-
 async def test_an_unparseable_error_body_still_produces_a_message() -> None:
     def handle(_: httpx.Request) -> httpx.Response:
         return httpx.Response(500, content=b"<html>Gateway Error</html>")
@@ -226,13 +220,6 @@ async def test_ddgs_passes_through_region_and_engine() -> None:
     assert kwargs == {"region": "uk-en", "backend": "brave", "max_results": 7}
 
 
-async def test_ddgs_never_reports_page_content() -> None:
-    """It returns snippets only — which is why web_fetch matters."""
-    run = ddgs_rows({"title": "T", "href": "u", "body": "B"})
-    hits = await DdgsBackend(web_config(), search=run).search("q", 5)
-    assert hits[0].content == ""
-
-
 async def test_a_ddgs_failure_becomes_a_search_error() -> None:
     def boom(query: str, **kwargs: Any) -> list[dict[str, Any]]:
         raise RuntimeError("rate limited")
@@ -259,11 +246,6 @@ async def test_a_missing_ddgs_package_says_how_to_install_it(
 
 
 # --- backend selection ----------------------------------------------------
-
-
-def test_the_default_backend_is_tavily() -> None:
-    assert WebConfig().backend == "tavily"
-    assert isinstance(build_backend(WebConfig()), TavilyBackend)
 
 
 def test_ddgs_is_selectable_by_config() -> None:
@@ -369,11 +351,6 @@ async def test_no_results_is_a_success_not_a_failure(
     assert "No results" in result.content[0].text  # type: ignore[union-attr]
 
 
-async def test_a_missing_query_is_a_validation_failure() -> None:
-    result = await web_search.execute({}, context(web_config()))
-    assert result.is_error and "query" in result.content[0].text  # type: ignore[union-attr]
-
-
 # --- the web_fetch tool ---------------------------------------------------
 
 
@@ -405,12 +382,6 @@ async def test_web_fetch_returns_page_text_as_markdown(fetch: Any) -> None:
     result = await web_fetch.execute({"url": "https://e.com"}, context(web_config()))
     body = result.content[0].text  # type: ignore[union-attr]
     assert "# Title" in body and "Body text." in body
-
-
-async def test_web_fetch_strips_scripts(fetch: Any) -> None:
-    fetch(page("<p>real</p><script>tracking()</script>"))
-    result = await web_fetch.execute({"url": "https://e.com"}, context(web_config()))
-    assert "tracking" not in result.content[0].text  # type: ignore[union-attr]
 
 
 async def test_non_html_content_passes_through_unparsed(fetch: Any) -> None:

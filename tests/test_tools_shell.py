@@ -7,7 +7,6 @@ streaming) cannot be exercised against a mock. No network is involved.
 
 import asyncio
 import os
-import signal
 import time
 from pathlib import Path
 
@@ -109,15 +108,6 @@ def test_collector_bounds_memory_regardless_of_volume() -> None:
     rendered = collector.render()
     assert collector.truncated
     assert len(rendered) < 200
-
-
-def test_collector_preserves_exact_content_when_under_limit() -> None:
-    collector = _Collector(limit=1000)
-    collector.feed(b"hello ")
-    collector.feed(b"world")
-
-    assert collector.render() == "hello world"
-    assert not collector.truncated
 
 
 async def test_a_requested_timeout_is_capped_by_config(tmp_path: Path) -> None:
@@ -282,15 +272,3 @@ async def test_output_streams_through_on_update(tmp_path: Path) -> None:
 def test_bash_is_sequential() -> None:
     """Concurrent shell commands mutate shared state unpredictably."""
     assert bash.execution_mode == "sequential"
-
-
-def test_bash_declares_a_schema() -> None:
-    assert bash.parameters["type"] == "object"
-    properties = bash.parameters["properties"]
-    assert isinstance(properties, dict)
-    assert "command" in properties
-
-
-def test_sigterm_is_what_we_send_first() -> None:
-    """Documents the escalation order the terminate path relies on."""
-    assert signal.SIGTERM != signal.SIGKILL

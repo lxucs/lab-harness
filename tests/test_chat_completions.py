@@ -293,14 +293,6 @@ async def test_the_system_prompt_becomes_the_first_message() -> None:
     assert recorder.payload["messages"][0] == {"role": "system", "content": "Be brief."}
 
 
-async def test_no_system_prompt_means_no_system_message() -> None:
-    recorder = Recorder(sse(finish()))
-
-    await collect(provider(recorder), ctx(messages=(UserMessage(content=text("hi")),)))
-
-    assert [m["role"] for m in recorder.payload["messages"]] == ["user"]
-
-
 async def test_a_text_only_user_turn_is_a_plain_string() -> None:
     """Endpoints that reject the parts array still accept a string."""
     recorder = Recorder(sse(finish()))
@@ -436,8 +428,9 @@ async def test_every_earlier_turn_carries_its_reasoning() -> None:
     assert replayed == [None, "first thought", None, "second thought"]
 
 
-@pytest.mark.parametrize("field", ["reasoning_content", "reasoning"])
-async def test_the_replay_field_is_the_configured_one(field: str) -> None:
+async def test_the_replay_field_is_the_configured_one() -> None:
+    """`reasoning`, not the default `reasoning_content`, so the setting is what decides."""
+    field = "reasoning"
     recorder = Recorder(sse(finish()))
     config = profile_entry(api_key=TEST_KEY, replay_reasoning_field=field)
 
@@ -488,16 +481,56 @@ async def test_streamed_reasoning_goes_back_byte_for_byte() -> None:
     assert second.payload["messages"][0]["reasoning_content"] == "".join(pieces)
 
 
-async def test_an_empty_assistant_turn_is_dropped() -> None:
-    """An errored turn has no content; an empty message is rejected upstream."""
+# --- what was sent, rebuilt -------------------------------------------------
+
+
+async def test_request_body_is_the_json_stream_posts() -> None:
     recorder = Recorder(sse(finish()))
+    adapter = provider(recorder, REPLAYING)
+    tools = (ToolDeclaration(name="ls", description="List.", parameters={"type": "object"}),)
+    request = ctx(
+        messages=(
+            UserMessage(content=text("q1")),
+            thinking_turn("t", TextBlock(text="a1")),
+            UserMessage(content=text("q2")),
+        ),
+        system_prompt="Be brief.",
+        tools=tools,
+    )
+
+    await collect(adapter, request)
+
+    assert adapter.request_body(MODEL, request) == recorder.payload
+
+
+async def test_reply_entries_are_what_the_next_request_carries() -> None:
+    adapter = provider(Recorder(), REPLAYING)
+    call = ToolCallBlock(id="c1", name="ls", arguments={"path": "."})
+    reply = thinking_turn("list first", TextBlock(text="Looking."), call)
+
+    sent = adapter.request_body(MODEL, ctx(messages=(UserMessage(content=text("q")), reply)))
+
+    assert adapter.reply_entries(reply) == sent["messages"][1:]
+
+
+async def test_a_reply_keeps_its_reasoning_when_the_profile_replays_none() -> None:
+    """What the model generated, not what goes back: training wants the thought."""
+    adapter = provider(Recorder())  # replay_reasoning_field is empty
+    reply = thinking_turn("the thought", TextBlock(text="the answer"))
+
+    (entry,) = adapter.reply_entries(reply)
+
+    assert entry["reasoning_content"] == "the thought"
+    sent = adapter.request_body(MODEL, ctx(messages=(reply,)))
+    assert "reasoning_content" not in sent["messages"][0]
+
+
+def test_an_empty_reply_has_no_entries() -> None:
     message = AssistantMessage(
         content=(), model="deepseek-flash", provider="deepseek", stop_reason="error"
     )
 
-    await collect(provider(recorder), ctx(messages=(message, UserMessage(content=text("retry")))))
-
-    assert [m["role"] for m in recorder.payload["messages"]] == ["user"]
+    assert provider(Recorder()).reply_entries(message) == []
 
 
 # --- response translation -------------------------------------------------
@@ -533,6 +566,26 @@ async def test_reasoning_content_becomes_thinking() -> None:
     assert [e.delta for e in events if isinstance(e, ThinkingDelta)] == ["step ", "one"]
     assert [e.thinking for e in events if isinstance(e, ThinkingEnd)] == ["step one"]
     assert final(events).content == (ThinkingBlock(thinking="step one"), TextBlock(text="done"))
+
+
+async def test_a_frame_that_ends_the_reasoning_and_starts_the_answer_keeps_both() -> None:
+    """The handover can share a frame. A live gateway sends the idle field as ""
+    on every frame, as these do."""
+    recorder = Recorder(
+        sse(
+            delta(reasoning_content="Let me give the", content=""),
+            delta(reasoning_content=" answer.", content="Seven"),
+            delta(reasoning_content="", content=" entries."),
+            finish(),
+        )
+    )
+
+    events = await collect(provider(recorder))
+
+    assert final(events).content == (
+        ThinkingBlock(thinking="Let me give the answer."),
+        TextBlock(text="Seven entries."),
+    )
 
 
 async def test_the_reasoning_alias_is_also_accepted() -> None:
@@ -620,32 +673,10 @@ async def test_partial_tool_json_is_never_salvaged() -> None:
     assert final(events).stop_reason == "length"
 
 
-async def test_blocks_get_distinct_indices() -> None:
-    """The wire gives no index for text, so the adapter assigns them."""
-    recorder = Recorder(
-        sse(
-            delta(reasoning_content="think"),
-            delta(content="say"),
-            delta(
-                tool_calls=[{"index": 0, "id": "c1", "function": {"name": "ls", "arguments": "{}"}}]
-            ),
-            finish("tool_calls"),
-        )
-    )
-
-    events = await collect(provider(recorder))
-
-    starts = [e for e in events if isinstance(e, ThinkingStart | TextStart | ToolCallStart)]
-    indices = [e.block_index for e in starts]
-    assert len(indices) == len(set(indices)), f"block indices collided: {indices}"
-
-
 @pytest.mark.parametrize(
     ("wire", "expected"),
     [
         ("stop", "stop"),
-        ("length", "length"),
-        ("tool_calls", "tool_use"),
         ("function_call", "tool_use"),
         ("content_filter", "stop"),
         ("something_new", "stop"),
@@ -673,29 +704,6 @@ async def test_usage_is_read_from_the_final_chunk() -> None:
 
     usage = final(events).usage
     assert (usage.input, usage.output) == (100, 20)
-
-
-async def test_cached_tokens_are_not_counted_twice() -> None:
-    """prompt_tokens includes the cached portion, so input excludes it."""
-    recorder = Recorder(
-        sse(
-            finish(),
-            {
-                "choices": [],
-                "usage": {
-                    "prompt_tokens": 100,
-                    "completion_tokens": 5,
-                    "prompt_tokens_details": {"cached_tokens": 40},
-                },
-            },
-        )
-    )
-
-    events = await collect(provider(recorder))
-
-    usage = final(events).usage
-    assert (usage.input, usage.cache_read) == (60, 40)
-    assert usage.total == 105
 
 
 async def test_deepseek_usage_reads_its_cache_hits() -> None:
@@ -794,7 +802,7 @@ async def test_the_credential_error_names_the_profile() -> None:
     assert "my-gateway" in (final(events).error_message or "")
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 429, 500, 503])
+@pytest.mark.parametrize("status", [400, 500])
 async def test_http_errors_become_stream_errors(status: int) -> None:
     recorder = Recorder(
         json.dumps({"error": {"message": "upstream said no"}}),

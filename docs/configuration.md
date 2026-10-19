@@ -303,6 +303,11 @@ price = { input = 1.0, output = 4.0 }   # illustrative; take real rates from the
 provider = "my-gateway"
 ```
 
+The quotes go around the id alone. Unquoted, `[models.my-model-1.5]` is a
+table `5` inside a model `my-model-1`, and loading stops with an error that
+shows the quoted header to write instead. The id sent is the same either way;
+the quotes are TOML's, not part of the name.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `name` | the id | Display name only — the table's key is the id sent to the API |

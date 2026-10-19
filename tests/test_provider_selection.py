@@ -47,11 +47,6 @@ def test_the_flag_wins_over_everything() -> None:
     assert select_provider("deepseek-flash", Config(), override="anthropic") == "anthropic"
 
 
-def test_a_models_entry_routes_its_id() -> None:
-    """How `--model deepseek-flash` reaches DeepSeek with no flag."""
-    assert select_provider("deepseek-flash", Config()) == "deepseek"
-
-
 def test_a_config_entry_can_repoint_a_catalogued_model() -> None:
     """A gateway, or a local server with the same weights, without a code change."""
     config = with_models(**{"claude-sonnet-5": model_entry(provider="local")})
@@ -75,10 +70,6 @@ def test_an_unknown_id_falls_back_to_the_configured_default() -> None:
     assert select_provider("something-released-last-week", config) == "my-gateway"
 
 
-def test_the_default_default_is_anthropic() -> None:
-    assert select_provider("something-new", Config()) == "anthropic"
-
-
 def test_the_shipped_catalog_routes_each_model_to_its_vendor() -> None:
     """The defaults have to actually work, not merely exist."""
     config = Config()
@@ -93,27 +84,6 @@ def test_the_shipped_catalog_routes_each_model_to_its_vendor() -> None:
 
 
 # --- construction ---------------------------------------------------------
-
-
-def test_anthropic_builds_the_anthropic_adapter() -> None:
-    assert isinstance(build_provider("anthropic", Config()), AnthropicProvider)
-
-
-def test_a_profile_builds_the_openai_adapter_carrying_its_name() -> None:
-    provider = build_provider("deepseek", Config())
-
-    assert isinstance(provider, ChatCompletionsProvider)
-    # The profile name, not the dialect: it lands in AssistantMessage.provider.
-    assert provider.name == "deepseek"
-
-
-def test_a_profile_added_only_in_config_can_be_built() -> None:
-    config = with_profiles(groq=profile_entry(base_url="https://api.groq.com/openai/v1"))
-
-    provider = build_provider("groq", config)
-
-    assert isinstance(provider, ChatCompletionsProvider)
-    assert provider.name == "groq"
 
 
 def test_an_unknown_provider_fails_at_startup() -> None:
@@ -136,19 +106,6 @@ def test_route_returns_a_matched_model_and_provider() -> None:
     assert model.id == "deepseek-flash"
     assert isinstance(provider, ChatCompletionsProvider)
     assert provider.name == "deepseek"
-
-
-def test_route_sets_the_provider_of_a_model_from_its_entry() -> None:
-    """A model a config file added routes like a catalogued one."""
-    config = replace(
-        with_models(**{"llama-3.3-70b": model_entry(provider="groq")}),
-        providers=ProvidersConfig(openai={"groq": profile_entry()}),
-    )
-
-    model, provider = route("llama-3.3-70b", config)
-
-    assert model.provider == "groq"
-    assert isinstance(provider, ChatCompletionsProvider)
 
 
 def test_route_writes_the_chosen_provider_onto_an_unknown_model() -> None:

@@ -10,7 +10,7 @@ the repository root, after `uv sync`.
 | [quickstart.py](quickstart.py) | An agent in a few lines, with the CLI's system prompt: stream the answer, watch the tool calls | yes |
 | [custom_tool.py](custom_tool.py) | A new tool as one decorated function, beside a few built-ins | yes |
 | [hooks.py](hooks.py) | All four hooks: a tool budget, redaction, request logging, a self-check turn | yes |
-| [trajectories.py](trajectories.py) | A saved session's requests as JSONL, for analysis or training | **no** |
+| [trajectories.py](trajectories.py) | A saved session's requests as JSONL, for analysis or training — `--wire` as the endpoint received them | **no** |
 
 ```bash
 uv run python examples/scripted.py                    # no key: try this first

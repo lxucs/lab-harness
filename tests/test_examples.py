@@ -23,18 +23,14 @@ from lab_harness.llm.fake import (
     text_response,
     tool_call_response,
 )
+from lab_harness.llm.providers import ChatCompletionsProvider, route
 from lab_harness.llm.serde import to_dict
 from lab_harness.llm.types import Message, TextBlock, ToolCallBlock, ToolResultMessage, UserMessage
 from lab_harness.session import start_recorder
 from lab_harness.tools import ToolContext, default_registry
+from tests.http_fakes import TEST_KEY, Scripted
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
-
-
-@pytest.fixture(autouse=True)
-def _in_tmp_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Examples work on the current directory, as they do when run from a shell."""
-    monkeypatch.chdir(tmp_path)
 
 
 def load(name: str) -> ModuleType:
@@ -205,6 +201,53 @@ async def test_trajectories_exports_each_finished_request_as_sent(
     exported = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     sent = [json.loads(json.dumps(to_dict(request))) for request in provider.requests]
     assert [line["request"] for line in exported] == sent[:2]
+
+
+def chat_sse(*deltas: dict[str, object], finish: str) -> str:
+    """A Chat Completions stream: one frame per delta, then the finish."""
+    chunks = [{"choices": [{"index": 0, "delta": d, "finish_reason": None}]} for d in deltas]
+    chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+    return "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks) + "data: [DONE]\n\n"
+
+
+async def test_trajectories_wire_is_the_bodies_the_endpoint_received(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real adapter over a canned transport, recorded, then rebuilt from the file."""
+    config = load_config()
+    model, _ = route("deepseek-flash", config)
+    profile = config.providers.openai[model.provider]
+    monkeypatch.setenv(profile.api_key_env, TEST_KEY)
+    call_ls = {"index": 0, "id": "c1", "function": {"name": "ls", "arguments": "{}"}}
+    endpoint = Scripted(
+        chat_sse(
+            {"reasoning_content": "Look first."}, {"tool_calls": [call_ls]}, finish="tool_calls"
+        ),
+        chat_sse({"reasoning_content": "Seen."}, {"content": "Done."}, finish="stop"),
+    )
+    provider = ChatCompletionsProvider(profile, model.provider, client=endpoint.client())
+    tools = default_registry().select(["ls"])
+    agent = Agent(
+        model=model, provider=provider, system_prompt="Be brief.", tools=tools, config=config
+    )
+    recorder = start_recorder(
+        cwd=".",
+        model=model,
+        system_prompt="Be brief.",
+        tools=declarations_for(tools),
+        config=config,
+        restored=0,
+    )
+    agent.subscribe(recorder)
+    await agent.prompt("List the files.")
+    recorder.close()
+
+    assert load("trajectories").main(None, wire=True) == 0
+    exported = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [line["request"] for line in exported] == endpoint.payloads
+    first_reply = exported[0]["reply"]
+    assert first_reply[0]["reasoning_content"] == "Look first."
+    assert endpoint.payloads[1]["messages"][2:3] == first_reply
 
 
 def test_trajectories_says_so_when_there_is_no_session(

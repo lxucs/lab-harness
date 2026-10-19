@@ -37,6 +37,21 @@ class Recorder:
         return httpx.AsyncClient(transport=httpx.MockTransport(self))
 
 
+class Scripted:
+    """Serves one canned SSE body per request, in order, and keeps every payload."""
+
+    def __init__(self, *bodies: str) -> None:
+        self.bodies = list(bodies)
+        self.payloads: list[dict[str, Any]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.payloads.append(json.loads(request.content))
+        return httpx.Response(200, text=self.bodies[len(self.payloads) - 1])
+
+    def client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self))
+
+
 class Exploding:
     """A transport that fails the way a dropped connection does."""
 

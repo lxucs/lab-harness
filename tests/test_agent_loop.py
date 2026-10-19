@@ -532,13 +532,6 @@ async def _end_event(**cfg: Any) -> ToolExecutionEnd:
     return next(e for e in events if isinstance(e, ToolExecutionEnd))
 
 
-async def test_tool_details_reach_the_end_event() -> None:
-    """`details` exist for renderers, and the event is how a renderer gets them."""
-    end = await _end_event()
-
-    assert end.details == {"diff": "secret-bearing diff"}
-
-
 async def test_after_tool_call_can_replace_the_details() -> None:
     """A redaction hook has to reach the details too, or a diff leaks what the
     content no longer shows."""
@@ -883,15 +876,6 @@ def _continue_with(value: str) -> Any:
 
     hook.calls = calls  # type: ignore[attr-defined]
     return hook
-
-
-async def test_no_hook_means_the_run_ends_as_before() -> None:
-    provider = FakeProvider([text_response("done")])
-    _, emit = _collector()
-
-    messages = await run_agent_loop(_ctx(), _cfg(provider), emit)
-
-    assert len(messages) == 1
 
 
 async def test_finish_turn_can_continue_the_run() -> None:

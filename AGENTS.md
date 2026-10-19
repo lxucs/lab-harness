@@ -72,23 +72,27 @@ configuration conventions, are in
 
 **The automated suite must never touch the network.** This is enforced:
 `tests/conftest.py` installs autouse fixtures that block outbound socket
-connections, redirect `LAB_HARNESS_HOME` to a temp directory, and unset every
-credential variable — so a test reaching a real API fails loudly rather than
-going flaky, and a developer who exports a key locally gets the same results as
-CI, which exports none.
+connections, redirect `LAB_HARNESS_HOME` to a temp directory, start each test
+in an empty working directory, and unset every credential variable — so a test
+reaching a real API fails loudly rather than going flaky, and a developer with
+a key exported or a `.lab-harness/config.local.toml` in this repository gets the
+same results as CI, which has neither.
 
 - Loop and agent tests get their model responses from
   `lab_harness.llm.fake.FakeProvider`, fed scripted stream events. Never call a
   real provider.
 - The HTTP provider adapters (`chat_completions.py`, `responses.py`) and the web
   tools are tested through `httpx.MockTransport`, which exercises the real
-  request-building and SSE-parsing code against canned bytes.
+  request-building and SSE-parsing code against canned bytes. The Anthropic
+  adapter is tested against a fake SDK client, and through the real SDK over
+  `httpx2.MockTransport` where what it posts is the point.
 - `ddgs` is tested through an injected callable standing in for the package.
 - Search backends are tested at the tool layer by registering a fake in
   `BACKENDS` under a config name, so the real selection path runs.
 - Filesystem tools are tested against pytest's `tmp_path`.
-- The scripts in `examples/` are run by `tests/test_examples.py`, with each
-  one's `route` swapped for a `FakeProvider`. An example is documentation that
+- The scripts in `examples/` are run by `tests/test_examples.py` against a
+  `FakeProvider` — or, where what one shows is the wire, a real adapter over a
+  canned transport. An example is documentation that
   executes: change one and its test together, and keep each a single file a
   reader can follow top to bottom.
 
