@@ -104,6 +104,39 @@ def frame(line: str) -> dict[str, Any] | Done | None:
     return payload if isinstance(payload, dict) else None
 
 
+class Frames:
+    """Parses a 2xx body line by line, telling a stream from a body that is not.
+
+    A gateway can refuse a request with a 200: one asked for a model it does
+    not serve answers `{"code": 1005, "msg": "invalid model"}`. No line of that
+    is a frame, so read as a stream it says nothing, and the turn would end as
+    a clean `stop` with no answer and no error. So lines are kept until the
+    first frame arrives, and a body that never sends one is reported the way an
+    error status is.
+    """
+
+    def __init__(self) -> None:
+        self._framed = False
+        self._unframed: list[str] = []
+
+    def parse(self, line: str) -> dict[str, Any] | Done | None:
+        """`frame(line)`, noting whether the body has shown itself a stream."""
+        payload = frame(line)
+        if payload is not None:
+            self._framed = True
+            self._unframed.clear()
+        elif not self._framed:
+            self._unframed.append(line)
+        return payload
+
+    def not_a_stream(self, response: httpx.Response) -> str | None:
+        """The error for a body that ended without one frame, else None."""
+        if self._framed:
+            return None
+        body = "\n".join(self._unframed).encode()
+        return f"{describe(response, body)} (expected an event stream)"
+
+
 def describe(response: httpx.Response, body: bytes) -> str:
     """A message the user can act on, without leaking the request.
 

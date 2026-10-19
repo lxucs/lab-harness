@@ -354,7 +354,7 @@ class ModelConfig:
     listed gets — so a field here has a type and no default.
     """
 
-    #: Display name. Empty shows the id.
+    #: Display name. Empty shows the id. Never sent: the API gets the key.
     name: str
     #: "anthropic", or the name of a `providers.openai` profile. This is what
     #: routes `--model <id>` with no `--provider`; empty leaves it to

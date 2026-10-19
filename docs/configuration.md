@@ -305,7 +305,7 @@ provider = "my-gateway"
 
 | Key | Default | Meaning |
 |---|---|---|
-| `name` | the id | Display name |
+| `name` | the id | Display name only — the table's key is the id sent to the API |
 | `provider` | `""` | Who serves it; empty leaves it to `agent.provider` |
 | `context_window` | `200000` | Tokens the model reads; the terminal measures context against it |
 | `max_tokens` | `8192` | Output ceiling sent with every request |

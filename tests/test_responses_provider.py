@@ -672,6 +672,16 @@ async def test_http_errors_become_stream_errors(status: int) -> None:
     assert "nope" in (final(events).error_message or "")
 
 
+async def test_a_200_that_is_not_a_stream_is_an_error() -> None:
+    """A gateway can refuse with a 200; read as a stream, the body says nothing."""
+    recorder = Recorder(json.dumps({"code": 1005, "msg": "invalid model"}))
+
+    events = await collect(provider(recorder))
+
+    assert isinstance(events[-1], StreamError)
+    assert "invalid model" in (final(events).error_message or "")
+
+
 async def test_an_error_event_mid_stream_ends_the_turn() -> None:
     """A Responses stream can start 200 OK and then fail."""
     recorder = Recorder(

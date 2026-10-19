@@ -830,6 +830,28 @@ async def test_an_html_error_body_degrades_to_something_readable() -> None:
     assert len(message) < 300, "an HTML page must not be pasted into the transcript whole"
 
 
+async def test_a_200_that_is_not_a_stream_is_an_error() -> None:
+    """A gateway can refuse with a 200 — this body is one rejecting a model id.
+
+    Read as a stream, it holds no frames, so the turn would end as a clean
+    `stop` with nothing said: no answer, and no error to say why.
+    """
+    recorder = Recorder(json.dumps({"code": 1005, "msg": "invalid model"}))
+
+    events = await collect(provider(recorder))
+
+    assert isinstance(events[-1], StreamError)
+    assert final(events).stop_reason == "error"
+    assert "invalid model" in (final(events).error_message or "")
+
+
+async def test_an_empty_200_is_an_error() -> None:
+    events = await collect(provider(Recorder("")))
+
+    assert isinstance(events[-1], StreamError)
+    assert "200" in (final(events).error_message or "")
+
+
 async def test_a_transport_failure_becomes_a_stream_error() -> None:
     events = await collect(provider(Exploding()))
 

@@ -144,7 +144,7 @@ preserve_thinking = true
 # nowhere gets. Such an id is assumed current, so it reasons, and its limits
 # are floors across current models, so guessing cannot exceed what one accepts.
 #
-# Display name. Empty shows the id.
+# Display name. Empty shows the model id.
 name = ""
 # "anthropic", or an endpoint above. It is what routes `--model <id>` with no
 # --provider flag; empty leaves it to agent.provider. Pointing a model at a
@@ -174,7 +174,7 @@ cache_write = 0.0
 # 2026-10), with cache_write at the 5-minute-TTL premium, 1.25x input. Bedrock
 # and Vertex bill separately.
 
-[models.claude-fable-5]
+[models.claude-fable-5]  # claude-fable-5 is the model id the api will be sending
 name = "Claude Fable 5"
 provider = "anthropic"
 context_window = 1_000_000

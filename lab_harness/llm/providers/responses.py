@@ -140,13 +140,14 @@ class ResponsesProvider:
                     )
                     return
                 yield StreamStart()
+                frames = _http.Frames()
                 async for line in response.aiter_lines():
                     if _http.aborted(options):
                         yield _http.failure(
                             model, self.name, _http.ABORTED_NOTICE, reason="aborted"
                         )
                         return
-                    payload = _http.frame(line)
+                    payload = frames.parse(line)
                     if payload is None:
                         continue
                     if isinstance(payload, _http.Done):
@@ -156,6 +157,9 @@ class ResponsesProvider:
                         return
                     for translated in accumulator.feed(payload):
                         yield translated
+                if (error := frames.not_a_stream(response)) is not None:
+                    yield _http.failure(model, self.name, error)
+                    return
         except Exception as exc:
             yield _http.failure(model, self.name, f"{type(exc).__name__}: {exc}")
             return

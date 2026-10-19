@@ -25,6 +25,11 @@ start → {text,thinking,toolcall}_{start,delta,end}* → done | error
 - `start` always comes first on a successful stream.
 - A stream may terminate directly with `error` if request setup fails.
 - Updates and `done` never appear before `start`.
+- A 2xx body that never sends a frame ends in `error`, not an empty `done`.
+  Gateways refuse with a 200 and a JSON body — `{"code": 1005, "msg":
+  "invalid model"}` from one asked for an id it does not serve — which, read
+  as a stream, is a turn that said nothing. Both HTTP adapters read the body
+  through `_http.Frames`, which reports it like an error status.
 
 ## Core types
 
@@ -384,8 +389,10 @@ setting `replay_reasoning_field` — see [Profiles](#profiles).
    Name it for the protocol, not the vendor — the mapping is not one-to-one.
 2. Translate core `Message` objects to the wire format, and the stream back to
    `StreamEvent`s. Reuse `_http.py` for credentials, the client, SSE framing
-   and failures. Log the request with `_trace.request_shape`, and the
-   response's id and stop reason as the vendor sent them, at `debug`.
+   and failures; read the body through `_http.Frames`, which turns a 200 that
+   never sends a frame — a gateway refusing a model id, say — into an error
+   rather than an empty answer. Log the request with `_trace.request_shape`,
+   and the response's id and stop reason as the vendor sent them, at `debug`.
 3. Map failures to an `error` event through `_http.failure`. Never raise.
 4. Decide the reasoning regime from the table above, and say so in the module
    docstring. Replaying something the server cannot decrypt is a 400; dropping
