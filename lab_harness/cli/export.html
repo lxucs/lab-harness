@@ -238,7 +238,7 @@ main { max-width: 880px; min-width: 0; }
 
 /* --- overview ----------------------------------------------------------- */
 
-.overview { margin-bottom: 2rem; }
+.overview { margin-bottom: 2rem; overflow-wrap: anywhere; }
 .overview h1 {
   font-size: 1.45rem;
   letter-spacing: -0.02em;
@@ -299,7 +299,7 @@ main { max-width: 880px; min-width: 0; }
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .chip.quiet { background: var(--code); color: var(--muted); font-weight: 500; }
 .chip.warn { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
@@ -317,7 +317,13 @@ details.context > .inside { padding: 0 0.7rem 0.7rem; }
 .decl { border-top: 1px solid var(--border); padding: 0.55rem 0; }
 .decl:first-child { border-top: 0; }
 .decl-name { font-family: var(--mono); font-weight: 600; font-size: 0.84rem; }
-.decl-text { color: var(--muted); font-size: 0.85rem; white-space: pre-wrap; margin: 0.2rem 0 0.4rem; }
+.decl-text {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.2rem 0 0.4rem;
+}
 .note {
   font-size: 0.86rem;
   color: var(--warn);
@@ -341,8 +347,8 @@ details.context > .inside { padding: 0 0.7rem 0.7rem; }
   font-size: 0.78rem;
   color: var(--faint);
   margin-bottom: 0.3rem;
+  overflow-wrap: anywhere;
 }
-.msg-head > * { white-space: nowrap; }
 .who { font-weight: 650; color: var(--muted); font-size: 0.8rem; }
 .msg.assistant .who::before { content: "⏺ "; color: var(--accent); }
 .msg-head .usage { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -402,6 +408,8 @@ details.thinking > .inside {
 
 /* --- code blocks -------------------------------------------------------- */
 
+/* Long lines wrap rather than scroll sideways: a command reads whole, a
+   search hit is never off to the right, and print shows every character. */
 .pre { position: relative; }
 pre {
   margin: 0;
@@ -411,7 +419,8 @@ pre {
   padding: 0.7rem 0.9rem;
   overflow: auto;
   line-height: 1.5;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   tab-size: 4;
 }
 pre.output, pre.long { max-height: 26rem; }
@@ -455,7 +464,7 @@ details.tool-call > summary::before { grid-row: 1; }
 details.tool-call.ok .status { background: var(--ok); }
 details.tool-call.error .status { background: var(--error); }
 details.tool-call.pending .status { background: var(--warn); }
-.tool-name { font-family: var(--mono); font-weight: 650; font-size: 0.84rem; }
+.tool-name { font-family: var(--mono); font-weight: 650; font-size: 0.84rem; overflow-wrap: anywhere; }
 .headline {
   color: var(--muted);
   overflow: hidden;
@@ -474,7 +483,14 @@ details.tool-call.pending .status { background: var(--warn); }
 }
 details.tool-call.error .preview { color: var(--error); }
 details.tool-call[open] .preview { display: none; }
-details.tool-call > .inside { padding: 0 0.75rem 0.75rem; display: grid; gap: 0.6rem; }
+/* minmax(0, …): an implicit column would size to its widest line, carrying
+   the input and output past the card's edge. */
+details.tool-call > .inside {
+  padding: 0 0.75rem 0.75rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.6rem;
+}
 .section-label {
   font-size: 0.7rem;
   text-transform: uppercase;

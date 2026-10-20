@@ -18,6 +18,15 @@ export ANTHROPIC_API_KEY=sk-...
 uv run python examples/quickstart.py "Where does the agent loop stop?"
 ```
 
+`trajectories.py` needs no key either — it only reads the sessions saved for
+the current directory — but recording one does:
+
+```bash
+uv run lab-harness -p "What does this project do?"            # record a session
+uv run python examples/trajectories.py > requests.jsonl       # the latest one, a line per request
+uv run python examples/trajectories.py <session-id> --wire    # a given one, as the endpoint received it
+```
+
 The Python examples take their model from config — `$LAB_HARNESS_MODEL`, else
 `agent.model` — so one script runs against any configured vendor, given its
 key:
