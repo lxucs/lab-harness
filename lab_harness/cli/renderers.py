@@ -93,6 +93,9 @@ _BULLET = "⏺"
 _RESULT = "⎿"
 _THINKING = "✻"
 _SPINNER = ("·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢")
+#: The input's. The prompt draws it — see terminal.py — and so does a replayed
+#: question, so a restored line reads as the prompt that asked it.
+GLYPH = "❯ "  # noqa: RUF001 — a deliberate prompt glyph, not a stray quote
 #: Keys the terminal binds; named here because this is where they are shown.
 _CANCEL_HINT = "Ctrl-C to cancel"
 _EXPAND_HINT = "Ctrl-O to expand"
@@ -301,10 +304,8 @@ class EventRenderer:
         for message in messages:
             if isinstance(message, UserMessage):
                 # The input glyph, so a replayed question reads as the prompt
-                # that asked it. Same deliberate character as terminal.py's.
-                self._print(
-                    Text.assemble(("› ", self._theme.muted), (_text(message.content), ""))  # noqa: RUF001
-                )
+                # that asked it — the same constant the prompt draws with.
+                self._print(Text.assemble((GLYPH, self._theme.muted), (_text(message.content), "")))
             elif isinstance(message, AssistantMessage):
                 self._settle(
                     [b.thinking for b in message.content if isinstance(b, ThinkingBlock)],
@@ -511,14 +512,14 @@ class EventRenderer:
         return rows
 
     def _more(self, count: int) -> Text:
-        return Text(f"{_INDENT}… {count} more line(s)", style=self._theme.muted)
+        return Text(f"{_INDENT}… +{count} lines", style=self._theme.muted)
 
     def _call_line(self, name: str, call: str, bullet: str, *, lit: bool = True) -> Text:
         muted = self._theme.muted
         return Text.assemble(
             (_BULLET if lit else " ", bullet),
             " ",
-            (name, self._theme.tool),
+            (display_name(name), self._theme.tool),
             ("(", muted),
             (call, muted),
             (")", muted),
@@ -639,6 +640,17 @@ class _Tail:
         for line in lines[-max(limit, 1) :]:
             yield from line
             yield Segment.line()
+
+
+def display_name(tool_name: str) -> str:
+    """A tool's name as it is drawn: `web_search` as `WebSearch`, the way Claude
+    Code labels a call.
+
+    Only what the eye sees. The name the model sends, and the one the
+    transcript records, is unchanged — a replay and a live run must label the
+    same call the same way, and both go through here.
+    """
+    return "".join(part[:1].upper() + part[1:] for part in tool_name.split("_"))
 
 
 def headline(tool_name: str, arguments: dict[str, object]) -> str:

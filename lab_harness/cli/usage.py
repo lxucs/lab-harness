@@ -89,6 +89,12 @@ def cost_of(usage: Usage, price: PricingConfig) -> float:
     ) / _PER_MILLION
 
 
+def context_share(summary: UsageSummary, model: Model) -> float:
+    """Share of the window the latest request filled — what the next one
+    resends. Zero before any request reported usage."""
+    return summary.context_tokens / model.context_window
+
+
 def prompt_tokens(usage: Usage) -> int:
     """Everything the provider read, cached or not."""
     return usage.input + usage.cache_read + usage.cache_write

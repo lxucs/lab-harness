@@ -10,7 +10,10 @@ listed, completed and run with nothing else to change.
 command it could begin, by name or alias, each beside its description, with
 the first highlighted. Up and Down move the highlight; Tab puts the
 highlighted command in the input, ready for arguments; Enter runs it, so `/st`
-and Enter is `/status`. Moving never edits the input — only Tab does.
+and Enter is `/status`. Moving never edits the input — only Tab does. Esc
+closes the list, which stays closed until the input changes again. Past
+`_MENU_ROWS` matches the list scrolls, with a dim last row saying how many it
+is not showing.
 
 **The list opens above the input**, which moves down to make room and back
 up when it closes. On the bottom row of the terminal the room comes from
@@ -121,6 +124,11 @@ class Commands:
         found = [c for c in self._commands if any(n.startswith(typed) for n in c.names)]
         return sorted(found, key=lambda command: typed not in command.names)
 
+    def help_lines(self) -> list[str]:
+        """`label  description` lines, the names aligned, as `/help` prints them."""
+        width = max((len(command.label) for command in self._commands), default=0) + 2
+        return [f"{command.label.ljust(width)}{command.description}" for command in self]
+
     def parse(self, line: str) -> tuple[Command, str] | None:
         """The command `line` runs, and the arguments it is given.
 
@@ -152,10 +160,18 @@ class CommandMenu:
         self._offered = False
         #: Index, among the matching commands, of the highlighted one.
         self._highlight = 0
+        #: Esc has closed the list, until the input changes again.
+        self._dismissed = False
+        #: Whether the list is up. The terminal needs it too, to stand its own
+        #: Alt-Enter down while Esc is the key that closes the list.
+        self.listing = Condition(lambda: bool(self.matching()))
 
     def matching(self) -> list[Command]:
-        """The commands the input could be the start of, if they are offered."""
-        if not self._offered or self._session is None:
+        """The commands the input could be the start of, if they are offered.
+
+        Empty once Esc has closed the list, which is what takes it down.
+        """
+        if not self._offered or self._dismissed or self._session is None:
             return []
         return self._commands.matching(self._session.default_buffer.text)
 
@@ -166,10 +182,14 @@ class CommandMenu:
         shown = matches[top : top + _MENU_ROWS]
         return [(command, top + i == self._highlight) for i, command in enumerate(shown)]
 
+    def more(self) -> int:
+        """How many matches the list leaves out, above or below the rows shown."""
+        return len(self.matching()) - len(self.rows())
+
     @contextmanager
     def offered(self) -> Iterator[None]:
         """Offer the commands at the prompt run inside this."""
-        self._offered, self._highlight = True, 0
+        self._offered, self._highlight, self._dismissed = True, 0, False
         try:
             yield
         finally:
@@ -179,18 +199,19 @@ class CommandMenu:
         """Draw the list above `session`'s input, and give it the keys."""
         self._session = session
         session.default_buffer.on_text_changed += self._text_changed
-        listing = Condition(lambda: bool(self.matching()))
         layout = session.app.layout
         layout.container = HSplit(
             [
                 ConditionalContainer(
                     Window(
                         FormattedTextControl(self._fragments),
-                        height=lambda: Dimension.exact(len(self.rows())),
+                        height=lambda: Dimension.exact(
+                            len(self.rows()) + (1 if self.more() else 0)
+                        ),
                         dont_extend_height=True,
                         wrap_lines=False,
                     ),
-                    filter=listing & ~is_done,
+                    filter=self.listing & ~is_done,
                 ),
                 layout.container,
             ]
@@ -199,12 +220,14 @@ class CommandMenu:
         # prompt_toolkit's Up and Down would walk the history, and its Enter
         # would submit what is typed.
         session.key_bindings = merge_key_bindings(
-            [session.key_bindings or KeyBindings(), self._bindings(listing)]
+            [session.key_bindings or KeyBindings(), self._bindings()]
         )
 
     def _text_changed(self, buffer: Buffer) -> None:
-        # The matches are new, so the first is highlighted again.
+        # The matches are new: the first is highlighted again, and the list
+        # comes back if Esc had closed it.
         self._highlight = 0
+        self._dismissed = False
 
     def _fragments(self) -> StyleAndTextTuples:
         rows = self.rows()
@@ -218,28 +241,36 @@ class CommandMenu:
                 (_CURRENT if current else "", command.label.ljust(width)),
                 (_CURRENT if current else _DESCRIPTION, command.description),
             ]
+        if more := self.more():
+            if fragments:
+                fragments.append(("", "\n"))
+            fragments += [("", " " * self._indent), (_DESCRIPTION, f"… {more} more")]
         return fragments
 
-    def _bindings(self, listing: Condition) -> KeyBindings:
+    def _bindings(self) -> KeyBindings:
         bindings = KeyBindings()
 
-        @bindings.add("down", filter=listing)
+        @bindings.add("down", filter=self.listing)
         def _down(event: KeyPressEvent) -> None:
             self._move(1)
 
-        @bindings.add("up", filter=listing)
+        @bindings.add("up", filter=self.listing)
         def _up(event: KeyPressEvent) -> None:
             self._move(-1)
 
-        @bindings.add("tab", filter=listing)
+        @bindings.add("tab", filter=self.listing)
         def _complete(event: KeyPressEvent) -> None:
             event.current_buffer.document = Document(self._chosen() + " ")
 
-        @bindings.add("enter", filter=listing)
+        @bindings.add("enter", filter=self.listing)
         def _run(event: KeyPressEvent) -> None:
             buffer = event.current_buffer
             buffer.document = Document(self._chosen())
             buffer.validate_and_handle()
+
+        @bindings.add("escape", filter=self.listing)
+        def _dismiss(event: KeyPressEvent) -> None:
+            self._dismissed = True
 
         return bindings
 

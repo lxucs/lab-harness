@@ -583,6 +583,10 @@ class SessionConfig:
     home_env: str = "LAB_HARNESS_HOME"
     #: Subdirectory of `home` holding per-project session directories.
     directory_name: str = "sessions"
+    #: File in `home` keeping the input history, so a later session's Up
+    #: recalls what was typed in an earlier one. Kept in memory when
+    #: `enabled` is false, which is what "nothing is persisted" means.
+    history_file: str = "history"
     #: Write transcripts to disk at all. Off means nothing is persisted.
     enabled: bool = True
     #: Schema version written into each file's header. Readers use it to refuse
@@ -645,6 +649,11 @@ class TerminalConfig:
     #: Print one line of token, cache and cost figures after each run.
     #: `/status` shows the session's totals either way.
     show_usage: bool = True
+    #: Share of the context window at which a run's footer warns and the
+    #: status beside the input turns from dim to warning. Nothing is compacted
+    #: here: the warning is the whole behavior, and it is a share so that a
+    #: model with a window of any size warns at the same point.
+    context_warning: float = 0.85
     #: Label for amounts computed from each model's `price`. Only a label —
     #: nothing is converted, so it has to match the currency the rates are
     #: quoted in.

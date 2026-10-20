@@ -19,6 +19,10 @@ uv run lab-harness
 | `/` | List the commands, each with what it does |
 | `/status` | Tokens, cache hits and cost so far |
 | `/effort [LEVEL]` | Show or set how hard the model thinks, e.g. `/effort low`; `/effort default` sends none |
+| `/model [ID]` | Show or switch the model, among the ones this session's provider serves |
+| `/clear` | Forget the conversation; the transcript on disk keeps it |
+| `/help` | Every command, with what it does |
+| `Esc` | Close the command list once it is open |
 | `Ctrl-D` | Exit |
 
 Mutating tools — `bash`, `write`, `edit` — ask before they run, and anything

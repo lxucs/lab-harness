@@ -145,6 +145,11 @@ class Agent:
         elif event.type == "message_update":
             self.state.streaming_message += event.delta
 
+    @property
+    def cwd(self) -> str:
+        """The working directory tools run in — `--cwd`, else the process's."""
+        return self._cwd
+
     # --- running ----------------------------------------------------------
 
     async def prompt(self, message: str | Message) -> list[Message]:

@@ -24,7 +24,7 @@ from lab_harness.agent.types import (
     ToolExecutionStart,
     ToolExecutionUpdate,
 )
-from lab_harness.cli.renderers import EventRenderer, headline
+from lab_harness.cli.renderers import GLYPH, EventRenderer, display_name, headline
 from lab_harness.config import Config, ConfigError, TerminalConfig, ThemeConfig
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import (
@@ -203,7 +203,7 @@ async def test_nothing_is_left_behind_by_the_live_region(tmp_path) -> None:
 
     shown = visible(buffer.getvalue())
     assert shown.count("Looking now") == 1
-    assert shown.count("read(a.txt)") == 1
+    assert shown.count("Read(a.txt)") == 1
     assert "file body" in shown
     assert shown.count("Done") == 1
     assert "Ctrl-C to cancel" not in shown
@@ -240,15 +240,15 @@ async def test_replay_prints_a_saved_history_as_it_happened() -> None:
     renderer.replay(_history())
 
     output = buffer.getvalue()
-    assert "› list the files" in output  # noqa: RUF001 — the input glyph, as typed
+    assert f"{GLYPH}list the files" in output, "the input glyph, as typed"
     assert "✻ Thought" in output, "thinking settles the configured way"
     assert "look first" not in output, "a collapsed replay stays collapsed"
-    assert "ls(.)" in output
+    assert "Ls(.)" in output
     assert "a.py" in output
     assert "two files" in output
     assert "HTTP 500" in output, "an errored turn says what went wrong"
     # The conversation's order, as it happened.
-    assert output.index("list the files") < output.index("ls(.)")
+    assert output.index("list the files") < output.index("Ls(.)")
     assert output.index("a.py") < output.index("two files")
 
 
@@ -301,7 +301,7 @@ async def test_replay_collapses_a_long_tool_result_like_a_live_one() -> None:
     renderer.replay(messages)
 
     assert "line0" in buffer.getvalue()
-    assert "more line(s)" in buffer.getvalue()
+    assert "lines" in buffer.getvalue()
 
 
 # --- thinking -------------------------------------------------------------
@@ -491,10 +491,10 @@ async def test_a_tool_call_shows_its_name_headline_and_result(tmp_path) -> None:
     )
 
     output = buffer.getvalue()
-    assert "⏺ read(a.txt)" in output
+    assert "⏺ Read(a.txt)" in output
     assert "⎿" in output
     assert "the contents" in output
-    assert output.index("read(a.txt)") < output.index("the contents")
+    assert output.index("Read(a.txt)") < output.index("the contents")
 
 
 async def test_long_tool_output_is_collapsed(tmp_path) -> None:
@@ -512,7 +512,7 @@ async def test_long_tool_output_is_collapsed(tmp_path) -> None:
     )
 
     output = buffer.getvalue()
-    assert "more line(s)" in output
+    assert "lines" in output
     assert "line49" not in output
 
 
@@ -553,7 +553,7 @@ async def test_a_running_tool_is_shown_until_it_ends() -> None:
     live = io.StringIO()
     renderer = _renderer(live, terminal=True)
     await renderer(start)
-    assert "bash(make)" in visible(live.getvalue())
+    assert "Bash(make)" in visible(live.getvalue())
     renderer.close()
 
     printed = io.StringIO()
@@ -561,7 +561,7 @@ async def test_a_running_tool_is_shown_until_it_ends() -> None:
     await renderer(start)
     assert "make" not in printed.getvalue(), "nothing settles before the result does"
     await renderer(_end(False))
-    assert "bash(make)" in printed.getvalue()
+    assert "Bash(make)" in printed.getvalue()
 
 
 async def test_a_running_tools_latest_output_is_shown() -> None:
@@ -613,7 +613,7 @@ async def test_an_edit_shows_its_diff_with_line_numbers(tmp_path) -> None:
     )
 
     rows = _rows(buffer.getvalue())
-    start = rows.index("⏺ edit(a.py)")
+    start = rows.index("⏺ Edit(a.py)")
     assert rows[start + 1] == "  ⎿  Replaced 1 occurrence(s) in a.py  +2 -1"
     assert rows[start + 2 : start + 11] == [
         "    2   line2",
@@ -673,7 +673,7 @@ async def test_a_long_diff_is_collapsed() -> None:
     output = buffer.getvalue()
     assert "line4" in output
     assert "line5" not in output
-    assert "… 45 more line(s)" in output
+    assert "… +45 lines" in output
 
 
 async def test_the_file_header_is_not_a_change_but_a_changed_dash_line_is() -> None:
@@ -729,7 +729,7 @@ async def test_approving_a_write_shows_the_content() -> None:
     renderer.show_call("write", {"path": "n.py", "content": "one\ntwo\nthree\n"})
 
     rows = _rows(buffer.getvalue())
-    assert rows[-3:] == ["    1 one", "    2 two", "     … 1 more line(s)"]
+    assert rows[-3:] == ["    1 one", "    2 two", "     … +1 lines"]
 
 
 # --- the run --------------------------------------------------------------
@@ -814,6 +814,12 @@ def test_headline_picks_the_meaningful_argument_per_tool() -> None:
     assert headline("bash", {"command": "ls -la", "timeout_seconds": 5}) == "ls -la"
     assert headline("read", {"path": "a.py", "offset": 3}) == "a.py"
     assert headline("grep", {"pattern": "def foo", "path": "."}) == "def foo"
+
+
+def test_a_tool_is_named_on_screen_the_way_claude_code_names_it() -> None:
+    """The model still sends `web_search`; only the label changes."""
+    assert display_name("read") == "Read"
+    assert display_name("web_search") == "WebSearch"
 
 
 def test_headline_falls_back_to_the_first_argument() -> None:

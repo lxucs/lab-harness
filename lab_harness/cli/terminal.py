@@ -31,9 +31,16 @@ they land above the live region rather than inside it — see `LogStream`.
 a `Commands` registry, which both runs them and lists them above the prompt as
 one is typed — see `commands.py`.
 
-**`/effort` changes the reasoning effort between runs.** It replaces the
-agent's model with one asking for the new level, so the next run's
-`agent_start` carries it and a recorded session opens a new segment there.
+**`/model` and `/effort` change what the next runs ask for.** Each replaces
+the agent's model, so the next run's `agent_start` carries it and a recorded
+session opens a new segment there. `/model` stays inside the provider this
+session started on: the provider is chosen once, when the agent is built.
+
+**A status sits at the right of the input**: the model, and how much of its
+window the last request filled, dim until that passes
+`terminal.context_warning` — which is also when a run's footer says so. Unlike
+a bottom toolbar it is a float over the input's first row, so it costs no row
+and steps aside for what is typed.
 
 **Usage is read from the transcript, not tracked.** The footer after a run
 and `/status` both fold over messages that already carry their `Usage` — see
@@ -49,15 +56,20 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.filters import Filter
+from prompt_toolkit.formatted_text import FormattedText, StyleAndTextTuples
+from prompt_toolkit.history import FileHistory, History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
+from rich.box import ROUNDED
 from rich.console import Console
+from rich.panel import Panel
 from rich.text import Text
 
 from lab_harness.agent import Agent
@@ -70,17 +82,31 @@ from lab_harness.cli.commands import (
     UnknownCommand,
     menu_style,
 )
-from lab_harness.cli.renderers import EventRenderer
-from lab_harness.cli.usage import format_footer, format_status, summarize
-from lab_harness.config import Config, ConfigError
-from lab_harness.llm.types import Message
+from lab_harness.cli.renderers import GLYPH, EventRenderer, display_name
+from lab_harness.cli.usage import (
+    UsageSummary,
+    context_share,
+    format_footer,
+    format_status,
+    summarize,
+)
+from lab_harness.config import Config, ConfigError, lab_harness_home
+from lab_harness.llm.providers import select_provider
+from lab_harness.llm.registry import resolve_model
+from lab_harness.llm.types import Message, Model
 
-_BANNER = "lab-harness — / for commands · Ctrl-C cancels · Ctrl-O toggles thinking"
-_PROMPT = "› "  # noqa: RUF001 — a deliberate prompt glyph, not a stray quote
+#: One line of what the keys do, under the welcome box.
+_TIPS = "/ for commands · Ctrl-C cancels · Ctrl-O toggles thinking"
 #: Style class for the glyph alone. Not `prompt`: prompt_toolkit applies that
 #: class to every prompt message, the approval question included.
 _GLYPH_CLASS = "glyph"
-_PROMPT_MESSAGE = FormattedText([(f"class:{_GLYPH_CLASS}", _PROMPT)])
+_PROMPT_MESSAGE = FormattedText([(f"class:{_GLYPH_CLASS}", GLYPH)])
+#: The status at the right of the input, dim, and warning when the window is
+#: nearly full. Its own classes, and ansi colors rather than the theme's rich
+#: style strings, because prompt_toolkit parses these — see `menu_style`.
+_STATUS = "class:status"
+_STATUS_WARNING = "class:status.warning"
+_STATUS_STYLE = {"status": "fg:ansibrightblack", "status.warning": "fg:ansiyellow"}
 _CANCELLED_NOTICE = "^C  turn cancelled"
 #: What `/effort` takes to send no level, leaving it to the model. Not "none"
 #: or "off": some APIs take those as levels, meaning no thinking.
@@ -106,7 +132,9 @@ class Terminal:
     def __post_init__(self) -> None:
         theme = self.config.terminal.theme
         try:
-            style = Style.from_dict({_GLYPH_CLASS: theme.prompt, **menu_style(theme.prompt)})
+            style = Style.from_dict(
+                {_GLYPH_CLASS: theme.prompt, **menu_style(theme.prompt), **_STATUS_STYLE}
+            )
         except ValueError as exc:
             raise ConfigError(f"terminal.theme.prompt: {exc}") from exc
         #: Every command the prompt runs and lists, in the order it lists them.
@@ -120,16 +148,29 @@ class Terminal:
                     self._set_effort,
                     arguments="[level]",
                 ),
+                Command(
+                    "model",
+                    "Show or set the model, on this session's provider",
+                    self._set_model,
+                    arguments="[id]",
+                ),
+                Command("clear", "Forget the conversation and start over", self._clear),
+                Command("help", "List the commands", self._print_help),
                 Command("exit", "Exit the session", self._exit, aliases=("quit",)),
             ]
         )
+        self._menu = CommandMenu(self.commands, indent=len(GLYPH))
         self._session: PromptSession[str] = PromptSession(
-            key_bindings=_bindings(self._toggle_thinking), style=style
+            key_bindings=_bindings(self._toggle_thinking, self._menu.listing),
+            style=style,
+            history=_history(self.config),
         )
-        self._menu = CommandMenu(self.commands, indent=len(_PROMPT))
         self._menu.attach(self._session)
         self._agent: Agent | None = None
         self._renderer: EventRenderer | None = None
+        #: Share of the context window the last request filled. None until one
+        #: reports, since "0% of the window" before any run would be a lie.
+        self._context_share: float | None = None
 
     def attach(self, agent: Agent) -> None:
         """Bind the agent and start rendering its events."""
@@ -149,14 +190,35 @@ class Terminal:
             raise RuntimeError("Terminal.attach(agent) must be called before run()")
         return self._renderer
 
+    def welcome(self) -> None:
+        """The box at the top of the session: what is running, where, and what
+        the keys do. Printed once, before anything else the session says — so
+        it is a separate call from `run`, which a resumed session reaches only
+        after its restored history has been printed."""
+        model = self.agent.state.model
+        theme = self.config.terminal.theme
+        self.console.print(
+            Panel(
+                Text.assemble(
+                    ("lab-harness", theme.accent),
+                    (f" · {model.id} via {model.provider}\n", ""),
+                    (f"{_short_home(self.agent.cwd)}\n", theme.muted),
+                    (_TIPS, theme.muted),
+                ),
+                box=ROUNDED,
+                border_style=theme.muted,
+                expand=False,
+                padding=(0, 1),
+            )
+        )
+
     async def run(self) -> int:
-        self.console.print(Text(_BANNER, style=self.config.terminal.theme.muted))
         while True:
             try:
                 # patch_stdout keeps rich's output from colliding with the
                 # prompt redraw while a run is streaming.
                 with patch_stdout(raw=True), self._menu.offered():
-                    line = await self._session.prompt_async(_PROMPT_MESSAGE)
+                    line = await self._session.prompt_async(_PROMPT_MESSAGE, rprompt=self._rprompt)
             except KeyboardInterrupt:
                 # Ctrl-C at an idle prompt clears the line rather than exiting.
                 continue
@@ -205,8 +267,10 @@ class Terminal:
                 # A run that ended normally has already closed it. One that
                 # crashed has not, and its region must not outlive it.
                 self.renderer.close()
+        summary = summarize(produced, self.config.models)
+        self._context_share = context_share(summary, self.agent.state.model)
         if self.config.terminal.show_usage:
-            self._print_footer(produced)
+            self._print_footer(summary)
         self.console.print()
 
     def _cancel_turn(self) -> None:
@@ -219,13 +283,33 @@ class Terminal:
         if self._renderer is not None:
             self._renderer.toggle_thinking()
 
-    def _print_footer(self, produced: list[Message]) -> None:
-        summary = summarize(produced, self.config.models)
-        footer = format_footer(
-            summary, self.agent.state.model, self.config.terminal.currency_symbol
-        )
-        if footer is not None:
-            self.console.print(Text(footer, style=self.config.terminal.theme.muted))
+    def _rprompt(self) -> StyleAndTextTuples:
+        """The status at the right of the input: the model, and how much of
+        its window the last request filled."""
+        if self._agent is None:
+            return []
+        share = self._context_share
+        parts = [self._agent.state.model.id]
+        if share is not None:
+            parts.append(f"context {share:.0%}")
+        full = share is not None and share >= self.config.terminal.context_warning
+        return [(_STATUS_WARNING if full else _STATUS, " · ".join(parts))]
+
+    def _print_footer(self, summary: UsageSummary) -> None:
+        model = self.agent.state.model
+        theme = self.config.terminal.theme
+        footer = format_footer(summary, model, self.config.terminal.currency_symbol)
+        if footer is None:
+            return
+        self.console.print(Text(footer, style=theme.muted))
+        share = context_share(summary, model)
+        if share >= self.config.terminal.context_warning:
+            # Nothing compacts here, so say what the next step is instead.
+            self.console.print(
+                Text(
+                    f"context {share:.0%} of the window — /clear to start over", style=theme.warning
+                )
+            )
 
     async def _print_status(self, _arguments: str) -> None:
         # The whole transcript, so a resumed session counts its history too.
@@ -251,12 +335,90 @@ class Terminal:
             )
         self.console.print()
 
+    async def _print_help(self, _arguments: str) -> None:
+        self.console.print(
+            Text("\n".join(self.commands.help_lines()), style=self.config.terminal.theme.muted)
+        )
+        self.console.print()
+
+    async def _clear(self, _arguments: str) -> None:
+        """`/clear` forgets the conversation; the transcript keeps what came before."""
+        self.agent.restore(())
+        self._context_share = None
+        self.console.print(
+            Text(
+                "Conversation cleared; the transcript keeps what came before.",
+                style=self.config.terminal.theme.muted,
+            )
+        )
+        self.console.print()
+
+    async def _set_model(self, wanted: str) -> None:
+        """`/model` shows the model; `/model ID` switches to one this session's
+        provider serves, since the provider is chosen when the agent is built."""
+        model = self.agent.state.model
+        theme = self.config.terminal.theme
+        if not wanted:
+            self._print_models(model)
+            return
+        if wanted not in self.config.models:
+            self.console.print(
+                Text(f"{wanted} is not a configured model; /model lists them", style=theme.warning)
+            )
+            self.console.print()
+            return
+        served = select_provider(wanted, self.config)
+        if served != model.provider:
+            self.console.print(
+                Text(
+                    f"{wanted} is served by {served}, but this session is on {model.provider}"
+                    " — start a new one with --model",
+                    style=theme.warning,
+                )
+            )
+            self.console.print()
+            return
+        # The session's provider, not the catalog's: --provider may have
+        # pointed this id somewhere else when the agent was built.
+        self.agent.state.model = replace(
+            resolve_model(wanted, self.config), provider=model.provider
+        )
+        self.console.print(self._model_line(self.agent.state.model))
+        self.console.print()
+
+    def _print_models(self, model: Model) -> None:
+        """`/model` with no argument: what is in use, and what it could become."""
+        theme = self.config.terminal.theme
+        self.console.print(self._model_line(model))
+        others = sorted(
+            id
+            for id, entry in self.config.models.items()
+            if id != model.id and entry.provider == model.provider
+        )
+        if others:
+            self.console.print(
+                Text(f"others on {model.provider}: {', '.join(others)}", style=theme.muted)
+            )
+        elsewhere = sum(
+            1 for entry in self.config.models.values() if entry.provider != model.provider
+        )
+        if elsewhere:
+            self.console.print(
+                Text(f"{elsewhere} on other providers — --model ID to use one", style=theme.muted)
+            )
+        self.console.print()
+
+    def _model_line(self, model: Model) -> Text:
+        return Text(
+            f"model: {model.id} via {model.provider}", style=self.config.terminal.theme.muted
+        )
+
     async def _exit(self, _arguments: str) -> None:
         raise EndSession
 
     async def ask_approval(self, tool_name: str, arguments: dict[str, object]) -> str:
         """Prompt for tool approval. Anything but an explicit yes denies."""
-        question = f"Allow {tool_name}? [y]es / [n]o / [a]lways "
+        question = f"Allow {display_name(tool_name)}? [y]es / [n]o / [a]lways "
         with self._renderer.suspended() if self._renderer is not None else _nothing():
             if self._renderer is not None:
                 self._renderer.show_call(tool_name, arguments)
@@ -291,12 +453,17 @@ class LogStream:
         """Nothing to flush: each record is printed as it is written."""
 
 
-def _bindings(toggle_thinking: Callable[[], object]) -> KeyBindings:
+def _bindings(toggle_thinking: Callable[[], object], listing: Filter) -> KeyBindings:
     bindings = KeyBindings()
 
-    @bindings.add("escape", "enter")
+    @bindings.add("escape", "enter", filter=~listing)
     def _newline(event: object) -> None:
-        """Alt-Enter inserts a newline instead of submitting."""
+        """Alt-Enter inserts a newline instead of submitting.
+
+        Off while the command list is up, because there Esc alone closes it:
+        with this one still active, prompt_toolkit would hold the Escape and
+        wait for the rest of the sequence.
+        """
         event.current_buffer.insert_text("\n")  # type: ignore[attr-defined]
 
     @bindings.add("c-o")
@@ -307,6 +474,26 @@ def _bindings(toggle_thinking: Callable[[], object]) -> KeyBindings:
         run_in_terminal(toggle_thinking)
 
     return bindings
+
+
+def _history(config: Config) -> History:
+    """Where typed lines are kept, so Up recalls them in a later session.
+
+    A file under the session home, which nothing has created yet on a first
+    run — hence the directory here. In memory when the session config says
+    nothing is persisted.
+    """
+    if not config.session.enabled:
+        return InMemoryHistory()
+    path = lab_harness_home(config.session) / config.session.history_file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return FileHistory(str(path))
+
+
+def _short_home(path: str) -> str:
+    """`~/gitrepo/harness` rather than the whole path. Display only."""
+    home = str(Path.home())
+    return path.replace(home, "~", 1) if path.startswith(home) else path
 
 
 @contextmanager

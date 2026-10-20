@@ -140,6 +140,7 @@ markdown = true         # render assistant text as markdown
 thinking = "collapse"   # reasoning once its message ends: "full" | "collapse" | "hidden"
 thinking_preview_lines = 6  # lines of reasoning shown while it streams, when collapsing
 show_usage = true       # token, cache and cost line after each run
+context_warning = 0.85  # window share at which that line warns, and the status turns
 currency_symbol = "$"   # label for costs computed from model prices
 
 [terminal.theme]        # rich style strings, by role; see "The terminal" below
@@ -148,7 +149,8 @@ prompt = "bold #d77757"
 
 [session]
 home = "~/.lab-harness" # root for state; $LAB_HARNESS_HOME overrides
-enabled = true          # write transcripts at all
+history_file = "history" # typed lines, so a later session's Up recalls them
+enabled = true          # write transcripts at all; off means nothing persisted
 version = 4             # transcript schema version
 
 # Every LLM setting — [providers.anthropic], [providers.openai.<name>] and
@@ -465,7 +467,7 @@ a color name or hex code, plus any of `bold`, `dim`, `italic`, `underline`:
 ```toml
 [terminal.theme]
 accent = "#d77757"        # the spinner — Claude Code's orange
-prompt = "bold #d77757"   # the › glyph
+prompt = "bold #d77757"   # the ❯ glyph
 muted = "dim"             # tool arguments and output, notices, the usage line
 thinking = "italic dim"   # reasoning, streamed or expanded
 tool = "bold"             # the tool's name in a call line

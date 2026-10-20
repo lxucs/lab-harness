@@ -46,26 +46,37 @@ answer alone. Diagnostics follow the same rule — see
 prompt_toolkit handles input: history, multi-line entry, and key bindings. rich
 handles output: streaming text, markdown with highlighted code, and diffs.
 
+A session opens with a box saying what is running and where, before anything
+else it has to say:
+
+```
+╭───────────────────────────────────────────────────────────╮
+│ lab-harness · claude-sonnet-5 via anthropic               │
+│ ~/gitrepo/harness                                         │
+│ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking │
+╰───────────────────────────────────────────────────────────╯
+```
+
 Output is **inline** — it lands in real terminal scrollback rather than being
 trapped inside a full-screen app, so scrolling back through a long session works
 the way it does with any other command.
 
 ```
-› why does the retry test fail?
+❯ why does the retry test fail?
 
 ⏺ I'll read the test first.
 
-⏺ read(tests/test_http.py)
+⏺ Read(tests/test_http.py)
   ⎿  1  """Retries against a fake transport."""
      2
      3  import httpx
-     … 38 more line(s)
+     … +38 lines
 
 ✻ Thought for 4s · Ctrl-O to expand
 
 ⏺ The backoff cap is applied after the jitter. Moving it.
 
-⏺ edit(lab_harness/llm/providers/_http.py)
+⏺ Edit(lab_harness/llm/providers/_http.py)
   ⎿  Replaced 1 occurrence(s) in lab_harness/llm/providers/_http.py  +2 -1
     41       for attempt in range(retries):
     42 -         delay = jitter(base * 2**attempt)
@@ -78,8 +89,14 @@ the way it does with any other command.
 
 The layout follows Claude Code's. A `⏺` opens each message and each tool call;
 a call's bullet turns green when it succeeds and red when it fails, and its
-output hangs under `⎿`, collapsed past `terminal.max_result_lines`. Colors
-come from [`[terminal.theme]`](configuration.md#the-terminal).
+output hangs under `⎿`, collapsed past `terminal.max_result_lines` into
+`… +N lines`. Colors come from
+[`[terminal.theme]`](configuration.md#the-terminal).
+
+**A tool is named the way Claude Code names it** — `Read(path)`,
+`WebSearch(query)` — while the name the model calls, and the one the transcript
+records, stays `read` and `web_search`. Only the label changes, so a live call
+and the same call replayed after `--resume` read identically.
 
 **Edits show their diff**, as Claude Code's do: a line number, `-` or `+`, and
 the line, removed lines on a red bar and added lines on a green one that runs
@@ -145,6 +162,22 @@ the terminal, unechoed, and appears at the next prompt — submitted at once if
 it ended with Enter. The runtime itself refuses a second concurrent `prompt()`
 rather than coordinating with the one in flight.
 
+**What you type is kept**, in `~/.lab-harness/history` by default, so `Up` in a
+later session recalls an earlier one's prompts. Set `session.enabled = false`
+and nothing is persisted, history included.
+
+**The model and how full its window is sit at the right of the input**, dim,
+and turn to `terminal.theme.warning` past `terminal.context_warning` (85%):
+
+```
+❯ what next?                              claude-sonnet-5 · context 12%
+```
+
+It is a float over the input's first row, so it takes no row of its own and
+steps aside for long input rather than squeezing it — which is why it is there
+and not on a status bar under the prompt. A question asked through the same
+session, an approval for instance, draws none.
+
 ### Commands
 
 A line that is a `/` and a name is a command, which the terminal runs itself
@@ -154,6 +187,9 @@ rather than sending:
 |---|---|
 | `/status` | Token, cache and cost totals for the session |
 | `/effort [LEVEL]` | Show the reasoning effort, or set it for the runs after; `/effort default` sends none |
+| `/model [ID]` | Show the model, or switch to another one this session's provider serves |
+| `/clear` | Forget the conversation and start over; the transcript keeps what came before |
+| `/help` | List the commands |
 | `/exit`, `/quit`, `exit` | Exit |
 
 **Typing `/` lists them**, as Claude Code does: above the prompt, every command
@@ -163,7 +199,7 @@ the first highlighted.
 ```
   /effort [level]  Show or set the reasoning effort; "default" sends none
   /exit (quit)     Exit the session
-› /e
+❯ /e
 ```
 
 The input moves down to make room and back up when the list closes. On the
@@ -176,6 +212,7 @@ output fills the gap.
 | `Up`, `Down` | Move the highlight; the input is left as typed |
 | `Tab` | Put the highlighted command in the input, ready for arguments |
 | `Enter` | Run the highlighted command — `/st` and Enter is `/status` |
+| `Esc` | Close the list; typing reopens it |
 
 Typed ahead during a run, `/st` and Enter still runs `/status` when the prompt
 returns.
@@ -189,6 +226,13 @@ Every command is an entry in one registry, `Commands` in
 it. A new one is a name, a one-line description and an async handler given the
 rest of the line, added with `terminal.commands.add(Command(...))` — it is
 listed, completed and run with nothing else to change.
+
+`/model` stays inside the provider the session started on: which provider
+serves a request is decided once, when the agent is built, so a model another
+one serves is refused with the suggestion to start a new session with `--model`
+rather than sent somewhere it does not belong. `/clear` empties the
+conversation without ending the session — the transcript on disk keeps what
+came before, and the next run opens a new segment in it.
 
 ### Usage and cost
 
@@ -226,6 +270,12 @@ cost       $0.3120
 Both are computed from the transcript rather than counted as events arrive —
 every assistant message carries its request's `Usage` — so after `--resume`
 the totals include the restored history.
+
+Past `terminal.context_warning` (85% of the window) the run's line is followed
+by a warning, and the status beside the input turns from dim to
+`terminal.theme.warning`. Nothing is compacted: the harness does not rewrite
+history behind your back, so the warning says what to do instead — `/clear`, or
+a new session.
 
 Set `terminal.show_usage = false` to drop the per-run line; `/status` still
 works. The line is interactive-only: in `-p` mode stdout is the answer, and
@@ -276,7 +326,9 @@ directory — resuming in one project never surfaces another's history.
 
 The interactive terminal prints the saved conversation before the first
 prompt: questions, answers, tool calls and their output, thinking settled the
-configured way and expandable with Ctrl-O. An edit shows its result but not
+configured way and expandable with Ctrl-O. A rule heads it — `── Resumed
+20261010T11 — 12 message(s) ──` — because what follows is drawn exactly as new
+turns are, and nothing else says it is old. An edit shows its result but not
 its diff, which is display-only and never recorded. With `--no-save` this is a
 read-only view — nothing is appended to the file.
 
@@ -476,7 +528,7 @@ set one, and the model carries on without it.
 Mutating tools (`bash`, `write`, `edit`) prompt before executing:
 
 ```
-⏺ bash(rm -rf build/)
+⏺ Bash(rm -rf build/)
 Allow bash? [y]es / [n]o / [a]lways
 ```
 
@@ -486,7 +538,7 @@ unseen. For the same reason an `edit` shows the change it will make, and a
 `write` the content it will write:
 
 ```
-⏺ edit(lab_harness/config.py)
+⏺ Edit(lab_harness/config.py)
           max_turns: int = 50
     -     parallel_tools: bool = False
     +     parallel_tools: bool = True

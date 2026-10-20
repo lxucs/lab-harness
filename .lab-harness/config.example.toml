@@ -179,6 +179,9 @@ thinking_preview_lines = 6
 # Print one line of token, cache and cost figures after each run. Type /status
 # for the session's totals either way.
 show_usage = true
+# Share of the context window at which that line also warns and the status
+# beside the input turns from dim to warning. Nothing is compacted here.
+context_warning = 0.85
 # Label for amounts computed from model prices. Only a label -- nothing is
 # converted, so it must match the currency the rates are quoted in.
 currency_symbol = "$"
@@ -207,7 +210,10 @@ home = "~/.lab-harness"
 home_env = "LAB_HARNESS_HOME"
 # Subdirectory of home holding per-project session directories.
 directory_name = "sessions"
-# Write transcripts to disk at all.
+# File in home keeping what was typed, so a later session's Up recalls it.
+history_file = "history"
+# Write transcripts to disk at all. Off means nothing is persisted, history
+# included.
 enabled = true
 # Schema version written into each file header. A protocol constant, not a knob.
 # Version 2 added the `context` entry, version 3 the `rewrite` entry, version

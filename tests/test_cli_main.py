@@ -69,7 +69,7 @@ def _args(**kwargs: object) -> argparse.Namespace:
 class _StubTerminal:
     """Stands in for Terminal: records the attached agent, runs nothing.
 
-    Mirrors the real surface run_interactive touches — attach, run, and
+    Mirrors the real surface run_interactive touches — attach, welcome, run, and
     ask_approval, which build_approval_gate binds into the gate.
     """
 
@@ -78,6 +78,9 @@ class _StubTerminal:
 
     def attach(self, agent: Agent) -> None:
         self._captured["agent"] = agent
+
+    def welcome(self) -> None:
+        return None
 
     async def run(self) -> int:
         return 0
@@ -405,7 +408,7 @@ async def test_the_gate_guards_the_configured_tools(monkeypatch: pytest.MonkeyPa
 
 
 def test_interactive_resume_shows_the_restored_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """`--resume` replays the saved conversation, so the session continues
     where the eye left off rather than from a one-line note."""
@@ -435,6 +438,11 @@ def test_interactive_resume_shows_the_restored_history(
 
     assert terminal == {"constructed": True}
     assert len(replayed) == 1, "the restored history is shown once"
+
+    # A rule, not a line: what follows is the old conversation, drawn as new.
+    shown = capsys.readouterr().out
+    assert "Resumed" in shown
+    assert "─" in shown
     assert [m.role for m in replayed[0]] == ["user", "assistant"]
     assert "first answer" in "".join(
         b.text for m in replayed[0] for b in getattr(m, "content", ()) if hasattr(b, "text")

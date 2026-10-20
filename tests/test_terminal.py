@@ -12,10 +12,13 @@ import re
 import signal
 import threading
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
@@ -23,7 +26,7 @@ from rich.console import Console
 from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentStart, MessageStart
 from lab_harness.cli.commands import Command
-from lab_harness.cli.renderers import EventRenderer
+from lab_harness.cli.renderers import GLYPH, EventRenderer
 from lab_harness.cli.terminal import (
     LogStream,
     Terminal,
@@ -36,8 +39,10 @@ from lab_harness.config import (
     Config,
     ConfigError,
     PricingConfig,
+    SessionConfig,
     TerminalConfig,
     ThemeConfig,
+    lab_harness_home,
 )
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import (
@@ -51,6 +56,9 @@ from lab_harness.llm.types import (
 from lab_harness.logs import configure_logging
 from tests.entries import model_entry
 
+#: Stands in for a command list that is never up, so Alt-Enter keeps its newline.
+_never_listing = Condition(lambda: False)
+
 
 class ScriptedSession:
     """Replays lines, then raises EOFError like Ctrl-D."""
@@ -58,9 +66,12 @@ class ScriptedSession:
     def __init__(self, lines: list[str | type[BaseException]]) -> None:
         self._lines = list(lines)
         self.prompts: list[object] = []
+        #: What the terminal asked to draw at the right of each input.
+        self.rprompts: list[object] = []
 
-    async def prompt_async(self, message: object = "") -> str:
+    async def prompt_async(self, message: object = "", *, rprompt: object = None) -> str:
         self.prompts.append(message)
+        self.rprompts.append(rprompt)
         if not self._lines:
             raise EOFError
         item = self._lines.pop(0)
@@ -292,6 +303,87 @@ async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
     assert "$0.0150" in buffer.getvalue()
 
 
+# --- the status beside the input ------------------------------------------
+
+
+async def test_a_run_leaves_the_model_and_the_context_beside_the_input() -> None:
+    """15 tokens of a 20-token window: `fake-model · context 75%`, dim."""
+    terminal, _ = _terminal(["hello"])
+    model = replace(FAKE_MODEL, context_window=20)
+    agent = Agent(model=model, provider=FakeProvider([text_response("Hi")]), config=terminal.config)
+    terminal.attach(agent)
+
+    await terminal.run()
+
+    status = terminal._rprompt()  # type: ignore[attr-defined]
+    assert "".join(fragment[1] for fragment in status) == "fake-model · context 75%"
+    assert [fragment[0] for fragment in status] == ["class:status"]
+
+
+async def test_the_status_warns_once_the_window_is_nearly_full() -> None:
+    config = Config(terminal=TerminalConfig(context_warning=0.5))
+    terminal, buffer = _terminal(["hello"], config)
+    agent = Agent(
+        model=replace(FAKE_MODEL, context_window=20),
+        provider=FakeProvider([text_response("Hi")]),
+        config=config,
+    )
+    terminal.attach(agent)
+
+    await terminal.run()
+
+    assert [f[0] for f in terminal._rprompt()] == ["class:status.warning"]  # type: ignore[attr-defined]
+    assert "/clear to start over" in buffer.getvalue()
+
+
+async def test_the_status_is_only_offered_at_the_input_prompt() -> None:
+    """The approval question shares the session; it draws no status."""
+    terminal, _ = _terminal(["hello", "y"])
+    _attach(terminal, FakeProvider([text_response("Hi")]))
+
+    await terminal.run()
+    await terminal.ask_approval("bash", {"command": "ls"})
+
+    rprompts = terminal._session.rprompts  # type: ignore[attr-defined]
+    assert callable(rprompts[0]), "the input prompt carries one"
+    assert rprompts[-1] is None, "the question does not"
+
+
+async def test_before_any_run_the_status_is_the_model_alone() -> None:
+    """`context 0%` would be a measurement that was never taken."""
+    terminal, _ = _terminal([])
+    _attach(terminal, FakeProvider([]))
+
+    assert "".join(f[1] for f in terminal._rprompt()) == FAKE_MODEL.id  # type: ignore[attr-defined]
+
+
+# --- input history --------------------------------------------------------
+
+
+async def test_typed_lines_are_kept_in_the_session_home() -> None:
+    config = Config()
+    path = lab_harness_home(config.session) / config.session.history_file
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        console = Console(file=io.StringIO(), width=90, force_terminal=False, no_color=True)
+        terminal = Terminal(console=console, config=config)
+        _attach(terminal, FakeProvider([text_response("Hi")]))
+        pipe.send_text("hello\r\x04")
+
+        assert await terminal.run() == 0
+
+    assert "+hello" in path.read_text(encoding="utf-8")
+
+
+def test_history_stays_in_memory_when_nothing_is_persisted(tmp_path: Path) -> None:
+    console = Console(file=io.StringIO(), width=90, force_terminal=False, no_color=True)
+    config = Config(session=replace(SessionConfig(), enabled=False, home=str(tmp_path)))
+
+    terminal = Terminal(console=console, config=config)
+
+    assert isinstance(terminal._session.history, InMemoryHistory)  # type: ignore[attr-defined]
+    assert list(tmp_path.iterdir()) == [], "nothing written"
+
+
 async def test_status_shows_session_totals_without_a_request() -> None:
     terminal, buffer = _terminal(["first", "second", "/status"])
     provider = FakeProvider([text_response("one"), text_response("two")])
@@ -397,6 +489,89 @@ async def test_a_registered_command_is_run_with_its_arguments() -> None:
     assert given == ["one two"]
 
 
+async def test_the_session_opens_with_a_box_naming_the_model_and_the_directory() -> None:
+    terminal, buffer = _terminal([])
+    _attach(terminal, FakeProvider([]), cwd="proj")
+
+    terminal.welcome()
+
+    output = buffer.getvalue()
+    assert f"{FAKE_MODEL.id} via {FAKE_MODEL.provider}" in output
+    assert "proj" in output, "the directory the tools run in"
+    assert "/ for commands" in output
+    assert "╭" in output, "a box, not another line of text"
+
+
+async def test_help_lists_every_command_with_what_it_does() -> None:
+    terminal, buffer = _terminal(["/help"])
+    _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    output = buffer.getvalue()
+    assert "/status" in output and "Token, cache and cost totals so far" in output
+    assert "/exit (quit)" in output and "Exit the session" in output
+
+
+async def test_clear_forgets_the_conversation_but_keeps_the_session() -> None:
+    terminal, buffer = _terminal(["hello", "/clear", "again"])
+    provider = FakeProvider([text_response("one"), text_response("two")])
+    agent = _attach(terminal, provider)
+
+    await terminal.run()
+
+    assert len(agent.state.messages) == 2, "only the second run's pair is left"
+    assert "Conversation cleared" in buffer.getvalue()
+
+
+async def test_model_shows_the_model_and_the_ones_on_its_provider() -> None:
+    config = Config(
+        models={
+            FAKE_MODEL.id: model_entry(provider="fake"),
+            "other-fake": model_entry(provider="fake"),
+            "elsewhere": model_entry(provider="anthropic"),
+        }
+    )
+    terminal, buffer = _terminal(["/model"], config)
+    agent = _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    output = buffer.getvalue()
+    assert "model: fake-model via fake" in output
+    assert "other-fake" in output, "the ones this session could switch to"
+    assert "elsewhere" not in output, "one this session cannot switch to"
+    assert agent.state.model == FAKE_MODEL
+
+
+async def test_model_switches_to_one_this_provider_serves() -> None:
+    config = Config(
+        models={FAKE_MODEL.id: model_entry(provider="fake"), "other": model_entry(provider="fake")}
+    )
+    terminal, buffer = _terminal(["/model other"], config)
+    agent = _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    assert agent.state.model.id == "other"
+    assert agent.state.model.provider == "fake", "the session's provider, not the catalog's"
+    assert "model: other via fake" in buffer.getvalue()
+
+
+async def test_model_refuses_one_another_provider_serves() -> None:
+    config = Config(
+        models={FAKE_MODEL.id: model_entry(provider="fake"), "gpt": model_entry(provider="openai")}
+    )
+    terminal, buffer = _terminal(["/model gpt", "/model nope"], config)
+    agent = _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    assert agent.state.model == FAKE_MODEL, "a refusal changes nothing"
+    assert "served by openai" in buffer.getvalue()
+    assert "not a configured model" in buffer.getvalue()
+
+
 async def test_a_failing_command_ends_itself_not_the_session() -> None:
     terminal, buffer = _terminal(["/boom", "after"])
     provider = FakeProvider([text_response("still here")])
@@ -426,6 +601,28 @@ async def test_the_prompt_completes_a_command_as_typed() -> None:
 
     assert re.search(r"requests\s+0\b", buffer.getvalue()), "/st ran /status"
     assert provider.requests == []
+
+
+async def test_escape_is_a_newline_except_where_it_closes_the_list() -> None:
+    """Through the terminal's own session, so both Escape bindings are in play
+    at once: prompt_toolkit holds an Escape that could begin a longer
+    sequence, which is why the newline binding stands down while a list is up.
+    """
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        console = Console(file=io.StringIO(), width=90, force_terminal=False, no_color=True)
+        terminal = Terminal(console=console, config=Config())
+        _attach(terminal, FakeProvider([]))
+        session = terminal._session  # type: ignore[assignment]
+        pipe.send_text("ab\x1b\rcd\r")
+
+        assert await session.prompt_async("› ") == "ab\ncd"  # noqa: RUF001
+
+        with terminal._menu.offered():  # type: ignore[attr-defined]
+            # A second Enter, so that a held Escape fails the assertion rather
+            # than leaving the prompt waiting for one.
+            pipe.send_text("/e\x1b\r\r")
+
+            assert await session.prompt_async("› ") == "/e"  # noqa: RUF001
 
 
 # --- approval prompt ------------------------------------------------------
@@ -469,7 +666,7 @@ async def test_the_question_names_the_tool() -> None:
     await terminal.ask_approval("write", {"path": "a.txt"})
 
     session = terminal._session
-    assert "write" in str(session.prompts[-1])  # type: ignore[attr-defined]
+    assert "Allow Write?" in str(session.prompts[-1])  # type: ignore[attr-defined]
 
 
 async def test_the_question_shows_the_whole_command() -> None:
@@ -490,7 +687,7 @@ async def test_the_question_is_asked_with_the_live_region_down() -> None:
     seen: list[bool] = []
 
     class Watching(ScriptedSession):
-        async def prompt_async(self, message: object = "") -> str:
+        async def prompt_async(self, message: object = "", *, rprompt: object = None) -> str:
             seen.append(terminal.renderer.active)
             return "y"
 
@@ -559,7 +756,9 @@ async def test_ctrl_o_at_the_prompt_toggles_thinking() -> None:
     with create_pipe_input() as pipe:
         pipe.send_text("ab\x0fcd\r")
         session: PromptSession[str] = PromptSession(
-            input=pipe, output=DummyOutput(), key_bindings=_bindings(lambda: calls.append("t"))
+            input=pipe,
+            output=DummyOutput(),
+            key_bindings=_bindings(lambda: calls.append("t"), _never_listing),
         )
         assert await session.prompt_async("› ") == "abcd"  # noqa: RUF001
 
@@ -689,7 +888,7 @@ async def test_the_prompt_glyph_is_styled() -> None:
     await terminal.run()
 
     first = terminal._session.prompts[0]  # type: ignore[attr-defined]
-    assert first == [("class:glyph", "› ")]  # noqa: RUF001
+    assert first == [("class:glyph", GLYPH)]
 
 
 # --- wiring ---------------------------------------------------------------

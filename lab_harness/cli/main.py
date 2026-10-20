@@ -14,12 +14,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
+from rich.rule import Rule
 from rich.text import Text
 
 from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentEvent, MessageEnd, declarations_for
 from lab_harness.cli.export import export_html
 from lab_harness.cli.json_sink import json_sink
+from lab_harness.cli.renderers import display_name
 from lab_harness.cli.terminal import LogStream, Terminal, build_approval_gate
 from lab_harness.config import Config, ConfigError, PromptsConfig, load_config
 from lab_harness.llm.providers import route
@@ -229,7 +231,10 @@ def _attach_session(
         agent.restore(resumed.messages)
         note = f"Resumed {resumed.path.stem} — {len(resumed.messages)} message(s)"
         if console is not None:
-            console.print(Text(note, style=config.terminal.theme.muted))
+            # A rule rather than a line: what follows is the restored history,
+            # drawn exactly as new turns are, and the rule is the only thing
+            # saying where it ends.
+            console.print(Rule(note, style=config.terminal.theme.muted))
             for warning in resumed.warnings:
                 console.print(Text(f"  {warning}", style=config.terminal.theme.warning))
         else:
@@ -291,6 +296,7 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
     gate = None if args.yes else build_approval_gate(terminal, config)
     agent = _build_agent(args, config, before_tool_call=gate, console=console)
     terminal.attach(agent)
+    terminal.welcome()
     recorder = _attach_session(agent, args, config, console)
     if args.resume is not None:
         # The history itself, so the session continues where the eye left off
@@ -371,7 +377,11 @@ def _text_sink() -> Callable[[AgentEvent], Awaitable[None]]:
             if event.message.error_message:
                 print(f"error: {event.message.error_message}", file=sys.stderr, flush=True)
         elif event.type == "tool_execution_start":
-            print(f"⏺ {event.tool_name}({_brief(event.arguments)})", file=sys.stderr, flush=True)
+            print(
+                f"⏺ {display_name(event.tool_name)}({_brief(event.arguments)})",
+                file=sys.stderr,
+                flush=True,
+            )
 
     return emit
 

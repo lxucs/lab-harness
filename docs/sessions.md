@@ -299,7 +299,8 @@ read back, and safe to delete. See [cli.md](cli.md#sessions).
 | `session.home` | `~/.lab-harness` | Root for all harness state |
 | `session.home_env` | `LAB_HARNESS_HOME` | Env var that overrides it |
 | `session.directory_name` | `sessions` | Subdirectory holding projects |
-| `session.enabled` | `true` | Write transcripts at all |
+| `session.history_file` | `history` | File in `home` keeping typed lines, for `Up` in a later session |
+| `session.enabled` | `true` | Write transcripts at all — off means nothing is persisted |
 | `session.version` | `4` | Schema version written to each header |
 
 Tests redirect `LAB_HARNESS_HOME` through an autouse fixture, so the suite can never

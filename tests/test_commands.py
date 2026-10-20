@@ -4,15 +4,19 @@ The menu's keys are driven through a real PromptSession on a pipe, so its
 bindings are checked against prompt_toolkit's own rather than in isolation.
 """
 
+from typing import cast
+
 import pytest
 from prompt_toolkit import PromptSession
 from prompt_toolkit.input import PipeInput, create_pipe_input
+from prompt_toolkit.layout import ConditionalContainer, HSplit
 from prompt_toolkit.output import DummyOutput
 
 from lab_harness.cli.commands import Command, CommandMenu, Commands, UnknownCommand
 
 DOWN = "\x1b[B"
 UP = "\x1b[A"
+ESCAPE = "\x1b"
 
 
 async def _nothing(arguments: str) -> None:
@@ -114,12 +118,22 @@ def test_the_menu_label_shows_arguments_and_aliases() -> None:
     assert labels == ["/status", "/effort [level]", "/exit (quit)"]
 
 
+def test_help_lines_align_every_description() -> None:
+    assert COMMANDS.help_lines() == [
+        "/status          Totals so far",
+        "/effort [level]  Show or set the effort",
+        "/exit (quit)     Exit the session",
+    ]
+
+
 # --- the menu -------------------------------------------------------------
 
 
-def _session(pipe: PipeInput) -> tuple[PromptSession[str], CommandMenu]:
+def _session(
+    pipe: PipeInput, commands: Commands = COMMANDS
+) -> tuple[PromptSession[str], CommandMenu]:
     session: PromptSession[str] = PromptSession(input=pipe, output=DummyOutput())
-    menu = CommandMenu(COMMANDS, indent=2)
+    menu = CommandMenu(commands, indent=2)
     menu.attach(session)
     return session, menu
 
@@ -162,6 +176,23 @@ async def test_each_row_is_the_label_then_the_description_aligned_under_the_inpu
     ]
 
 
+async def test_a_long_list_says_how_many_it_leaves_out() -> None:
+    many = Commands([_command(f"c{i}", f"does {i}") for i in range(12)])
+    with create_pipe_input() as pipe:
+        session, menu = _session(pipe, many)
+        with menu.offered():
+            session.default_buffer.text = "/"
+            assert menu.more() == 2
+            last = "".join(fragment[1] for fragment in menu._fragments()).splitlines()[-1]
+            # Ten rows plus the one saying what is left out.
+            split = cast(HSplit, session.app.layout.container)
+            window = cast(ConditionalContainer, split.children[0]).content
+            height = window.preferred_height(100, 40).preferred
+
+    assert last.strip() == "… 2 more"
+    assert height == 11
+
+
 async def test_nothing_is_listed_where_commands_are_not_offered() -> None:
     with create_pipe_input() as pipe:
         session, menu = _session(pipe)
@@ -185,6 +216,10 @@ async def test_nothing_is_listed_where_commands_are_not_offered() -> None:
         ("/" + DOWN + "e\r", "/effort"),
         # Tab puts the command in the input, ready for its arguments.
         ("/ef\tlow\r", "/effort low"),
+        # Esc closes the list, which stays closed until the input changes.
+        ("/" + ESCAPE + "\r", "/"),
+        ("/e" + ESCAPE + DOWN + "\r", "/e"),
+        ("/e" + ESCAPE + "f\r", "/effort"),
         # Not the start of a command: submitted as typed.
         ("/effort low\r", "/effort low"),
         ("/tmp/notes.md\r", "/tmp/notes.md"),
