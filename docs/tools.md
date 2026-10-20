@@ -100,10 +100,12 @@ or one given twice — a typo in configured tool names should fail at wiring
 time, not silently disable a tool and leave the model unable to do its job.
 
 The CLI selects with `tools.enabled` from config, or `--tools read,ls` for one
-run, and the same list applies in interactive and one-shot mode. A tool that is
-not selected is never declared to the model, which makes selection the way to
-keep `bash` out of a `-p` run — approval cannot, since `-p` has none. An unknown
-name is a startup error that names where it came from.
+run, and the same list applies in interactive and one-shot mode. **Interactive
+mode can change it mid-session**: `/tools read,skill`, or `/tools none`. A tool
+that is not selected is never declared to the model, which makes selection the
+way to keep `bash` out of a `-p` run — approval cannot, since `-p` has none. An
+unknown name is a startup error that names where it came from, and one given
+mid-session is reported without changing anything.
 
 ## bash
 
@@ -169,6 +171,7 @@ one run must not silently authorize the next.
 | `glob` | parallel | Files by path pattern, newest first |
 | `web_search` | parallel | Titles, URLs and snippets via a pluggable backend |
 | `web_fetch` | parallel | One page as markdown-ish text; follows redirects |
+| `skill` | parallel | Loads a skill's instructions by name; see [Skills](#skills) |
 
 ### Limits come from config
 
@@ -193,6 +196,10 @@ Every threshold is a config key, never a literal:
 | `tools.web.max_bytes` | 2000000 | Largest response `web_fetch` downloads |
 | `tools.web.max_content_chars` | 50000 | Extracted text handed to the model |
 | `tools.web.user_agent` | `lab-harness/0.1 …` | Sent on every outbound request |
+| `skills.enabled` | `true` | Whether skills are looked for at all |
+| `skills.selected` | (empty) | Which of those found apply; empty is every one |
+| `skills.directory_name` | `skills` | Subdirectory holding them, in `.lab-harness` and in home |
+| `skills.max_bytes` | 32000 | Where a long `SKILL.md` is cut |
 
 `read`'s truncation note names the offset to resume from, so a follow-up call is
 mechanical rather than guesswork.
@@ -213,6 +220,62 @@ against `/dev/null`; one that overwrites a file that was not UTF-8 text writes
 it anyway and reports no diff. The model is told only what it always was
 ("Replaced 1 occurrence(s) in a.py"): a diff it already knows the content of
 would cost tokens and tell it nothing.
+
+## Skills
+
+A skill is instructions for one kind of task, kept in a directory rather than
+in the prompt:
+
+```
+.lab-harness/skills/commit/SKILL.md      this project
+~/.lab-harness/skills/commit/SKILL.md    every project
+```
+
+```markdown
+---
+name: commit
+description: Write a commit message for staged changes
+allowed-tools: Bash(git:*), Read
+---
+Steps to follow, and whatever examples the task needs.
+```
+
+The frontmatter is YAML. `description` is required — it is the whole basis on
+which one is picked — and `name` defaults to the directory's. Unknown keys are
+ignored, so a file written for another harness still loads.
+
+**Only the name and the description ride in every request**, as a list in the
+system prompt; the instructions come back when the model calls `skill` with the
+name. That is the point of the split: a directory of skills costs a list, not
+the text of all of them. The other files a skill's directory holds are named in
+the result, so the model can read the one it needs instead of having a long
+reference inlined.
+
+The list is left out entirely when `skill` is not among the tools a run gets —
+`tools.enabled`, or `--tools` — since it would offer instructions the model has
+no way to ask for.
+
+`allowed-tools` names tools the skill may use without asking. An entry may
+carry an argument pattern, as in `Bash(git:*)`: what is before the parenthesis
+is the tool. Names are matched without case or underscores, so `WebFetch` finds
+`web_fetch`. They are granted for the rest of the session when the skill is
+loaded, the way answering "always" is, and the terminal says which. One naming
+a tool this run does not have is dropped with a warning — a skill written for
+another harness names tools that are not here — and turning
+`tools.approval.allow_remember` off suppresses the grant as well.
+
+A `SKILL.md` that exists but cannot be used — no frontmatter, invalid YAML, no
+description — is a startup error rather than a silent skip, for the reason a
+malformed config file is.
+
+Each is also a command in the terminal: `/commit` sends these instructions as
+the next turn, and `/skills` lists them — see [cli.md](cli.md#skills).
+
+**Which apply is chosen at three levels**, all reading the same setting:
+`skills.selected` in config, `--skills` for one run, and `/skills` in the
+terminal mid-session. Nothing is filtered anywhere else — the `skill` tool, the
+list in the system prompt, and the terminal's menu all ask the same question,
+which is why a change in one place is a change in all of them.
 
 ## Web tools
 

@@ -148,14 +148,16 @@ should also read [AGENTS.md](AGENTS.md).
 ## Status
 
 **Everything planned is built:** a tested runtime core, the full local tool set
-(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch` with
+(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`/`skill`), `web_search`/`web_fetch` with
 pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with streamed, collapsible thinking,
 colored edit diffs, slash commands listed as they are typed and a per-run
-token, cache and cost readout, a fail-closed approval gate, a tool set chosen
-in config or per run, a reasoning effort set
-in config, per run or mid-session, layered TOML config with the prompts and
-the model catalog as data, a system prompt built from
+token, cache and cost readout, a fail-closed approval gate, a tool set and a
+skill set chosen in config, per run, or mid-session — the system prompt rebuilt
+around them as they change, skills loaded on demand with the tools they are
+allowed to use, a reasoning effort set
+in config, per run or mid-session, layered
+TOML config with the prompts and the model catalog as data, a system prompt built from
 configurable sections with the environment filled in and the project's
 `HARNESS.md`/`AGENTS.md` appended, levelled diagnostics on stderr, and durable
 sessions that resume on screen where they left off, export as a searchable

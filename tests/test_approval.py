@@ -2,17 +2,21 @@
 
 import asyncio
 import logging
+from io import StringIO
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
+from rich.console import Console
 
 from lab_harness.agent import Agent
-from lab_harness.agent.types import BeforeToolCallContext
-from lab_harness.cli.approval import DENIED_NOTICE, ApprovalGate
+from lab_harness.agent.types import BeforeToolCallContext, EventSink, ToolExecutionEnd
+from lab_harness.cli.approval import DENIED_NOTICE, ApprovalGate, skill_allowances
 from lab_harness.config import ApprovalConfig, Config
 from lab_harness.llm.fake import FAKE_MODEL, FakeProvider, text_response, tool_call_response
 from lab_harness.llm.types import TextBlock, ToolCallBlock, UserMessage, text
 from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
+from lab_harness.tools.skills import skill
 
 
 class _Params(BaseModel):
@@ -27,6 +31,11 @@ async def dangerous(p: _Params, ctx: ToolContext) -> ToolResult:
 @tool(name="harmless", description="reads things")
 async def harmless(p: _Params, ctx: ToolContext) -> ToolResult:
     return ok("read")
+
+
+@tool(name="bash", description="runs commands", execution_mode="sequential")
+async def bash(p: _Params, ctx: ToolContext) -> ToolResult:
+    return ok("ran")
 
 
 def _ctx(tool_name: str) -> BeforeToolCallContext:
@@ -230,3 +239,96 @@ async def test_each_answer_is_logged_against_its_call(caplog: pytest.LogCaptureF
         await gate(_ctx("dangerous"))
 
     assert "Tool call c1: approval answered 'always'" in caplog.text
+
+
+# --- a skill's allowed-tools ---------------------------------------------
+
+
+def _end(details: dict[str, object], tool_name: str = "skill") -> ToolExecutionEnd:
+    return ToolExecutionEnd(
+        tool_call_id="c1",
+        tool_name=tool_name,
+        content=(),
+        is_error=False,
+        duration_ms=1,
+        details=details,
+    )
+
+
+def _listener(gate: ApprovalGate, buffer: StringIO) -> EventSink:
+    return skill_allowances(gate, Console(file=buffer, width=200), "dim")
+
+
+async def test_a_skill_grants_the_tools_it_names() -> None:
+    gate, asked = _gate([])
+
+    await _listener(gate, StringIO())(_end({"allowed_tools": ["dangerous"]}))
+
+    assert await gate(_ctx("dangerous")) is None
+    assert asked == []
+
+
+async def test_only_the_skill_tool_grants() -> None:
+    """Another tool's result, or one that names none, changes nothing."""
+    gate, asked = _gate(["yes"])
+    listener = _listener(gate, StringIO())
+
+    await listener(_end({"allowed_tools": ["dangerous"]}, tool_name="read"))
+    await listener(_end({}))
+
+    await gate(_ctx("dangerous"))
+
+    assert asked == ["dangerous"]
+
+
+async def test_the_grant_is_said() -> None:
+    """A permission granted silently is the kind of thing that surprises later."""
+    buffer = StringIO()
+    gate, _ = _gate([])
+
+    await _listener(gate, buffer)(_end({"allowed_tools": ["dangerous"]}))
+
+    assert "dangerous allowed for this session" in buffer.getvalue()
+
+
+async def test_remembering_off_suppresses_the_grant() -> None:
+    """An operator who turned remembering off wants to be asked."""
+    gate, asked = _gate(["yes"], allow_remember=False)
+
+    await _listener(gate, StringIO())(_end({"allowed_tools": ["dangerous"]}))
+
+    assert await gate(_ctx("dangerous")) is None
+    assert asked == ["dangerous"]
+
+
+async def test_a_loaded_skill_lets_the_loop_run_its_tools(tmp_path: Path) -> None:
+    """End to end: the grant reaches the gate through the event stream."""
+    skills = tmp_path / ".lab-harness" / "skills" / "commit"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text(
+        "---\nname: commit\ndescription: Write one\nallowed-tools: Bash\n---\nDo it.\n",
+        encoding="utf-8",
+    )
+    provider = FakeProvider(
+        [
+            tool_call_response(
+                [ToolCallBlock(id="c1", name="skill", arguments={"name": "commit"})]
+            ),
+            tool_call_response([ToolCallBlock(id="c2", name="bash", arguments={})]),
+            text_response("done"),
+        ]
+    )
+    gate, asked = _gate([], required=("bash",))
+    agent = Agent(
+        model=FAKE_MODEL,
+        provider=provider,
+        tools=(skill, bash),
+        config=Config(),
+        before_tool_call=gate,
+        cwd=str(tmp_path),
+    )
+    agent.subscribe(_listener(gate, StringIO()))
+
+    await agent.prompt("commit this")
+
+    assert asked == [], "the skill granted bash, so it should not have been asked about"

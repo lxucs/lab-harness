@@ -32,7 +32,7 @@ def resolve(path: str, ctx: ToolContext) -> Path:
     return candidate
 
 
-def _display(path: Path, ctx: ToolContext) -> str:
+def display(path: Path, ctx: ToolContext) -> str:
     """Render a path for output and `details`: relative to cwd when inside it.
 
     Absolute paths leak the machine's layout into the transcript, which is both
@@ -62,23 +62,23 @@ async def read(p: ReadParams, ctx: ToolContext) -> ToolResult:
     limits = ctx.config.tools.read
 
     if not path.exists():
-        return fail(f"File not found: {_display(path, ctx)}")
+        return fail(f"File not found: {display(path, ctx)}")
     if path.is_dir():
-        return fail(f"{_display(path, ctx)} is a directory. Use `ls` to list it.")
+        return fail(f"{display(path, ctx)} is a directory. Use `ls` to list it.")
 
     size = path.stat().st_size
     if size > limits.max_bytes:
         return fail(
-            f"{_display(path, ctx)} is {size} bytes, over the {limits.max_bytes}-byte "
+            f"{display(path, ctx)} is {size} bytes, over the {limits.max_bytes}-byte "
             f"limit. Read a range with offset and limit, or use grep to find what you need."
         )
 
     try:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return fail(f"{_display(path, ctx)} is not UTF-8 text. It may be a binary file.")
+        return fail(f"{display(path, ctx)} is not UTF-8 text. It may be a binary file.")
     except OSError as exc:
-        return fail(f"Could not read {_display(path, ctx)}: {exc}")
+        return fail(f"Could not read {display(path, ctx)}: {exc}")
 
     lines = content.splitlines()
     start = (p.offset or 1) - 1
@@ -97,7 +97,7 @@ async def read(p: ReadParams, ctx: ToolContext) -> ToolResult:
     if not lines:
         rendered = "[file is empty]"
 
-    return ok(rendered, path=_display(path, ctx), lines=len(window), total_lines=len(lines))
+    return ok(rendered, path=display(path, ctx), lines=len(window), total_lines=len(lines))
 
 
 def _clip(line: str, limit: int) -> str:
@@ -121,10 +121,10 @@ class WriteParams(BaseModel):
 async def write(p: WriteParams, ctx: ToolContext) -> ToolResult:
     path = resolve(p.path, ctx)
     if path.is_dir():
-        return fail(f"{_display(path, ctx)} is a directory.")
+        return fail(f"{display(path, ctx)} is a directory.")
 
     existed = path.exists()
-    shown = _display(path, ctx)
+    shown = display(path, ctx)
     before = _previous_text(path) if existed else ""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,30 +168,30 @@ class EditParams(BaseModel):
 async def edit(p: EditParams, ctx: ToolContext) -> ToolResult:
     path = resolve(p.path, ctx)
     if not path.exists():
-        return fail(f"File not found: {_display(path, ctx)}")
+        return fail(f"File not found: {display(path, ctx)}")
     if path.is_dir():
-        return fail(f"{_display(path, ctx)} is a directory.")
+        return fail(f"{display(path, ctx)} is a directory.")
     if p.old == p.new:
         return fail("`old` and `new` are identical; nothing to do.")
 
     try:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return fail(f"{_display(path, ctx)} is not UTF-8 text.")
+        return fail(f"{display(path, ctx)} is not UTF-8 text.")
     except OSError as exc:
-        return fail(f"Could not read {_display(path, ctx)}: {exc}")
+        return fail(f"Could not read {display(path, ctx)}: {exc}")
 
     occurrences = content.count(p.old)
     if occurrences == 0:
         return fail(
-            f"`old` text not found in {_display(path, ctx)}. Read the file and copy the "
+            f"`old` text not found in {display(path, ctx)}. Read the file and copy the "
             f"text exactly, including whitespace."
         )
     # Ambiguity is refused rather than guessed: replacing the first of several
     # matches edits a line the caller never looked at.
     if occurrences > 1 and not p.replace_all:
         return fail(
-            f"`old` text appears {occurrences} times in {_display(path, ctx)}. Add "
+            f"`old` text appears {occurrences} times in {display(path, ctx)}. Add "
             f"surrounding context to make it unique, or set replace_all."
         )
 
@@ -199,10 +199,10 @@ async def edit(p: EditParams, ctx: ToolContext) -> ToolResult:
     try:
         path.write_text(updated, encoding="utf-8")
     except OSError as exc:
-        return fail(f"Could not write {_display(path, ctx)}: {exc}")
+        return fail(f"Could not write {display(path, ctx)}: {exc}")
 
     replaced = occurrences if p.replace_all else 1
-    shown = _display(path, ctx)
+    shown = display(path, ctx)
     return ok(
         f"Replaced {replaced} occurrence(s) in {shown}",
         path=shown,
@@ -249,14 +249,14 @@ class ListParams(BaseModel):
 async def ls(p: ListParams, ctx: ToolContext) -> ToolResult:
     path = resolve(p.path, ctx)
     if not path.exists():
-        return fail(f"Directory not found: {_display(path, ctx)}")
+        return fail(f"Directory not found: {display(path, ctx)}")
     if not path.is_dir():
-        return fail(f"{_display(path, ctx)} is a file. Use `read` to read it.")
+        return fail(f"{display(path, ctx)} is a file. Use `read` to read it.")
 
     try:
         entries = sorted(path.iterdir(), key=lambda e: (not e.is_dir(), e.name))
     except OSError as exc:
-        return fail(f"Could not list {_display(path, ctx)}: {exc}")
+        return fail(f"Could not list {display(path, ctx)}: {exc}")
 
     if not p.all:
         entries = [e for e in entries if not e.name.startswith(".")]
@@ -268,7 +268,7 @@ async def ls(p: ListParams, ctx: ToolContext) -> ToolResult:
     if len(entries) > limit:
         rendered += f"\n[truncated at {limit} of {len(entries)} entries]"
 
-    return ok(rendered, path=_display(path, ctx), entries=len(shown), total_entries=len(entries))
+    return ok(rendered, path=display(path, ctx), entries=len(shown), total_entries=len(entries))
 
 
 FILESYSTEM_TOOLS = (read, write, edit, ls)

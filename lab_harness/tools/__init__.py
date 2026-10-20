@@ -14,10 +14,13 @@ from lab_harness.tools.fs import FILESYSTEM_TOOLS
 from lab_harness.tools.registry import ToolRegistry
 from lab_harness.tools.search import SEARCH_TOOLS
 from lab_harness.tools.shell import SHELL_TOOLS
+from lab_harness.tools.skills import skill
 from lab_harness.tools.web import WEB_TOOLS
 
 #: Everything built in. The CLI narrows this with the configured tool list.
-BUILTIN_TOOLS: tuple[AgentTool, ...] = FILESYSTEM_TOOLS + SHELL_TOOLS + SEARCH_TOOLS + WEB_TOOLS
+BUILTIN_TOOLS: tuple[AgentTool, ...] = (
+    FILESYSTEM_TOOLS + SHELL_TOOLS + SEARCH_TOOLS + WEB_TOOLS + (skill,)
+)
 
 
 def default_registry() -> ToolRegistry:

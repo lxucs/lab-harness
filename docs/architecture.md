@@ -195,3 +195,4 @@ confusing order to read it in — each step only depends on the ones above.
 | 11 | `tools/web.py`, `html_text.py`, `config.py` loading |
 | 12 | `llm/providers/chat_completions.py`, `responses.py` |
 | 13 | `prompts/` — the system prompt |
+| 14 | `tools/skills.py` — skills, listed by name and loaded on demand |

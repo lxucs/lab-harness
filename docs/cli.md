@@ -24,6 +24,7 @@ what the runtime does.
 | `--reasoning-effort` | How hard a reasoning model thinks, in its provider's terms — `low`, `high`, …. Beats the model's `reasoning_effort` and `agent.reasoning_effort`; `""` sends none. See [Reasoning effort](#reasoning-effort). |
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
 | `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
+| `--skills` | Comma-separated skills to make available, e.g. `commit,release`. Beats `skills.selected` in config; `""` makes none available. |
 | `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. |
 | `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
@@ -188,13 +189,26 @@ rather than sending:
 | `/status` | Token, cache and cost totals for the session |
 | `/effort [LEVEL]` | Show the reasoning effort, or set it for the runs after; `/effort default` sends none |
 | `/model [ID]` | Show the model, or switch to another one this session's provider serves |
+| `/tools [NAMES]` | Show the tools this session has, or choose them — `read,skill`; `none` is none |
+| `/skills [NAMES]` | List the skills that apply, or choose them — `commit,release`; `none` is none |
 | `/clear` | Forget the conversation and start over; the transcript keeps what came before |
 | `/help` | List the commands |
 | `/exit`, `/quit`, `exit` | Exit |
 
 **Typing `/` lists them**, as Claude Code does: above the prompt, every command
 the input could be the start of, by name or alias, each beside its description,
-the first highlighted.
+the first highlighted. **So does every skill:** each is a command of its own,
+added when the session starts, so `/commit` — or Tab and Enter on it in the
+list — sends that skill's instructions as the next turn. `/skills` prints what
+is there:
+
+```
+commit — Write a commit message for staged changes   allows: bash
+release — Cut a release
+Invoke one with /name, or ask for it by name.
+```
+
+A skill whose name is already a command's is left out rather than shadowing it.
 
 ```
   /effort [level]  Show or set the reasoning effort; "default" sends none
@@ -358,8 +372,8 @@ trimming of interrupted turns, rebuilding trajectories, and the reserved
 
 What every request opens with: the sections of `[prompts]` in config —
 `system`, how the harness works, the environment it runs in (working
-directory, git, platform, shell, model), context management — and last the
-project's instructions, below. The text ships in
+directory, git, platform, shell, model), context management, the skills found
+below — and last the project's instructions. The text ships in
 [`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml), and
 [`lab_harness/prompts/system.py`](../lab_harness/prompts/system.py) puts it
 together. It names no tools — what the model can call comes from the tool
@@ -390,6 +404,28 @@ Project instructions: AGENTS.md
 The first name that exists wins, the file is read from `--cwd`, and it is
 capped at `project.max_bytes`. Full behavior:
 [configuration.md](configuration.md#project-instructions).
+
+## Skills
+
+Instructions for particular kinds of task, kept in `.lab-harness/skills` or in
+home and loaded when the model asks for one by name. The model sees a list of
+their names and what each is for; the instructions themselves arrive only when
+it calls `skill` with a name, so a directory of them costs a list rather than
+the text of every one. A skill may also name tools it is allowed to use without
+asking. The format, `allowed-tools`, and the config:
+[tools.md](tools.md#skills).
+
+**You can pick one instead.** Each is listed in the `/` menu and runs as
+`/commit [request]`, and `/skills` prints them with what each allows — see
+[Commands](#commands) above.
+
+**Which apply is yours to choose**, at any of the three levels: `skills.selected`
+in config, `--skills` for one run, and `/skills commit,release` mid-session.
+`--skills ""` and `/skills none` make none available. The same for tools:
+`tools.enabled`, `--tools`, and `/tools read,skill`. A change mid-session
+rebuilds the system prompt, so what the model is offered and what it can ask
+for never disagree — and the next run's `agent_start` carries the new
+declarations, so a recorded session opens a new segment there.
 
 ## Choosing a model
 
@@ -554,7 +590,10 @@ This is a `before_tool_call` hook, not loop logic — see
 
 **It fails closed.** Only `y`/`yes` and `a`/`always` proceed; a bare Enter, an
 unrecognized answer, Ctrl-C, and Ctrl-D all deny. `always` is remembered for the
-session, never persisted.
+session, never persisted. A skill's `allowed-tools` grants the same way, for the
+rest of the session, and the terminal names what it granted — see
+[tools.md](tools.md#skills). Setting `tools.approval.allow_remember` to false
+suppresses that grant too.
 
 Approval is **skipped in `-p` mode**, which means one-shot runs execute mutating
 tools without asking — there is nobody at the keyboard to answer. Use `-p`

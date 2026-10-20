@@ -79,6 +79,36 @@ class ProjectConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SkillsConfig:
+    """Instructions for one kind of task, loaded when one is asked for.
+
+    A skill is a directory holding a `SKILL.md`: YAML frontmatter with a
+    description of when it applies, then the instructions. Only the name and
+    the description ride in every request; the instructions are read when the
+    model asks for them, which is what keeps a directory of them from costing
+    a directory of context.
+
+    The directory is searched in the working directory's `.lab-harness`, then
+    in home — a skill for one project, and one for every project.
+    """
+
+    #: Look for skills at all. Off means none are listed, and `skill` loads
+    #: none — without it there being anywhere to say which were meant.
+    enabled: bool = True
+    #: Subdirectory holding skills: of `.lab-harness` in the working
+    #: directory, and of home. Both are searched, the working directory's
+    #: first, and a name found there is not replaced by home's.
+    directory_name: str = "skills"
+    #: Which of those found apply, by name. Empty — the default — is every
+    #: one; `enabled = false` is none. A name nothing provides is warned
+    #: about rather than refused, since the directories differ by machine.
+    selected: tuple[str, ...] = ()
+    #: A longer SKILL.md is cut. Its instructions go into the transcript when
+    #: the skill is loaded, so an unbounded file is an unbounded bill.
+    max_bytes: int = 32_000
+
+
+@dataclass(frozen=True, slots=True)
 class ReadConfig:
     #: Lines returned when the caller gives no explicit limit.
     default_limit: int = 2_000
@@ -225,6 +255,7 @@ class ToolsConfig:
         "glob",
         "web_search",
         "web_fetch",
+        "skill",
     )
     read: ReadConfig = field(default_factory=ReadConfig)
     list: ListConfig = field(default_factory=ListConfig)
@@ -551,6 +582,10 @@ class PromptsConfig:
     environment: str = ""
     #: What happens as a conversation grows, and how to spend its turns.
     context_management: str = ""
+    #: Appended when there are skills: `{skills}` is the list of them, one line
+    #: each with its name and what it is for. Not the instructions — only what
+    #: says when to load them.
+    skills: str = ""
     #: Appended last when the working directory has project instructions:
     #: `{name}` is the file's name and `{text}` its contents. Those are the
     #: only placeholders, and `{text}` is required.
@@ -686,6 +721,7 @@ class LoggingConfig:
 class Config:
     agent: AgentConfig = field(default_factory=AgentConfig)
     project: ProjectConfig = field(default_factory=ProjectConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
     prompts: PromptsConfig = field(default_factory=_shipped_prompts)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     providers: ProvidersConfig = field(default_factory=ProvidersConfig)

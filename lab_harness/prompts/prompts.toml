@@ -73,6 +73,21 @@ established in the conversation, re-litigate a decision the user has already \
 made, or narrate options you will not pursue. If you are weighing a choice, \
 give a recommendation, not an exhaustive survey."""
 
+# Appended when a directory of skills was found: {skills} is the list of them,
+# one line each with its name and what it is for. Not the instructions --
+# see [skills] in config.py and the `skill` tool.
+#
+# It names no tool, as no section here does: what loads one, and how, comes
+# from the declarations alone, so the list below is true whatever --tools
+# selects -- the section is left out entirely when the tool is not among them.
+skills = """\
+# Skills
+Below are kinds of task with instructions written outside this prompt, each \
+with what it is for. When one matches what has been asked for, ask for it by \
+name before starting, then follow what it says.
+
+{skills}"""
+
 # Appended last, when the working directory has project instructions (see
 # [project]). {name} is the file's name, {text} its contents. A top-level
 # heading like the sections above, so it does not read as part of the last one.

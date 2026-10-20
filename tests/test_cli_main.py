@@ -20,6 +20,7 @@ from lab_harness.cli.main import (
     _attach_session,
     _brief,
     _build_agent,
+    _selected_skills,
     build_parser,
     main,
     run_interactive,
@@ -34,6 +35,7 @@ from lab_harness.config import (
     ConfigError,
     ProjectConfig,
     PromptsConfig,
+    SkillsConfig,
     ToolsConfig,
     load_config,
     snapshot,
@@ -56,6 +58,7 @@ def _args(**kwargs: object) -> argparse.Namespace:
         "reasoning_effort": None,
         "cwd": ".",
         "tools": None,
+        "skills": None,
         "system_prompt": None,
         "system_prompt_file": None,
         "yes": False,
@@ -243,6 +246,35 @@ def test_no_project_file_means_the_configured_sections(tmp_path: Path) -> None:
 
     environment = detect_environment(tmp_path, agent.state.model.id)
     assert agent.state.system_prompt == build_system_prompt(Config().prompts, environment)
+
+
+def test_the_skills_found_are_named(tmp_path: Path) -> None:
+    """Like project instructions: what is offered silently looks broken."""
+    directory = tmp_path / ".lab-harness" / "skills" / "commit"
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        "---\ndescription: Write a commit message\n---\nDo it.\n", encoding="utf-8"
+    )
+    buffer = StringIO()
+
+    _build_agent(_args(), Config(), console=Console(file=buffer, width=200))
+
+    assert "Skills: commit" in buffer.getvalue()
+
+
+def test_skills_are_listed_only_if_this_run_can_load_one(tmp_path: Path) -> None:
+    """A list of skills the model has no way to ask for is a promise unkept."""
+    directory = tmp_path / ".lab-harness" / "skills" / "commit"
+    directory.mkdir(parents=True)
+    (directory / "SKILL.md").write_text(
+        "---\ndescription: Write a commit message\n---\nDo it.\n", encoding="utf-8"
+    )
+
+    listed = _build_agent(_args(), Config())
+    without_the_tool = _build_agent(_args(tools=("read",)), Config())
+
+    assert "- commit — Write a commit message" in listed.state.system_prompt
+    assert "Skills" not in without_the_tool.state.system_prompt
 
 
 def test_the_environment_is_filled_from_cwd_and_the_model(tmp_path: Path) -> None:
@@ -720,3 +752,39 @@ def test_export_of_an_unknown_session_is_an_error(
 ) -> None:
     assert main(["--export", "nope", "--cwd", str(tmp_path)]) == 1
     assert "nope" in capsys.readouterr().err
+
+
+def test_only_the_selected_skills_are_listed(tmp_path: Path) -> None:
+    for name in ("commit", "release"):
+        directory = tmp_path / ".lab-harness" / "skills" / name
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text(
+            f"---\ndescription: {name} things\n---\nDo it.\n", encoding="utf-8"
+        )
+    config = Config(skills=SkillsConfig(selected=("commit",)))
+
+    agent = _build_agent(_args(), config)
+
+    assert "- commit — commit things" in agent.state.system_prompt
+    assert "release" not in agent.state.system_prompt
+
+
+def test_the_skills_flag_selects_them() -> None:
+    config = _selected_skills(_args(skills=("commit",)), Config())
+
+    assert config.skills.selected == ("commit",)
+    assert config.skills.enabled
+
+
+def test_an_empty_skills_flag_leaves_none() -> None:
+    """The one thing `selected` cannot say: empty there means every one."""
+    config = _selected_skills(_args(skills=()), Config())
+
+    assert not config.skills.enabled
+    assert config.skills.selected == ()
+
+
+def test_without_the_flag_the_configured_selection_stands() -> None:
+    config = Config(skills=SkillsConfig(selected=("commit",)))
+
+    assert _selected_skills(_args(), config) is config

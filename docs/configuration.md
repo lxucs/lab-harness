@@ -88,12 +88,13 @@ system = "You are Lab Harness, a helpful assistant running in a terminal …"
 harness = "# Harness\n - Text you output outside of tool use …"
 environment = "# Environment\n…\n - Primary working directory: {cwd}\n…"
 context_management = "# Context management\n…"
+skills = "# Skills\n…{skills}"               # the list found, not the instructions
 project_instructions = "# Project instructions ({name})\n\n…{text}"
 
 [tools]
 enabled = [             # what the model may call, in both modes; --tools overrides
     "read", "write", "edit", "ls", "bash", "grep", "glob",
-    "web_search", "web_fetch",
+    "web_search", "web_fetch", "skill",
 ]
 
 [tools.read]
@@ -410,6 +411,7 @@ system prompt at all:
 | `harness` | How the harness works, as far as the model needs to know — where its text goes, what a denied call means |
 | `environment` | Where the agent runs. A template: see below |
 | `context_management` | What happens as a conversation grows, and how to spend its turns. Written for [compaction](architecture.md#todo-with-a-place-to-land), which is not built yet |
+| `skills` | Wraps the list of [skills](#skills), when any were found. `{skills}` is the list. Needs that placeholder unless it is empty |
 | `project_instructions` | Wraps the [project's instructions](#project-instructions), when it has any. `{name}` is the file's name, `{text}` its contents. |
 
 **`environment` is filled in when the prompt is built**, from these
@@ -429,8 +431,8 @@ trajectory exported from a session; an `environment` without it keeps it out.
 The model is named too, so resuming a session under another model changes the
 prompt, and `--resume` says so.
 
-Only `environment` and `project_instructions` are templates. The other
-sections are sent as written, braces and all.
+Only `environment`, `skills` and `project_instructions` are templates. The
+other sections are sent as written, braces and all.
 
 **The system prompt names no tools.** What the model can call, and how to use
 each tool, comes from the tool declarations alone — so `tools.enabled` or
@@ -622,3 +624,33 @@ session will warn that the prompt has moved. That is the warning working, not
 a bug; the transcript records which prompt each request was sent with. How the
 instructions are wrapped is `prompts.project_instructions` — see
 [Prompts](#prompts).
+
+## Skills
+
+Skills are instructions for one kind of task, loaded when the model asks for
+them by name rather than sent on every request. Where they are looked for,
+and how large one may be:
+
+```toml
+[skills]
+enabled = true
+directory_name = "skills"
+max_bytes = 32000
+```
+
+`directory_name` is read twice: under `.lab-harness` in the working directory,
+and under home. Both are searched, the working directory's first, and a name
+found there is not replaced by home's — a project overrides a skill of its own
+name rather than shadowing it by accident of ordering.
+
+`max_bytes` caps one `SKILL.md`, cut after the frontmatter. The instructions go
+into the transcript when the skill is loaded, so an unbounded file is an
+unbounded bill, exactly as with `project.max_bytes`.
+
+`selected` narrows what was found to the ones named — empty, the default, is
+every one. `--skills` overrides it for a run, and `/skills` in the terminal
+changes it mid-session; either given an empty value makes none available, which
+`selected` cannot say. Turning `enabled` off does the same for good.
+
+The file format, `allowed-tools`, and how the list reaches the model:
+[tools.md](tools.md#skills).

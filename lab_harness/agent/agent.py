@@ -80,7 +80,10 @@ class Agent:
     ) -> None:
         self.state = AgentState(system_prompt=system_prompt, model=model, tools=tools)
         self._provider = provider
-        self._config = config if config is not None else load_config()
+        #: Resolved configuration. Public, because a frontend may change what
+        #: applies between runs — `/tools` and `/skills` replace it — and the
+        #: tools read their settings from it on every call.
+        self.config = config if config is not None else load_config()
         self._cwd = cwd
         self._before_tool_call = before_tool_call
         self._after_tool_call = after_tool_call
@@ -179,7 +182,7 @@ class Agent:
             cfg = LoopConfig(
                 model=self.state.model,
                 provider=self._provider,
-                config=self._config,
+                config=self.config,
                 cwd=self._cwd,
                 before_tool_call=self._before_tool_call,
                 after_tool_call=self._after_tool_call,

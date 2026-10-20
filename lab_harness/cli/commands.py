@@ -6,7 +6,10 @@ else reads that one registry — the dispatch that runs a line, and the menu
 that lists commands as one is typed. Adding a command is registering it: it is
 listed, completed and run with nothing else to change.
 
-**The menu follows Claude Code.** A `/` at the start of the input lists every
+**The menu follows Claude Code.** Commands are also added after startup — one
+per skill, which `discard` removes again when that skill stops applying — so
+the menu holds what the session currently offers rather than what it began
+with. A `/` at the start of the input lists every
 command it could begin, by name or alias, each beside its description, with
 the first highlighted. Up and Down move the highlight; Tab puts the
 highlighted command in the input, ready for arguments; Enter runs it, so `/st`
@@ -110,6 +113,23 @@ class Commands:
 
     def __iter__(self) -> Iterator[Command]:
         return iter(self._commands)
+
+    def discard(self, name: str) -> None:
+        """Drop the command `name`, without the slash, if there is one.
+
+        Only the commands added after startup need it — one per skill, which
+        come and go as the selection does.
+        """
+        command = self._by_name.pop(name, None)
+        if command is None:
+            return
+        self._commands.remove(command)
+        for alias in command.aliases:
+            self._by_name.pop(alias, None)
+
+    def has(self, name: str) -> bool:
+        """Whether `name`, without the slash, is taken."""
+        return name in self._by_name
 
     def matching(self, text: str) -> list[Command]:
         """The commands `text` could be the start of, by name or alias.

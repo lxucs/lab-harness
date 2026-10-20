@@ -54,6 +54,7 @@ from lab_harness.llm.types import (
     text,
 )
 from lab_harness.logs import configure_logging
+from lab_harness.tools.skills import skill
 from tests.entries import model_entry
 
 #: Stands in for a command list that is never up, so Alt-Enter keeps its newline.
@@ -513,6 +514,102 @@ async def test_help_lists_every_command_with_what_it_does() -> None:
     assert "/exit (quit)" in output and "Exit the session" in output
 
 
+def _write_skill(
+    tmp_path: Path, name: str = "commit", description: str = "Write one", body: str = "Do it."
+) -> Path:
+    """A skill in the working directory's own skills directory."""
+    directory = tmp_path / ".lab-harness" / "skills" / name
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "SKILL.md").write_text(
+        f"---\ndescription: {description}\nallowed-tools: Bash\n---\n{body}\n", encoding="utf-8"
+    )
+    return directory
+
+
+async def test_skills_lists_them_with_what_each_allows(tmp_path: Path) -> None:
+    _write_skill(tmp_path, description="Write a commit message")
+    terminal, buffer = _terminal(["/skills"])
+    _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    output = buffer.getvalue()
+    assert "commit — Write a commit message" in output
+    assert "allows: bash" in output
+
+
+async def test_skills_says_where_it_looked_when_there_are_none(tmp_path: Path) -> None:
+    terminal, buffer = _terminal(["/skills"])
+    _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    output = buffer.getvalue()
+    assert "No skills in" in output
+    assert ".lab-harness/skills" in output
+
+
+async def test_a_skill_is_a_command_that_sends_its_instructions(tmp_path: Path) -> None:
+    """`/commit` runs one, the way Claude Code runs a skill from the menu."""
+    _write_skill(tmp_path, body="Steps to follow.")
+    terminal, buffer = _terminal(["/commit"])
+    provider = FakeProvider([text_response("done")])
+    _attach(terminal, provider)
+
+    await terminal.run()
+
+    assert terminal.commands.has("commit")
+    sent = provider.requests[0].messages[0]
+    assert isinstance(sent, UserMessage)
+    body = "".join(b.text for b in sent.content if isinstance(b, TextBlock))
+    assert body == "/commit\n\nSteps to follow."
+    # Echoed, so the run does not begin out of nowhere.
+    assert f"{GLYPH}/commit" in buffer.getvalue()
+
+
+async def test_a_skill_command_takes_a_request_with_it(tmp_path: Path) -> None:
+    _write_skill(tmp_path, body="Steps to follow.")
+    terminal, _ = _terminal(["/commit for the auth change"])
+    provider = FakeProvider([text_response("done")])
+    _attach(terminal, provider)
+
+    await terminal.run()
+
+    sent = provider.requests[0].messages[0]
+    body = "".join(b.text for b in sent.content if isinstance(b, TextBlock))
+    assert body.endswith("for the auth change")
+
+
+async def test_a_skill_named_like_a_command_adds_none(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A menu entry that silently shadowed `/help` is worse than one missing."""
+    _write_skill(tmp_path, name="help")
+    terminal, buffer = _terminal(["/help"])
+    _attach(terminal, FakeProvider([]))
+
+    with caplog.at_level(logging.WARNING):
+        await terminal.run()
+
+    assert "/help" in buffer.getvalue() and "List the commands" in buffer.getvalue()
+    assert "Write one" not in buffer.getvalue(), "the skill's own entry was not added"
+    assert "No command for skill help" in caplog.text
+
+
+async def test_a_skill_that_vanished_is_said(tmp_path: Path) -> None:
+    """The commands are read once; the skill itself again at invocation."""
+    _write_skill(tmp_path)
+    terminal, buffer = _terminal(["/commit"])
+    _attach(terminal, FakeProvider([]))
+    for path in (tmp_path / ".lab-harness").rglob("*"):
+        if path.is_file():
+            path.unlink()
+
+    await terminal.run()
+
+    assert "No skill named /commit" in buffer.getvalue()
+
+
 async def test_clear_forgets_the_conversation_but_keeps_the_session() -> None:
     terminal, buffer = _terminal(["hello", "/clear", "again"])
     provider = FakeProvider([text_response("one"), text_response("two")])
@@ -928,3 +1025,87 @@ def test_a_log_record_is_printed_in_the_style_given() -> None:
     LogStream(console, "dim").write("DEBUG lab_harness.sample: quiet\n")
 
     assert out.getvalue() == "\x1b[2mDEBUG lab_harness.sample: quiet\x1b[0m\n"
+
+
+async def test_tools_lists_what_the_session_has() -> None:
+    terminal, buffer = _terminal(["/tools"])
+    _attach(terminal, FakeProvider([]), tools=(skill,))
+
+    await terminal.run()
+
+    assert "tools: skill" in buffer.getvalue()
+
+
+async def test_tools_chooses_them_mid_session() -> None:
+    terminal, buffer = _terminal(["/tools read, skill"])
+    agent = _attach(terminal, FakeProvider([]))
+
+    await terminal.run()
+
+    assert [t.name for t in agent.state.tools] == ["read", "skill"]
+    assert "tools: read, skill" in buffer.getvalue()
+
+
+async def test_tools_none_leaves_none_and_takes_the_skills_with_it(tmp_path: Path) -> None:
+    """Nothing can load a skill without the tool, so the prompt drops them."""
+    _write_skill(tmp_path)
+    terminal, buffer = _terminal(["/tools none"])
+    agent = _attach(terminal, FakeProvider([]), tools=(skill,))
+    terminal.rebuild_prompt = lambda skills: f"prompt: {skills}"
+
+    await terminal.run()
+
+    assert agent.state.tools == ()
+    # The prompt drops them, but the menu keeps `/commit`: invoking one from
+    # the keyboard is a message, so it needs no tool.
+    assert terminal.commands.has("commit")
+    assert agent.state.system_prompt == "prompt: "
+    assert "tools: none" in buffer.getvalue()
+
+
+async def test_a_tool_nothing_answers_to_is_reported() -> None:
+    terminal, buffer = _terminal(["/tools nope"])
+    agent = _attach(terminal, FakeProvider([]), tools=(skill,))
+
+    await terminal.run()
+
+    assert [t.name for t in agent.state.tools] == ["skill"]
+    assert "nope" in buffer.getvalue()
+
+
+async def test_skills_chooses_them_mid_session(tmp_path: Path) -> None:
+    _write_skill(tmp_path, description="Write a commit message")
+    _write_skill(tmp_path, name="release", description="Cut a release")
+    terminal, buffer = _terminal(["/skills commit"])
+    agent = _attach(terminal, FakeProvider([]), tools=(skill,))
+    terminal.rebuild_prompt = lambda skills: f"prompt: {skills}"
+
+    await terminal.run()
+
+    assert agent.config.skills.selected == ("commit",)
+    assert terminal.commands.has("commit")
+    assert not terminal.commands.has("release"), "a skill dropped loses its command"
+    assert agent.state.system_prompt == "prompt: - commit — Write a commit message"
+    assert "skills: commit" in buffer.getvalue()
+
+
+async def test_skills_none_turns_them_off(tmp_path: Path) -> None:
+    _write_skill(tmp_path)
+    terminal, buffer = _terminal(["/skills none", "/skills"])
+    agent = _attach(terminal, FakeProvider([]), tools=(skill,))
+
+    await terminal.run()
+
+    assert not agent.config.skills.enabled
+    assert "Skills are off" in buffer.getvalue()
+
+
+async def test_a_skill_chosen_that_is_not_there_is_said(tmp_path: Path) -> None:
+    _write_skill(tmp_path)
+    terminal, buffer = _terminal(["/skills nope"])
+    _attach(terminal, FakeProvider([]), tools=(skill,))
+
+    await terminal.run()
+
+    assert "skills: none" in buffer.getvalue()
+    assert "Not found: nope" in buffer.getvalue()

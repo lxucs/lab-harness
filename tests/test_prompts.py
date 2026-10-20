@@ -81,6 +81,28 @@ def test_the_shipped_environment_says_where_the_agent_runs() -> None:
     ) in prompt
 
 
+def test_the_skills_section_holds_the_list_it_is_given() -> None:
+    prompt = build_system_prompt(Config().prompts, ENVIRONMENT, skills="- commit — Write one")
+
+    assert "# Skills" in prompt
+    assert "- commit — Write one" in prompt
+
+
+def test_the_skills_section_is_left_out_when_there_is_no_list() -> None:
+    """No skills found, or none loadable: nothing says so in the prompt."""
+    prompt = build_system_prompt(Config().prompts, ENVIRONMENT, skills="")
+
+    assert "Skills" not in prompt
+
+
+def test_the_skills_template_must_hold_the_list() -> None:
+    """A template without {skills} would drop the list without saying so."""
+    prompts = replace(Config().prompts, skills="# Skills\nNothing to see.")
+
+    with pytest.raises(ConfigError, match=r"prompts\.skills: needs \{skills\}"):
+        build_system_prompt(prompts, ENVIRONMENT, skills="- commit — Write one")
+
+
 def test_the_shipped_wrapper() -> None:
     assert build_system_prompt(
         PromptsConfig(system="S", project_instructions=Config().prompts.project_instructions),

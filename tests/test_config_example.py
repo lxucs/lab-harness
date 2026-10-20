@@ -39,6 +39,9 @@ INTENTIONALLY_ABSENT = {
     "prompts.environment",
     "prompts.context_management",
     "prompts.project_instructions",
+    # Likewise: filled with the skills found, which are a directory's contents
+    # rather than a setting, so a value here would be a copy of the prose.
+    "prompts.skills",
 }
 
 #: Substrings that would mean a real secret leaked into a committed file.

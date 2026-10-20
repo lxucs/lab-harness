@@ -29,7 +29,11 @@ they land above the live region rather than inside it — see `LogStream`.
 
 **Slash commands are run here, not sent.** The terminal registers its own in
 a `Commands` registry, which both runs them and lists them above the prompt as
-one is typed — see `commands.py`.
+one is typed — see `commands.py`. Each skill found for the directory is added
+as one when the agent attaches, so `/commit` sends that skill's instructions
+as a turn; `/skills` lists them. `/tools` and `/skills` also *choose* what
+applies mid-session, and the system prompt is rebuilt to match — by a callable
+the CLI hands over, being what knows the flags that shaped it.
 
 **`/model` and `/effort` change what the next runs ask for.** Each replaces
 the agent's model, so the next run's `agent_start` carries it and a recorded
@@ -49,11 +53,12 @@ and `/status` both fold over messages that already carry their `Usage` — see
 
 import asyncio
 import io
+import logging
 import os
 import signal
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -94,6 +99,8 @@ from lab_harness.config import Config, ConfigError, lab_harness_home
 from lab_harness.llm.providers import select_provider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.llm.types import Message, Model
+from lab_harness.tools import default_registry
+from lab_harness.tools.skills import Skill, directories, index, load_skills, skill
 
 #: One line of what the keys do, under the welcome box.
 _TIPS = "/ for commands · Ctrl-C cancels · Ctrl-O toggles thinking"
@@ -115,6 +122,10 @@ _EFFORT_CLEAR = "default"
 #: empty-string entry: a bare Enter is not consent, it is a reflex. Anything
 #: unlisted falls through to "no".
 _ANSWERS = {"y": "yes", "n": "no", "a": "always"}
+#: What `/tools` and `/skills` take to choose nothing.
+_NONE = "none"
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -154,6 +165,18 @@ class Terminal:
                     self._set_model,
                     arguments="[id]",
                 ),
+                Command(
+                    "tools",
+                    "Show the tools this session has, or choose them",
+                    self._set_tools,
+                    arguments="[names]",
+                ),
+                Command(
+                    "skills",
+                    "List the skills that apply, or choose them",
+                    self._print_skills,
+                    arguments="[names]",
+                ),
                 Command("clear", "Forget the conversation and start over", self._clear),
                 Command("help", "List the commands", self._print_help),
                 Command("exit", "Exit the session", self._exit, aliases=("quit",)),
@@ -171,12 +194,20 @@ class Terminal:
         #: Share of the context window the last request filled. None until one
         #: reports, since "0% of the window" before any run would be a lie.
         self._context_share: float | None = None
+        #: Commands added for skills, so they can be dropped again when the
+        #: selection changes.
+        self._skill_commands: tuple[str, ...] = ()
+        #: Rebuilds the system prompt around a skills list. The CLI sets it,
+        #: being what knows the flags that shaped the prompt; None leaves the
+        #: prompt as it was built.
+        self.rebuild_prompt: Callable[[str], str] | None = None
 
     def attach(self, agent: Agent) -> None:
         """Bind the agent and start rendering its events."""
         self._agent = agent
         self._renderer = EventRenderer(self.console, self.config.terminal)
         agent.subscribe(self._renderer)
+        self._sync_skill_commands(self._skills())
 
     @property
     def agent(self) -> Agent:
@@ -341,6 +372,160 @@ class Terminal:
         )
         self.console.print()
 
+    async def _set_tools(self, names: str) -> None:
+        """`/tools` lists what this session has; `/tools NAMES` replaces it.
+
+        The same list `--tools` takes, changed between runs rather than at
+        startup. The next run's `agent_start` carries the new declarations, so
+        a recorded session opens a new segment there, as it does for `/model`.
+        """
+        theme = self.config.terminal.theme
+        if not names:
+            self.console.print(Text(_listing("tools", self._tool_names()), style=theme.muted))
+            self.console.print()
+            return
+        try:
+            tools = default_registry().select(_names(names))
+        except ValueError as exc:  # a name no tool answers to
+            self.console.print(Text(str(exc), style=theme.warning))
+            self.console.print()
+            return
+        self.agent.state.tools = tools
+        # The skills follow: they are loadable only while `skill` is among
+        # these, and the prompt is what says which there are.
+        self._refresh_skills()
+        self.console.print(Text(_listing("tools", [t.name for t in tools]), style=theme.muted))
+        self.console.print()
+
+    async def _print_skills(self, names: str) -> None:
+        """`/skills` lists those that apply; `/skills NAMES` chooses them.
+
+        Choosing sets `skills.selected` for the rest of the session: what the
+        `skill` tool loads, what the prompt lists, and what the `/` menu
+        offers all read it.
+        """
+        theme = self.config.terminal.theme
+        if names:
+            self._select_skills(_names(names))
+            return
+        if not self.agent.config.skills.enabled:
+            self.console.print(Text("Skills are off: skills.enabled is false", style=theme.muted))
+            self.console.print()
+            return
+        found = self._skills()
+        if not found:
+            self.console.print(
+                Text(f"No skills in {_where(self.agent.cwd, self.agent.config)}", style=theme.muted)
+            )
+            self.console.print()
+            return
+        for one in found:
+            line = Text(f"{one.name} — {one.description}")
+            if one.allowed_tools:
+                line.append(f"   allows: {', '.join(one.allowed_tools)}", style=theme.muted)
+            self.console.print(line)
+        self.console.print(Text("Invoke one with /name, or ask for it by name.", style=theme.muted))
+        self.console.print()
+
+    def _select_skills(self, names: tuple[str, ...]) -> None:
+        """Choose which skills apply, and bring the prompt and menu along."""
+        theme = self.config.terminal.theme
+        skills = self.agent.config.skills
+        self.agent.config = replace(
+            self.agent.config, skills=replace(skills, selected=names, enabled=bool(names))
+        )
+        self._refresh_skills()
+        shown = [one.name for one in self._skills()]
+        self.console.print(Text(_listing("skills", shown), style=theme.muted))
+        if names and len(shown) < len(names):
+            # Chosen and not there: said here as well as logged, since a name
+            # that applied to nothing is otherwise invisible.
+            self.console.print(Text(f"Not found: {', '.join(names)}", style=theme.warning))
+        self.console.print()
+
+    def _skills(self) -> tuple[Skill, ...]:
+        """The skills that apply here: found, and selected."""
+        return load_skills(self.agent.cwd, self.agent.config)
+
+    def _offered_skills(self) -> tuple[Skill, ...]:
+        """What the prompt may list: none unless the model can ask for one.
+
+        The terminal's own menu and `/skills` are not so gated — invoking one
+        from the keyboard is a message, not a tool call — but a prompt listing
+        what the model cannot load is a promise unkept.
+        """
+        if not any(tool.name == skill.name for tool in self.agent.state.tools):
+            return ()
+        return self._skills()
+
+    def _tool_names(self) -> list[str]:
+        return [tool.name for tool in self.agent.state.tools]
+
+    def _refresh_skills(self) -> None:
+        """Rebuild the prompt and the menu around the skills that apply now.
+
+        Both say what can be asked for, so both follow a change to the tools
+        or to the selection: a menu offering one that is not selected, or a
+        prompt listing one the model cannot load, is a promise unkept.
+        """
+        if self.rebuild_prompt is not None:
+            self.agent.state.system_prompt = self.rebuild_prompt(index(self._offered_skills()))
+        self._sync_skill_commands(self._skills())
+
+    def _sync_skill_commands(self, skills: Iterable[Skill]) -> None:
+        """One command per skill, so `/commit` runs one the way Claude Code does.
+
+        Synced rather than added once, because the selection can change
+        mid-session: a skill dropped from it loses its command. A name already
+        taken, by `/help` for instance, is skipped with a warning — a menu
+        entry that silently shadowed a built-in would be worse than one that
+        is missing.
+        """
+        for name in self._skill_commands:
+            self.commands.discard(name)
+        added: list[str] = []
+        for found in skills:
+            try:
+                self.commands.add(
+                    Command(
+                        found.name,
+                        found.description,
+                        self._run_skill(found.name),
+                        arguments="[request]",
+                    )
+                )
+            except ValueError as exc:  # not a command name, or one we already have
+                _log.warning("No command for skill %s: %s", found.name, exc)
+                continue
+            added.append(found.name)
+        self._skill_commands = tuple(added)
+
+    def _run_skill(self, name: str) -> Callable[[str], Awaitable[None]]:
+        """`/name`: send the skill's instructions as the next turn's message.
+
+        Read again at invocation rather than kept from startup, so a skill
+        edited mid-session is the one that runs.
+        """
+
+        async def run(request: str) -> None:
+            theme = self.config.terminal.theme
+            found = {one.name: one for one in load_skills(self.agent.cwd, self.config)}
+            if name not in found:
+                self.console.print(
+                    Text(f"No skill named /{name} — /skills lists them", style=theme.warning)
+                )
+                self.console.print()
+                return
+            typed = f"/{name}" + (f" {request}" if request else "")
+            # Echoed as a typed line, so the run does not start out of nowhere.
+            self.console.print(Text.assemble((GLYPH, theme.muted), (typed, "")))
+            message = f"/{name}\n\n{found[name].body}"
+            if request:
+                message += f"\n\n{request}"
+            await self._run_turn(message)
+
+        return run
+
     async def _clear(self, _arguments: str) -> None:
         """`/clear` forgets the conversation; the transcript keeps what came before."""
         self.agent.restore(())
@@ -494,6 +679,23 @@ def _short_home(path: str) -> str:
     """`~/gitrepo/harness` rather than the whole path. Display only."""
     home = str(Path.home())
     return path.replace(home, "~", 1) if path.startswith(home) else path
+
+
+def _names(value: str) -> tuple[str, ...]:
+    """`/tools read, ls` as names. The word `none` is none, as for `--tools`."""
+    text = value.strip()
+    return () if text == _NONE else tuple(n for part in text.split(",") if (n := part.strip()))
+
+
+def _listing(what: str, names: Iterable[str]) -> str:
+    """`tools: read, ls`, or `tools: none`."""
+    listed = ", ".join(names)
+    return f"{what}: {listed}" if listed else f"{what}: none"
+
+
+def _where(cwd: str, config: Config) -> str:
+    """Where skills are looked for, for a message that names both."""
+    return " or ".join(_short_home(str(directory)) for directory in directories(cwd, config))
 
 
 @contextmanager

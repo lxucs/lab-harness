@@ -141,6 +141,10 @@ Each run's `agent_start` event carries what it is sent with, and the recorder
 writes a new `context` entry when that differs from the last one, before the
 run's first message. A session that changes nothing writes nothing extra.
 
+`/tools` and `/skills` do the same from the terminal, and rebuild the system
+prompt around what they chose — dropping the `skill` tool drops the skills it
+listed, for instance, without disturbing the history.
+
 ### Rewritten requests
 
 A `prepare_request` hook may send something other than the history — a

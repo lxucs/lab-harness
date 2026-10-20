@@ -41,11 +41,29 @@ context_files = ["HARNESS.md", "AGENTS.md"]
 # so an unbounded file is an unbounded bill.
 max_bytes = 32000
 
+[skills]
+# Instructions for one kind of task, loaded when the model asks for one by
+# name. A skill is a directory holding a SKILL.md: YAML frontmatter with a
+# description of when it applies, then the instructions. Only the name and
+# that description ride in every request, as a list in the system prompt.
+#
+# Look for them at all. Off means none are listed, and `skill` loads none.
+enabled = true
+# Subdirectory holding them: of .lab-harness in the working directory, and of
+# home. Both are searched, the working directory's first.
+directory_name = "skills"
+# Which of those found apply, by name. Empty, the default, is every one;
+# --skills overrides it, and an empty value there means none.
+selected = []
+# A longer SKILL.md is cut. Its instructions go into the transcript when the
+# skill is loaded, so an unbounded file is an unbounded bill.
+max_bytes = 32000
+
 [prompts]
 # What the model is told besides the conversation and the tool declarations:
 # the sections of the system prompt, sent in this order, a blank line apart --
-# system, harness, environment, context_management, project_instructions. The
-# defaults ship in lab_harness/prompts/prompts.toml, which documents every key;
+# system, harness, environment, context_management, skills,
+# project_instructions. The defaults ship in lab_harness/prompts/prompts.toml, which documents every key;
 # copy one here to replace it, or set it to "" to leave that section out.
 # --system-prompt and --system-prompt-file replace `system` for one run.
 #
@@ -78,7 +96,7 @@ max_bytes = 32000
 # a tool out is what stops it running there. An empty list gives none.
 enabled = [
     "read", "write", "edit", "ls", "bash", "grep", "glob",
-    "web_search", "web_fetch",
+    "web_search", "web_fetch", "skill",
 ]
 
 [tools.read]

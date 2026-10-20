@@ -19,13 +19,14 @@ from rich.text import Text
 
 from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentEvent, MessageEnd, declarations_for
+from lab_harness.cli.approval import skill_allowances
 from lab_harness.cli.export import export_html
 from lab_harness.cli.json_sink import json_sink
 from lab_harness.cli.renderers import display_name
 from lab_harness.cli.terminal import LogStream, Terminal, build_approval_gate
 from lab_harness.config import Config, ConfigError, PromptsConfig, load_config
 from lab_harness.llm.providers import route
-from lab_harness.llm.types import AssistantMessage, TextBlock
+from lab_harness.llm.types import AssistantMessage, Model, TextBlock
 from lab_harness.logs import LEVELS, configure_logging
 from lab_harness.prompts import build_system_prompt, detect_environment, load_project_context
 from lab_harness.session import (
@@ -40,6 +41,7 @@ from lab_harness.session import (
     start_recorder,
 )
 from lab_harness.tools import AgentTool, default_registry
+from lab_harness.tools.skills import Skill, index, load_skills, skill
 
 _log = logging.getLogger(__name__)
 
@@ -74,11 +76,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tools",
-        type=parse_tool_names,
+        type=parse_names,
         metavar="NAMES",
         help=(
             "Comma-separated tools to enable, e.g. read,ls,grep. Overrides "
             "tools.enabled; an empty value enables none."
+        ),
+    )
+    parser.add_argument(
+        "--skills",
+        type=parse_names,
+        metavar="NAMES",
+        help=(
+            "Comma-separated skills to make available, e.g. commit,release. "
+            "Overrides skills.selected; an empty value makes none available."
         ),
     )
     prompt = parser.add_mutually_exclusive_group()
@@ -133,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_tool_names(value: str) -> tuple[str, ...]:
+def parse_names(value: str) -> tuple[str, ...]:
     """`--tools read, ls` as names. Blank entries are dropped, so "" is none."""
     return tuple(name for part in value.split(",") if (name := part.strip()))
 
@@ -178,6 +189,47 @@ def _prompts(args: argparse.Namespace, config: Config) -> PromptsConfig:
     return replace(config.prompts, system=system)
 
 
+def _selected_skills(args: argparse.Namespace, config: Config) -> Config:
+    """`config` with `--skills` applied, which overrides `skills.selected`.
+
+    An empty value makes none available, as it does for `--tools` — the one
+    thing `selected` cannot say, since empty there means "every one found".
+    """
+    if args.skills is None:
+        return config
+    return replace(
+        config, skills=replace(config.skills, selected=args.skills, enabled=bool(args.skills))
+    )
+
+
+def _skills(
+    args: argparse.Namespace, config: Config, tools: tuple[AgentTool, ...]
+) -> tuple[Skill, ...]:
+    """The skills for this run: none unless this run's tools can load one.
+
+    A list of skills the model has no way to ask for is a promise unkept, so
+    `--tools` without `skill` leaves the prompt without them too.
+    """
+    if not any(tool.name == skill.name for tool in tools):
+        return ()
+    return load_skills(args.cwd, config)
+
+
+def _system_prompt(args: argparse.Namespace, config: Config, model: Model, skills: str = "") -> str:
+    """The system prompt for this run, with the skills list as it stands.
+
+    Its own function because the terminal rebuilds it mid-session: `/tools`
+    and `/skills` change what is offered, and a prompt still listing what
+    cannot be asked for is a prompt that lies.
+    """
+    return build_system_prompt(
+        _prompts(args, config),
+        detect_environment(args.cwd, model.id),
+        load_project_context(args.cwd, config.project),
+        skills,
+    )
+
+
 def _build_agent(
     args: argparse.Namespace,
     config: Config,
@@ -194,12 +246,19 @@ def _build_agent(
         if context.truncated:
             note += f" (truncated to {config.project.max_bytes} bytes)"
         console.print(Text(note, style=config.terminal.theme.muted))
+    skills = _skills(args, config, tools)
+    if skills and console is not None:
+        # The same reason: the model is offered these, and a run that offers
+        # none when some were meant to is a run that looks like any other.
+        console.print(
+            Text(f"Skills: {', '.join(s.name for s in skills)}", style=config.terminal.theme.muted)
+        )
     model, provider = route(args.model, config, args.provider)
     if args.reasoning_effort is not None:
         model = replace(model, reasoning_effort=args.reasoning_effort.strip())
         _log.info("Reasoning effort %r, from --reasoning-effort", model.reasoning_effort)
     environment = detect_environment(args.cwd, model.id)
-    system_prompt = build_system_prompt(_prompts(args, config), environment, context)
+    system_prompt = build_system_prompt(_prompts(args, config), environment, context, index(skills))
     _log.debug("System prompt: %d characters", len(system_prompt))
     return Agent(
         model=model,
@@ -295,6 +354,10 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
         _log.info("Tool approval off: --yes")
     gate = None if args.yes else build_approval_gate(terminal, config)
     agent = _build_agent(args, config, before_tool_call=gate, console=console)
+    if gate is not None:
+        agent.subscribe(skill_allowances(gate, console, config.terminal.theme.muted))
+    # So `/tools` and `/skills` can rebuild the prompt around what applies now.
+    terminal.rebuild_prompt = lambda skills: _system_prompt(args, config, agent.state.model, skills)
     terminal.attach(agent)
     terminal.welcome()
     recorder = _attach_session(agent, args, config, console)
@@ -409,6 +472,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Config is loaded relative to --cwd, so `lab-harness --cwd ../other` picks
         # up that project's .lab-harness/ rather than this directory's.
         config = load_config(args.cwd)
+        config = _selected_skills(args, config)
         configure_logging(args.log_level, config.logging)
         if args.export is not None:
             return export_session(args, config)
