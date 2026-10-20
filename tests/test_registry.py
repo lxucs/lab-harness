@@ -58,7 +58,7 @@ def test_every_catalogued_model_names_a_provider_that_exists() -> None:
 
 
 def test_every_catalogued_model_has_a_name_and_a_price() -> None:
-    """So the terminal labels it, and `:status` shows a cost for it."""
+    """So the terminal labels it, and `/status` shows a cost for it."""
     for model_id, entry in Config().models.items():
         assert entry.name, model_id
         assert entry.price.input and entry.price.output, model_id

@@ -15,12 +15,14 @@ from dataclasses import replace
 
 import pytest
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from lab_harness.agent import Agent
 from lab_harness.agent.types import AgentStart, MessageStart
+from lab_harness.cli.commands import Command
 from lab_harness.cli.renderers import EventRenderer
 from lab_harness.cli.terminal import (
     LogStream,
@@ -103,7 +105,7 @@ async def test_blank_lines_are_ignored() -> None:
     assert len(provider.requests) == 1
 
 
-@pytest.mark.parametrize("word", [":q", ":quit", "exit"])
+@pytest.mark.parametrize("word", ["/exit", "/quit", "exit"])
 async def test_exit_words_leave_the_session(word: str) -> None:
     terminal, _ = _terminal([word, "never reached"])
     provider = FakeProvider([text_response("unused")])
@@ -291,13 +293,13 @@ async def test_the_footer_shows_a_cost_once_the_model_is_priced() -> None:
 
 
 async def test_status_shows_session_totals_without_a_request() -> None:
-    terminal, buffer = _terminal(["first", "second", ":status"])
+    terminal, buffer = _terminal(["first", "second", "/status"])
     provider = FakeProvider([text_response("one"), text_response("two")])
     _attach(terminal, provider)
 
     assert await terminal.run() == 0
 
-    assert len(provider.requests) == 2, ":status must not reach the provider"
+    assert len(provider.requests) == 2, "/status must not reach the provider"
     status = buffer.getvalue().split("two")[-1]
     assert re.search(r"requests\s+2\b", status)
     assert re.search(r"output\s+10\b", status)
@@ -305,7 +307,7 @@ async def test_status_shows_session_totals_without_a_request() -> None:
 
 async def test_status_includes_resumed_history() -> None:
     """Restored messages never pass a subscriber, so totals come from the transcript."""
-    terminal, buffer = _terminal([":status"])
+    terminal, buffer = _terminal(["/status"])
     agent = _attach(terminal, FakeProvider([]))
     agent.restore(
         [
@@ -327,7 +329,7 @@ async def test_status_includes_resumed_history() -> None:
 
 
 async def test_effort_changes_the_level_the_next_runs_ask_for() -> None:
-    terminal, buffer = _terminal([":effort low", "first", ":status", ":effort default"])
+    terminal, buffer = _terminal(["/effort low", "first", "/status", "/effort default"])
     provider = FakeProvider([text_response("one")])
     model = replace(FAKE_MODEL, supports_reasoning=True)
     agent = Agent(model=model, provider=provider, config=terminal.config)
@@ -343,18 +345,87 @@ async def test_effort_changes_the_level_the_next_runs_ask_for() -> None:
     await terminal.run()
 
     assert efforts == ["low"], "the run after it asks for the level"
-    assert len(provider.requests) == 1, ":effort must not reach the provider"
-    assert re.search(r"effort\s+low\b", buffer.getvalue()), ":status shows it"
+    assert len(provider.requests) == 1, "/effort must not reach the provider"
+    assert re.search(r"effort\s+low\b", buffer.getvalue()), "/status shows it"
     assert agent.state.model == model, "default sends none again"
 
 
 async def test_effort_says_when_the_model_does_not_reason() -> None:
-    terminal, buffer = _terminal([":effort high"])
+    terminal, buffer = _terminal(["/effort high"])
     _attach(terminal, FakeProvider([]))
 
     await terminal.run()
 
     assert "does not reason" in buffer.getvalue()
+
+
+# --- commands -------------------------------------------------------------
+
+
+async def test_an_unknown_command_says_so_instead_of_sending() -> None:
+    terminal, buffer = _terminal(["/stauts"])
+    provider = FakeProvider([])
+    _attach(terminal, provider)
+
+    assert await terminal.run() == 0
+
+    assert "Unknown command /stauts" in buffer.getvalue()
+    assert provider.requests == []
+
+
+async def test_a_path_is_a_message_not_a_command() -> None:
+    terminal, _ = _terminal(["/tmp/notes.md what is this?"])
+    provider = FakeProvider([text_response("a file")])
+    _attach(terminal, provider)
+
+    await terminal.run()
+
+    assert len(provider.requests) == 1
+
+
+async def test_a_registered_command_is_run_with_its_arguments() -> None:
+    terminal, _ = _terminal(["/echo one two"])
+    _attach(terminal, FakeProvider([]))
+    given: list[str] = []
+
+    async def echo(arguments: str) -> None:
+        given.append(arguments)
+
+    terminal.commands.add(Command("echo", "Repeat", echo))
+    await terminal.run()
+
+    assert given == ["one two"]
+
+
+async def test_a_failing_command_ends_itself_not_the_session() -> None:
+    terminal, buffer = _terminal(["/boom", "after"])
+    provider = FakeProvider([text_response("still here")])
+    _attach(terminal, provider)
+
+    async def boom(arguments: str) -> None:
+        raise RuntimeError("it broke")
+
+    terminal.commands.add(Command("boom", "Fail", boom))
+    await terminal.run()
+
+    assert "error: it broke" in buffer.getvalue()
+    assert "still here" in buffer.getvalue()
+
+
+async def test_the_prompt_completes_a_command_as_typed() -> None:
+    """The real session, so the menu is wired to the prompt it serves."""
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+        buffer = io.StringIO()
+        console = Console(file=buffer, width=90, force_terminal=False, no_color=True)
+        terminal = Terminal(console=console, config=Config())
+        provider = FakeProvider([])
+        _attach(terminal, provider)
+        pipe.send_text("/st\r\x04")
+
+        assert await terminal.run() == 0
+
+    assert re.search(r"requests\s+0\b", buffer.getvalue()), "/st ran /status"
+    assert provider.requests == []
 
 
 # --- approval prompt ------------------------------------------------------

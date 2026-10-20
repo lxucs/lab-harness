@@ -127,7 +127,7 @@ and only one serving open weights can return it.
 
 The system prompt, tools, model and reasoning effort can change between runs
 without starting a new session — from Python by assigning to the agent's
-state, and the effort from the terminal too, with `:effort`:
+state, and the effort from the terminal too, with `/effort`:
 
 ```python
 agent.state.system_prompt = "Answer in French."

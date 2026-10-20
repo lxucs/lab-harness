@@ -140,16 +140,55 @@ on macOS and the BSDs, would silently drop the run's output.
 | `Enter` | Submit |
 | `Alt-Enter` | Newline without submitting |
 
-| Command | Action |
-|---|---|
-| `:status` | Token, cache and cost totals for the session |
-| `:effort [LEVEL]` | Show the reasoning effort, or set it for the runs after; `:effort default` sends none |
-| `:q`, `:quit`, `exit` | Exit |
-
 The agent runs one turn sequence at a time. Typing while it works is buffered by
 the terminal, unechoed, and appears at the next prompt — submitted at once if
 it ended with Enter. The runtime itself refuses a second concurrent `prompt()`
 rather than coordinating with the one in flight.
+
+### Commands
+
+A line that is a `/` and a name is a command, which the terminal runs itself
+rather than sending:
+
+| Command | Action |
+|---|---|
+| `/status` | Token, cache and cost totals for the session |
+| `/effort [LEVEL]` | Show the reasoning effort, or set it for the runs after; `/effort default` sends none |
+| `/exit`, `/quit`, `exit` | Exit |
+
+**Typing `/` lists them**, as Claude Code does: above the prompt, every command
+the input could be the start of, by name or alias, each beside its description,
+the first highlighted.
+
+```
+  /effort [level]  Show or set the reasoning effort; "default" sends none
+  /exit (quit)     Exit the session
+› /e
+```
+
+The input moves down to make room and back up when the list closes. On the
+terminal's bottom row the room comes from scrolling earlier output up, which
+cannot be undone, so there the input ends up a few rows higher until the next
+output fills the gap.
+
+| Key | In the list |
+|---|---|
+| `Up`, `Down` | Move the highlight; the input is left as typed |
+| `Tab` | Put the highlighted command in the input, ready for arguments |
+| `Enter` | Run the highlighted command — `/st` and Enter is `/status` |
+
+Typed ahead during a run, `/st` and Enter still runs `/status` when the prompt
+returns.
+
+A path is not a command: `/tmp/notes.md what is this?` fails at its second
+slash and goes to the model. A name that is no command, such as `/stauts`, is
+reported rather than sent.
+
+Every command is an entry in one registry, `Commands` in
+[`cli/commands.py`](../lab_harness/cli/commands.py), which both runs and lists
+it. A new one is a name, a one-line description and an async handler given the
+rest of the line, added with `terminal.commands.add(Command(...))` — it is
+listed, completed and run with nothing else to change.
 
 ### Usage and cost
 
@@ -171,7 +210,7 @@ Each run ends with one dim line covering every request it made:
 so adding them up would count it again on each turn. `in` *is* a sum, because
 that is what is billed.
 
-`:status` shows the same figures for the whole session, with the prompt split
+`/status` shows the same figures for the whole session, with the prompt split
 into uncached, cache-read and cache-write tokens:
 
 ```
@@ -188,7 +227,7 @@ Both are computed from the transcript rather than counted as events arrive —
 every assistant message carries its request's `Usage` — so after `--resume`
 the totals include the restored history.
 
-Set `terminal.show_usage = false` to drop the per-run line; `:status` still
+Set `terminal.show_usage = false` to drop the per-run line; `/status` still
 works. The line is interactive-only: in `-p` mode stdout is the answer, and
 `--json` already carries `usage` on every assistant `message_end`.
 
@@ -325,13 +364,13 @@ the table.
 How hard a reasoning model thinks is one setting, resolved like the model
 itself — highest first:
 
-1. `:effort LEVEL` in the terminal, for the runs after it
+1. `/effort LEVEL` in the terminal, for the runs after it
 2. `--reasoning-effort LEVEL`
 3. the model's `reasoning_effort` in `[models]`
 4. `agent.reasoning_effort`
 
 Empty everywhere — the default — sends nothing, and the model thinks at its
-provider's default. `--reasoning-effort ""` and `:effort default` mean the same
+provider's default. `--reasoning-effort ""` and `/effort default` mean the same
 for one run or the rest of a session, whatever config says.
 
 ```bash
@@ -359,7 +398,7 @@ sent no level at all.
 
 A level is part of the model a request goes to, so a session records it with
 the model in each `context` entry: a changed level opens a new segment, the
-export page marks it, and a rebuilt request body carries it. `:status` shows
+export page marks it, and a rebuilt request body carries it. `/status` shows
 the current one.
 
 ## Diagnostics

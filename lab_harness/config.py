@@ -641,9 +641,9 @@ class TerminalConfig:
     thinking: str = "collapse"
     #: Lines of reasoning shown while it streams, when it is going to
     #: collapse. "full" shows as much as fits.
-    thinking_preview_lines: int = 4
+    thinking_preview_lines: int = 6
     #: Print one line of token, cache and cost figures after each run.
-    #: `:status` shows the session's totals either way.
+    #: `/status` shows the session's totals either way.
     show_usage: bool = True
     #: Label for amounts computed from each model's `price`. Only a label —
     #: nothing is converted, so it has to match the currency the rates are

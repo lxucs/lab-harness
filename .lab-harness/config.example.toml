@@ -29,7 +29,7 @@ model_env = "LAB_HARNESS_MODEL"
 provider = "anthropic"
 # Reasoning effort for a model whose [models] entry sets none, in the
 # provider's own terms: "low", "high", ... Empty sends none, leaving it to the
-# model. --reasoning-effort, and :effort in the terminal, override it.
+# model. --reasoning-effort, and /effort in the terminal, override it.
 reasoning_effort = ""
 
 [project]
@@ -175,8 +175,8 @@ markdown = true
 # streams. Ctrl-O switches between full and this for the rest of the session.
 thinking = "collapse"
 # Lines of reasoning shown while it streams, when it is going to collapse.
-thinking_preview_lines = 4
-# Print one line of token, cache and cost figures after each run. Type :status
+thinking_preview_lines = 6
+# Print one line of token, cache and cost figures after each run. Type /status
 # for the session's totals either way.
 show_usage = true
 # Label for amounts computed from model prices. Only a label -- nothing is

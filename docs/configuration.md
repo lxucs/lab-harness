@@ -138,7 +138,7 @@ max_result_lines = 12   # tool output shown before collapsing
 max_diff_lines = 40     # lines of an edit's diff shown before collapsing
 markdown = true         # render assistant text as markdown
 thinking = "collapse"   # reasoning once its message ends: "full" | "collapse" | "hidden"
-thinking_preview_lines = 4  # lines of reasoning shown while it streams, when collapsing
+thinking_preview_lines = 6  # lines of reasoning shown while it streams, when collapsing
 show_usage = true       # token, cache and cost line after each run
 currency_symbol = "$"   # label for costs computed from model prices
 
@@ -344,7 +344,7 @@ budgeted. Its four rates mirror `Usage`: `input`, `output`, `cache_read` and
 `cache_write`.
 
 **No price means no cost.** A model without one is unpriced, and the footer
-and `:status` simply leave the cost out. The same goes for a session where
+and `/status` simply leave the cost out. The same goes for a session where
 *any* request that used tokens ran on an unpriced model: a total that silently
 skipped some requests would look like the whole bill.
 

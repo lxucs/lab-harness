@@ -816,7 +816,7 @@ async def test_a_change_between_runs_is_recorded_before_the_requests_it_affects(
     await agent.prompt("four")
     await agent.prompt("five")  # nothing changed: nothing extra to record
     thinking_harder = replace(other_model, reasoning_effort="high")
-    agent.state.model = thinking_harder  # what `:effort high` does
+    agent.state.model = thinking_harder  # what `/effort high` does
     await agent.prompt("six")
     recorder.close()
 

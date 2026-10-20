@@ -16,8 +16,9 @@ uv run lab-harness
 |---|---|
 | `Ctrl-C` | Cancel the turn in flight; the session carries on |
 | `Ctrl-O` | Expand or collapse the model's thinking |
-| `:status` | Tokens, cache hits and cost so far |
-| `:effort [LEVEL]` | Show or set how hard the model thinks, e.g. `:effort low`; `:effort default` sends none |
+| `/` | List the commands, each with what it does |
+| `/status` | Tokens, cache hits and cost so far |
+| `/effort [LEVEL]` | Show or set how hard the model thinks, e.g. `/effort low`; `/effort default` sends none |
 | `Ctrl-D` | Exit |
 
 Mutating tools — `bash`, `write`, `edit` — ask before they run, and anything

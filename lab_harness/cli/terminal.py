@@ -27,12 +27,16 @@ terminal holds the text and submits it when the run returns. That keeps the
 **Log records print through the console** when stderr is this terminal, so
 they land above the live region rather than inside it — see `LogStream`.
 
-**`:effort` changes the reasoning effort between runs.** It replaces the
+**Slash commands are run here, not sent.** The terminal registers its own in
+a `Commands` registry, which both runs them and lists them above the prompt as
+one is typed — see `commands.py`.
+
+**`/effort` changes the reasoning effort between runs.** It replaces the
 agent's model with one asking for the new level, so the next run's
 `agent_start` carries it and a recorded session opens a new segment there.
 
 **Usage is read from the transcript, not tracked.** The footer after a run
-and `:status` both fold over messages that already carry their `Usage` — see
+and `/status` both fold over messages that already carry their `Usage` — see
 `usage.py` — so there is no counter here to fall out of step with history.
 """
 
@@ -58,21 +62,27 @@ from rich.text import Text
 
 from lab_harness.agent import Agent
 from lab_harness.cli.approval import ApprovalGate
+from lab_harness.cli.commands import (
+    Command,
+    CommandMenu,
+    Commands,
+    EndSession,
+    UnknownCommand,
+    menu_style,
+)
 from lab_harness.cli.renderers import EventRenderer
 from lab_harness.cli.usage import format_footer, format_status, summarize
 from lab_harness.config import Config, ConfigError
 from lab_harness.llm.types import Message
 
-_BANNER = "lab-harness — Ctrl-C cancels · Ctrl-O toggles thinking · :status · Ctrl-D exits"
+_BANNER = "lab-harness — / for commands · Ctrl-C cancels · Ctrl-O toggles thinking"
 _PROMPT = "› "  # noqa: RUF001 — a deliberate prompt glyph, not a stray quote
 #: Style class for the glyph alone. Not `prompt`: prompt_toolkit applies that
 #: class to every prompt message, the approval question included.
 _GLYPH_CLASS = "glyph"
 _PROMPT_MESSAGE = FormattedText([(f"class:{_GLYPH_CLASS}", _PROMPT)])
 _CANCELLED_NOTICE = "^C  turn cancelled"
-_STATUS_COMMAND = ":status"
-_EFFORT_COMMAND = ":effort"
-#: What `:effort` takes to send no level, leaving it to the model. Not "none"
+#: What `/effort` takes to send no level, leaving it to the model. Not "none"
 #: or "off": some APIs take those as levels, meaning no thinking.
 _EFFORT_CLEAR = "default"
 #: Answers accepted at the approval prompt, by first letter. Deliberately no
@@ -96,12 +106,28 @@ class Terminal:
     def __post_init__(self) -> None:
         theme = self.config.terminal.theme
         try:
-            style = Style.from_dict({_GLYPH_CLASS: theme.prompt})
+            style = Style.from_dict({_GLYPH_CLASS: theme.prompt, **menu_style(theme.prompt)})
         except ValueError as exc:
             raise ConfigError(f"terminal.theme.prompt: {exc}") from exc
+        #: Every command the prompt runs and lists, in the order it lists them.
+        #: The first is the one Enter runs on a bare `/`, so it changes nothing.
+        self.commands = Commands(
+            [
+                Command("status", "Token, cache and cost totals so far", self._print_status),
+                Command(
+                    "effort",
+                    f'Show or set the reasoning effort; "{_EFFORT_CLEAR}" sends none',
+                    self._set_effort,
+                    arguments="[level]",
+                ),
+                Command("exit", "Exit the session", self._exit, aliases=("quit",)),
+            ]
+        )
         self._session: PromptSession[str] = PromptSession(
             key_bindings=_bindings(self._toggle_thinking), style=style
         )
+        self._menu = CommandMenu(self.commands, indent=len(_PROMPT))
+        self._menu.attach(self._session)
         self._agent: Agent | None = None
         self._renderer: EventRenderer | None = None
 
@@ -129,7 +155,7 @@ class Terminal:
             try:
                 # patch_stdout keeps rich's output from colliding with the
                 # prompt redraw while a run is streaming.
-                with patch_stdout(raw=True):
+                with patch_stdout(raw=True), self._menu.offered():
                     line = await self._session.prompt_async(_PROMPT_MESSAGE)
             except KeyboardInterrupt:
                 # Ctrl-C at an idle prompt clears the line rather than exiting.
@@ -140,16 +166,25 @@ class Terminal:
             text = line.strip()
             if not text:
                 continue
-            if text in (":q", ":quit", "exit"):
+            if text == "exit":
                 return 0
-            if text == _STATUS_COMMAND:
-                self._print_status()
+            try:
+                invoked = self.commands.parse(text)
+            except UnknownCommand as exc:
+                self.console.print(Text(str(exc), style=self.config.terminal.theme.warning))
+                self.console.print()
                 continue
-            if text.split()[0] == _EFFORT_COMMAND:
-                self._set_effort(text.removeprefix(_EFFORT_COMMAND).strip())
+            if invoked is None:
+                await self._run_turn(text)
                 continue
-
-            await self._run_turn(text)
+            command, arguments = invoked
+            try:
+                await command.run(arguments)
+            except EndSession:
+                return 0
+            except Exception as exc:
+                # As with a run: a failed command ends itself, not the session.
+                self.console.print(Text(f"error: {exc}", style=self.config.terminal.theme.error))
 
     async def _run_turn(self, message: str) -> None:
         # The task exists before Ctrl-C is rerouted, so a callback queued by an
@@ -192,15 +227,15 @@ class Terminal:
         if footer is not None:
             self.console.print(Text(footer, style=self.config.terminal.theme.muted))
 
-    def _print_status(self) -> None:
+    async def _print_status(self, _arguments: str) -> None:
         # The whole transcript, so a resumed session counts its history too.
         summary = summarize(self.agent.state.messages, self.config.models)
         lines = format_status(summary, self.agent.state.model, self.config.terminal.currency_symbol)
         self.console.print(Text("\n".join(lines)))
         self.console.print()
 
-    def _set_effort(self, level: str) -> None:
-        """`:effort` shows the level, `:effort LEVEL` sets it for the runs after."""
+    async def _set_effort(self, level: str) -> None:
+        """`/effort` shows the level, `/effort LEVEL` sets it for the runs after."""
         model = self.agent.state.model
         theme = self.config.terminal.theme
         if level:
@@ -215,6 +250,9 @@ class Terminal:
                 Text(f"{model.id} does not reason; no level is sent", style=theme.warning)
             )
         self.console.print()
+
+    async def _exit(self, _arguments: str) -> None:
+        raise EndSession
 
     async def ask_approval(self, tool_name: str, arguments: dict[str, object]) -> str:
         """Prompt for tool approval. Anything but an explicit yes denies."""

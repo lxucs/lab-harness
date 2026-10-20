@@ -141,7 +141,7 @@ def format_footer(summary: UsageSummary, model: Model, symbol: str) -> str | Non
 
 
 def format_status(summary: UsageSummary, model: Model, symbol: str) -> list[str]:
-    """Aligned `label  value` lines for `:status`."""
+    """Aligned `label  value` lines for `/status`."""
     usage = summary.usage
     rows = [
         ("model", f"{model.id} via {model.provider}"),

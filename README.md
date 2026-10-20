@@ -151,8 +151,9 @@ should also read [AGENTS.md](AGENTS.md).
 (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`), `web_search`/`web_fetch` with
 pluggable backends, three provider adapters (Messages, Responses, Chat
 Completions), an interactive terminal with streamed, collapsible thinking,
-colored edit diffs and a per-run token, cache and cost readout, a fail-closed
-approval gate, a tool set chosen in config or per run, a reasoning effort set
+colored edit diffs, slash commands listed as they are typed and a per-run
+token, cache and cost readout, a fail-closed approval gate, a tool set chosen
+in config or per run, a reasoning effort set
 in config, per run or mid-session, layered TOML config with the prompts and
 the model catalog as data, a system prompt built from
 configurable sections with the environment filled in and the project's
