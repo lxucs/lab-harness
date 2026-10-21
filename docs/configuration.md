@@ -28,8 +28,11 @@ Lowest to highest precedence:
 3. `~/.lab-harness/config.local.toml` — user-local, for keys
 4. `./.lab-harness/config.toml` — project config, committed
 5. `./.lab-harness/config.local.toml` — project-local, **gitignored**
-6. Environment variables
-7. CLI flags
+6. A file named explicitly — `load_config(config_file=...)`, which a program
+   built on the harness passes as its own. Last of the files, so it wins over
+   every discovered one
+7. Environment variables
+8. CLI flags
 
 A missing file is normal and skipped. A file that *exists* but is malformed is
 a startup error: config you meant to apply and that silently did nothing is

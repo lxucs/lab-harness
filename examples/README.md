@@ -38,4 +38,6 @@ LAB_HARNESS_MODEL=deepseek-flash uv run python examples/hooks.py
 
 Each example is a single file, readable top to bottom, and each is run by
 [`tests/test_examples.py`](../tests/test_examples.py) against a scripted model,
-so none of them can quietly fall behind the code.
+so none of them can quietly fall behind the code. For a whole program rather
+than a single file — a search agent over a corpus of documents — see
+[`search_agent/`](../search_agent/).

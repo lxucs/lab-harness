@@ -1,0 +1,26 @@
+# How this agent asks, and where it reads and writes. Committed.
+#
+# The agent's own settings — model, keys, prompts, tool set — are not here.
+# They are harness config, in the same TOML shape as anywhere else, read from
+# config.local.toml beside this file (gitignored; --config points elsewhere).
+
+[request]
+# The first turn of every run. {query} is the query line from queries.jsonl.
+template = """\
+Answer the query below using the corpus in data/docs/.
+
+You can search docs then read those that look promising.
+Some docs are distracting, so the first hit is not always the one that answers.
+In the end, give just what was asked for, and name the docids you relied on.
+
+{query}
+"""
+
+[corpus]
+# Relative to this file, which is also the agent's working directory.
+docs = "data/docs"
+
+[run]
+queries = "data/queries.jsonl"
+out_dir = "runs"
+tools = ["ls", "glob", "grep", "read", "search_docs"]

@@ -5,7 +5,9 @@ reproducible from its transcript, one loop across Claude, OpenAI, DeepSeek and
 GLM, every step a typed event. Modeled on
 [pi](https://github.com/earendil-works/pi). The [README](../README.md) has the
 pitch and a quick start, [examples/](../examples/) has runnable usage from the
-terminal and from Python, and these pages have the details.
+terminal and from Python, [`search_agent/`](../search_agent/) is a complete
+program built on the harness with a committed run to read, and these pages
+have the details.
 
 ## Reading order
 

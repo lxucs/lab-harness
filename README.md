@@ -8,10 +8,18 @@ and searches the web, with whichever of those tools you give it — from an
 interactive terminal, a one-shot command, or your own Python. Architecturally it follows
 [pi](https://github.com/earendil-works/pi): the same layering, trimmed to the core logics.
 
+It is a Python package: `uv sync` installs it, and `from lab_harness.agent import
+Agent` is the whole integration. The terminal is one consumer of that API;
+[`search_agent/`](search_agent/) is a working example of another.
+
 - **Minimal.** The stateless agent loop is about 500 lines of code, in
   [`agent/loop.py`](lab_harness/agent/loop.py); the stateful `Agent` that wraps
   it — transcript, subscribers, abort — about 150, in
   [`agent/agent.py`](lab_harness/agent/agent.py). No other framework dependencies.
+- **An agent in a few lines.** `route` a provider, pick tools, build an
+  `Agent`, `await agent.prompt(...)`. The run records itself as it goes, so the
+  transcript, the [HTML report](search_agent/runs/793/report.html) and the token
+  and cost numbers come with it.
 - **Every request reproducible.** A session records the system prompt, tools,
   model, reasoning effort and config each request was sent with — including
   changes mid-session and requests a hook rewrote — so every request it made
@@ -130,11 +138,38 @@ hooks, a scripted model that needs no key, and exporting a session's requests
 for training. Configuration and every environment variable:
 [docs/configuration.md](docs/configuration.md).
 
+## Example: a search agent built on lab-harness
+
+[`search_agent/`](search_agent/) is a search agent — an agent that answers a
+question by searching and reading a corpus — running as a program you can start
+with one command. The agent itself is four lines:
+
+```python
+model, provider = route(None, config)  # the model, from config alone
+tools = tools_for(("ls", "glob", "grep", "read", "search_docs"))
+agent = Agent(
+    model=model, provider=provider, system_prompt=SYSTEM_PROMPT, tools=tools, config=config, cwd="."
+)
+messages = await agent.prompt(question)
+```
+
+What a run leaves behind is the harness's job, not yours: a durable transcript,
+a page you can read the whole exchange on, and token, cache and cost numbers as
+data — all of it recorded by a subscriber the loop already fans out to, so
+there is no frontend to write and no instrumentation to add. The model is a
+config key, so the same program runs on any vendor; a new tool is one decorated
+function.
+
+`uv run python -m search_agent` runs it, and a real run is committed to look
+at: [the report it produced](search_agent/runs/793/report.html), with the
+trajectory as JSON beside it.
+
 ## Documentation
 
 | Page | Covers |
 |---|---|
 | [examples/](examples/) | Runnable usage, from the terminal and from Python |
+| [search_agent/](search_agent/) | A search agent: a whole program in Python, and a committed run to read |
 | [architecture.md](docs/architecture.md) | Layering, module boundaries, deviations from pi |
 | [events.md](docs/events.md) | The event protocol between runtime and frontend |
 | [providers.md](docs/providers.md) | Provider contract, profiles, adding a vendor |

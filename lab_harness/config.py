@@ -819,15 +819,24 @@ def config_paths(cwd: str | Path = ".") -> tuple[Path, ...]:
     )
 
 
-def load_config(cwd: str | Path = ".") -> Config:
+def load_config(cwd: str | Path = ".", *, config_file: Path | None = None) -> Config:
     """Resolve configuration from defaults plus any config files present.
 
     Missing files are normal and skipped. A file that exists but is malformed
     is an error: a config you *meant* to apply and that silently did nothing is
     worse than a startup failure.
+
+    `config_file` is read after every discovered file, so it wins on the keys
+    it sets and leaves the rest of the chain in place. It is how a caller with
+    a config location of its own — a second frontend, an experiment — keeps
+    the schema, the catalog and the user's keys while overriding the few
+    settings that are its business.
     """
     config = Config()
-    for path in config_paths(cwd):
+    paths = config_paths(cwd)
+    if config_file is not None:
+        paths = (*paths, Path(config_file).expanduser())
+    for path in paths:
         data = _read_toml(path)
         if data is None:
             _log.debug("No config file at %s", path)

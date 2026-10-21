@@ -16,6 +16,7 @@ or a subscriber does not belong in the loop.
 
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Usage, terminal and Python: [`examples/`](examples/)
+- A complete program built on it: [`search_agent/`](search_agent/)
 - What is built and what is not: [`README.md`](README.md#status)
 
 ## Environment
@@ -95,6 +96,11 @@ same results as CI, which has neither.
   canned transport. An example is documentation that
   executes: change one and its test together, and keep each a single file a
   reader can follow top to bottom.
+- `search_agent/` is the same idea at the size of a program: a corpus, a
+  query file, and a runner, exercised by `tests/test_search_agent.py` against
+  a `FakeProvider`. Its corpus and query file are committed data; the script
+  that built them from a local copy of a dataset is not, because it only ever
+  had an absolute path.
 
 Canned API payloads should be **shapes a live API actually returned**, not
 invented ones, and should say so in a comment. A fixture invented from memory

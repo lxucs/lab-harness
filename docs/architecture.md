@@ -85,7 +85,9 @@ Almost everything extensible in this codebase goes through one of two seams.
 
 `Agent.subscribe(listener)` is the only way the outside world observes a run.
 The terminal is a subscriber. The JSONL writer is a subscriber. A future TUI in
-another language would be a third, reading the serialized form.
+another language would be a third, reading the serialized form, and
+[`search_agent/`](../search_agent/) is one today: it subscribes a recorder,
+and the report it writes is built from the session that recorder wrote.
 
 This works only if events stay plain data — see [events.md](events.md).
 

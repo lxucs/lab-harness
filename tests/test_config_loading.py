@@ -132,6 +132,23 @@ def test_the_home_local_file_overrides_the_home_file(tmp_path: Path) -> None:
     assert load_config(tmp_path).agent.max_turns == 2
 
 
+def test_a_file_named_explicitly_overrides_every_discovered_file(tmp_path: Path) -> None:
+    """`config_file` is last: a caller with a config location of its own keeps
+    the rest of the chain and wins on the keys it sets."""
+    write(lab_harness_home() / CONFIG_FILE, "[agent]\nmax_turns = 1\n")
+    project(tmp_path, "[agent]\nmax_turns = 2\n")
+    project(tmp_path, "[agent]\nmax_turns = 3\n", name=LOCAL_CONFIG_FILE)
+    extra = write(tmp_path / "elsewhere.toml", "[agent]\nmax_turns = 4\n")
+    assert load_config(tmp_path, config_file=extra).agent.max_turns == 4
+
+
+def test_an_explicit_file_that_is_missing_is_skipped(tmp_path: Path) -> None:
+    """Like every other config file: absent is normal, malformed is not."""
+    project(tmp_path, "[agent]\nmax_turns = 2\n")
+    config = load_config(tmp_path, config_file=tmp_path / "not-written.toml")
+    assert config.agent.max_turns == 2
+
+
 def test_a_project_file_overrides_the_home_local_file(tmp_path: Path) -> None:
     """The project is the more specific place, whichever of its files says so."""
     write(lab_harness_home() / LOCAL_CONFIG_FILE, "[agent]\nmax_turns = 1\n")

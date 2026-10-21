@@ -239,6 +239,17 @@ config.local.toml
 !.env.example
 .superpowers/
 
+# search_agent/: the two local scripts — one that built the sample corpus from
+# a copy of a dataset, one that strips this machine's paths out of a run before
+# it is committed. Neither is part of the example.
+search_agent/corpus.py
+search_agent/publish.py
+
+# ...and what running it produces. One sample run is committed on purpose, so
+# a reader can see a trajectory and a report without running anything; this
+# keeps the rest out of `git add`.
+search_agent/runs/
+
 # Design specs and implementation plans written while working on a change.
 # They are scratch material: what lasts belongs in docs/.
 docs/superpowers/
