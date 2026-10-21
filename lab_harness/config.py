@@ -46,7 +46,7 @@ class AgentConfig:
     #: Model used when neither `--model` nor the env override names one. An
     #: id absent from `models` still works; it is assumed current and given
     #: conservative limits.
-    model: str = "claude-sonnet-5"
+    model: str = "gpt-6-luna"
     #: Env var that overrides `model`, named here for the same reason
     #: `session.home_env` is — so a deployment using a different variable
     #: changes config rather than code.

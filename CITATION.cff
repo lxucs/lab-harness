@@ -1,0 +1,21 @@
+# How to cite lab-harness. GitHub reads this file for the repository's
+# "Cite this repository" button, which offers it as APA and BibTeX.
+cff-version: 1.2.0
+message: If you use lab-harness in your research, please cite it as below.
+type: software
+title: "lab-harness: a minimal agent harness in Python, built for research"
+abstract: >-
+  An agent harness in python small enough to read in an afternoon: one agentic loop
+  across vendors, every step a typed event, and every request reproducible
+  from its transcript.
+authors:
+  - given-names: Liyan
+    family-names: Xu
+repository-code: https://github.com/lxucs/lab-harness
+license: MIT
+keywords:
+  - agents
+  - llm
+  - agent harness
+  - research
+  - reproducibility

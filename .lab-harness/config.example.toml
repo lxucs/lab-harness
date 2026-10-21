@@ -20,7 +20,7 @@ parallel_tools = true
 # Model used when neither --model nor $LAB_HARNESS_MODEL names one. An id missing
 # from the catalog still works; it is assumed current and given conservative
 # limits.
-model = "claude-sonnet-5"
+model = "gpt-6-luna"
 # Name of the environment variable that overrides `model`. The name is a
 # config key so a deployment using a different one changes config, not code.
 model_env = "LAB_HARNESS_MODEL"

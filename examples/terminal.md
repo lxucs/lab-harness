@@ -1,6 +1,6 @@
 # The terminal
 
-> **TODO:** a short recording of an interactive session.
+![An interactive session: the request typed in, thinking and tool calls as they stream, the answer, the usage line](../img/demo.gif)
 
 The workflows people use most, from the repository root. Every flag, key and
 config setting is in [docs/cli.md](../docs/cli.md).
@@ -8,7 +8,7 @@ config setting is in [docs/cli.md](../docs/cli.md).
 ## Interactive
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...
 uv run lab-harness
 ```
 
@@ -97,10 +97,10 @@ Chat Completions model.
 ## Other models
 
 ```bash
-uv run lab-harness --model claude-opus-5
+uv run lab-harness --model gpt-6.1-sol
+ANTHROPIC_API_KEY=sk-... uv run lab-harness --model claude-sonnet-5
 DEEPSEEK_API_KEY=sk-... uv run lab-harness --model deepseek-flash   # routed by config
 ZHIPUAI_API_KEY=... uv run lab-harness --model glm-5.3
-OPENAI_API_KEY=sk-... uv run lab-harness --model gpt-6-luna
 uv run lab-harness --reasoning-effort low                          # think less
 ```
 

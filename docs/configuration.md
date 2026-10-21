@@ -77,7 +77,7 @@ the current default, so a key you do not set behaves exactly as written.
 [agent]
 max_turns = 50                   # ceiling on provider requests in one run
 parallel_tools = true            # run independent tool calls concurrently
-model = "claude-sonnet-5"        # used when --model and $LAB_HARNESS_MODEL are absent
+model = "gpt-6-luna"             # used when --model and $LAB_HARNESS_MODEL are absent
 model_env = "LAB_HARNESS_MODEL"  # NAME of the variable that overrides `model`
 provider = "anthropic"           # for a model id nothing else routes
 reasoning_effort = ""            # for a model whose entry sets none; "" sends none
@@ -237,7 +237,7 @@ variable. Only Tavily needs a key; the `ddgs` backend needs none, and
 
 Model resolution is the general precedence rule in miniature: `--model`, then
 `$LAB_HARNESS_MODEL`, then `agent.model` from config, which defaults to
-`claude-sonnet-5`. An id the catalog has never heard of is **not** an error —
+`gpt-6-luna`. An id the catalog has never heard of is **not** an error —
 it is given conservative limits rather than refused, because being unable to
 use a model released last week is worse than a slightly wrong `context_window`.
 Which provider serves it is decided separately; see [Models](#models).

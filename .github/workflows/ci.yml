@@ -1,0 +1,26 @@
+# The checks AGENTS.md asks for before work is called done, on every push to
+# main and every pull request. The suite is offline by construction, so this
+# needs no secrets.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      # Every extra, so pyright can resolve the optional ddgs backend. The
+      # Python version is .python-version's.
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run pytest

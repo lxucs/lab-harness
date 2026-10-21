@@ -16,7 +16,7 @@ uv run python -m search_agent --help
 ```
 
 **A real run is committed, if you would rather look than run:**
-[`runs/793/report.html`](runs/793/report.html) is the whole exchange on one
+[`runs/793/report.html`](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) is the whole exchange on one
 page — turns, tool calls, token counts — beside the `trajectory.json` built
 from it and the transcript the harness wrote. Paths in it read `<project>` and
 `<home>`; that is this machine's, and it goes no further.
@@ -75,18 +75,12 @@ search finds one you can describe.
 
 ## The data
 
-- **`data/docs/`** — the corpus, one `<docid>.md` per document, front matter and
-  all. These come from a search benchmark: a handful answer the query, the rest
-  are there to mislead. The committed sample is one query's worth.
-- **`data/queries.jsonl`** — one JSON object per line: `query_id`, `query`,
-  `answer`, and the docids split into `gold_docids`, `evidence_docids` and
-  `negative_docids`. It names documents rather than carrying them, so a corpus
-  can be shared by many queries.
+The example ships a query from the [BrowseComp-Plus](https://github.com/texttron/BrowseComp-Plus) benchmark.
+You can replace the data with your own.
 
-Both are data: replace them with your own and the runner does not change. The
-script that built the sample from the benchmark is **not** in the repository —
-it only ever had an absolute path to a local copy of the dataset, which is not
-the sort of thing that belongs in a committed file.
+- **`data/docs/`** — the corpus, one `<docid>.md` per document, front matter and all.
+- **`data/queries.jsonl`** — one JSON object per line: `query_id`, `query`,
+  `answer`, and the docids split into `gold_docids`, `evidence_docids` and `negative_docids`.
 
 The agent's working directory is `search_agent/` itself — the directory holding
 `search_agent.toml` — so `data/docs` in config, in the request and in a tool
@@ -97,7 +91,7 @@ call all mean the same thing.
 Two files, both TOML, both in the shape
 [docs/configuration.md](../docs/configuration.md) describes.
 
-**`search_agent.toml`** — committed. How to ask, and where things are:
+**`search_agent.toml`** - the task-related config: how to ask, and where things are:
 
 ```toml
 [request]
@@ -112,14 +106,5 @@ out_dir = "runs"
 tools = ["ls", "glob", "grep", "read", "search_docs"]
 ```
 
-**`config.local.toml`** — gitignored, yours. Everything about the agent: the
-model, the keys, the tool set, the prompts. It is ordinary harness config, read
-*after* the home and project files, so it only needs the keys it differs on:
-
-```toml
-[agent]
-model = "claude-sonnet-4-6"
-```
-
-`--config` points at a different one. `--queries`, `--out-dir`, `--query` and
-`--limit` cover the rest; `--settings` reads another settings file.
+**`config.local.toml`** — the agent-related config (gitignored). Everything about the agent: the
+model, the keys, the tool set, the prompts. It is the same ordinary harness config also consumed by the terminal, see [docs/configuration.md](../docs/configuration.md).

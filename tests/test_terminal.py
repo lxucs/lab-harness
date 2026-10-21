@@ -544,6 +544,21 @@ async def test_the_session_opens_with_a_box_naming_the_model_and_the_directory()
     assert "╭" in output, "a box, not another line of text"
 
 
+async def test_the_box_names_the_directory_a_relative_cwd_stands_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--cwd` defaults to ".", which says nothing about where the session is."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "proj").mkdir()
+    monkeypatch.chdir(tmp_path / "proj")
+    terminal, buffer = _terminal([])
+    _attach(terminal, FakeProvider([]), cwd=".")
+
+    terminal.welcome()
+
+    assert "~/proj" in buffer.getvalue()
+
+
 async def test_the_box_names_the_effort_the_session_asks_for() -> None:
     """What every request in it goes out with, until `/effort` says otherwise."""
     terminal, buffer = _terminal([])

@@ -52,11 +52,11 @@ A session opens with a box saying what is running, where, and how hard it is
 asked to think, before anything else it has to say:
 
 ```
-╭─────────────────────────────────────────────────────────────╮
-│ lab-harness · claude-sonnet-5 via anthropic · effort medium │
-│ ~/projects/my-project                                       │
-│ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking   │
-╰─────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────────────────────────╮
+│ lab-harness · gpt-6-luna via openai · effort medium       │
+│ ~/projects/my-project                                     │
+│ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking │
+╰───────────────────────────────────────────────────────────╯
 ```
 
 Output is **inline** — it lands in real terminal scrollback rather than being
@@ -172,7 +172,7 @@ and nothing is persisted, history included.
 and turn to `terminal.theme.warning` past `terminal.context_warning` (85%):
 
 ```
-❯ what next?                              claude-sonnet-5 · context 12%
+❯ what next?                                   gpt-6-luna · context 12%
 ```
 
 It is a float over the input's first row, so it takes no row of its own and
@@ -274,14 +274,14 @@ that is what is billed.
 into uncached, cache-read and cache-write tokens:
 
 ```
-model      claude-sonnet-5 via anthropic
+model      gpt-6-luna via openai
 effort     medium
 requests   12
-input      450.4k (38.1k uncached · 392k cache read · 20.3k cache write)
+input      450.4k (58.4k uncached · 392k cache read · 0 cache write)
 output     5.2k
 cache hit  87%
-context    48k of 1M (5%)
-cost       $0.3120
+context    48k of 1.1M (5%)
+cost       $0.0124
 ```
 
 Both are computed from the transcript rather than counted as events arrive —
@@ -311,7 +311,7 @@ One event per line, flushed as it happens:
 
 ```bash
 $ lab-harness -p "what files are here?" --json
-{"system_prompt": "...", "tools": [...], "model": {"id": "claude-sonnet-5", ...}, "history": 0, "type": "agent_start"}
+{"system_prompt": "...", "tools": [...], "model": {"id": "gpt-6-luna", ...}, "history": 0, "type": "agent_start"}
 {"type": "turn_start"}
 {"message": {"content": [], "model": "...", "stop_reason": "stop", ...}, "type": "message_start"}
 {"tool_call_id": "c1", "tool_name": "ls", "arguments": {}, "type": "tool_execution_start"}

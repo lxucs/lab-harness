@@ -17,7 +17,7 @@ or a subscriber does not belong in the loop.
 - Architecture: [`docs/architecture.md`](docs/architecture.md)
 - Usage, terminal and Python: [`examples/`](examples/)
 - A complete program built on it: [`search_agent/`](search_agent/)
-- What is built and what is not: [`README.md`](README.md#status)
+- What is built and what is not: [`docs/README.md`](docs/README.md#status)
 
 ## Environment
 

@@ -693,8 +693,13 @@ def _history(config: Config) -> History:
 
 
 def _short_home(path: str) -> str:
-    """`~/projects/my-project` rather than the whole path. Display only."""
-    home = str(Path.home())
+    """`~/projects/my-project` rather than the whole path. Display only.
+
+    Resolved first: `--cwd` defaults to ".", which would say nothing about
+    where the session is.
+    """
+    path = str(Path(path).resolve())
+    home = str(Path.home().resolve())
     return path.replace(home, "~", 1) if path.startswith(home) else path
 
 

@@ -133,11 +133,12 @@ def test_route_falls_back_to_the_configured_model(monkeypatch: pytest.MonkeyPatc
     assert provider.name == "deepseek"
 
 
-def test_route_defaults_to_anthropic_out_of_the_box() -> None:
+def test_route_defaults_to_openai_out_of_the_box() -> None:
     model, provider = route(None, Config())
 
-    assert model.provider == "anthropic"
-    assert isinstance(provider, AnthropicProvider)
+    assert model.id == "gpt-6-luna"
+    assert model.provider == "openai"
+    assert isinstance(provider, ResponsesProvider)
 
 
 # --- protocol dispatch -----------------------------------------------------

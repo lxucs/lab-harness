@@ -47,6 +47,6 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
-include = ["lab_harness", "tests", "examples", "search_agent"]
+include = ["lab_harness", "tests", "examples", "search_agent", "img"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"

@@ -14,7 +14,7 @@ the repository root, after `uv sync`.
 
 ```bash
 uv run python examples/scripted.py                    # no key: try this first
-export ANTHROPIC_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...
 uv run python examples/quickstart.py "Where does the agent loop stop?"
 ```
 

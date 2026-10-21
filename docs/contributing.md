@@ -229,8 +229,9 @@ updated is not finished.
 | New config key, env var, or log level | [configuration.md](configuration.md) |
 | New prompt, or a change to the default one | `lab_harness/prompts/prompts.toml` documents itself; a new section is also a field of `PromptsConfig`, a place in `prompts/system.py`'s order, and a row in [configuration.md](configuration.md#prompts) |
 
-Keep [`../README.md`](../README.md)'s Status section honest when something
-lands or is abandoned.
+Keep the Status section of [README.md](README.md#status) honest when something
+lands or is abandoned, and the Roadmap in [`../README.md`](../README.md#roadmap)
+in step with it.
 
 ## Checks
 

@@ -1,16 +1,42 @@
 # lab-harness
 
-**A minimal agent harness in Python, built for research.** Small enough to read
-in an afternoon, complete enough to run real experiments on.
+[![CI](https://github.com/lxucs/lab-harness/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/lxucs/lab-harness/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-It runs a local agentic loop — the model reads and writes files, runs commands,
-and searches the web, with whichever of those tools you give it — from an
-interactive terminal, a one-shot command, or your own Python. Architecturally it follows
-[pi](https://github.com/earendil-works/pi): the same layering, trimmed to the core logics.
+**A minimal agent harness in Python, built for study and research.** Small
+enough to read in an afternoon, complete enough to run full experiments on.
 
-It is a Python package: `uv sync` installs it, and `from lab_harness.agent import
-Agent` is the whole integration. The terminal is one consumer of that API;
-[`search_agent/`](search_agent/) is a working example of another.
+A lightweight Python alternative to [pi](https://github.com/earendil-works/pi),
+with the same layering: `llm/` for pi-ai, `agent/` for pi-agent-core, a pure
+loop wrapped by a stateful `Agent`. A hands-on option for running an agent
+harness locally: read it end to end, change it in place, and see exactly what
+it sends to the model.
+
+At its core is a local agentic loop: the model reads and writes files, runs
+commands and searches the web, with whichever of those tools you give it. On
+top of it:
+
+- **An interactive terminal**, to work with the agent directly — thinking and
+  tool calls as they stream, a token, cache and cost readout, and sessions that
+  resume and export as a web page.
+- **A Python API**, to build on it — `from lab_harness.agent import Agent` is
+  the whole integration. [`search_agent/`](search_agent/) is a complete search
+  agent built that way.
+
+A run in the terminal, and the [trajectory report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) a run records — the whole agentic trace for easy reading:
+
+<p>
+  <a href="https://github.com/lxucs/lab-harness/raw/main/img/demo.gif"><img src="https://github.com/lxucs/lab-harness/raw/main/img/demo.gif" width="466" align="top" alt="lab-harness in the terminal: a question answered from a handful of documents, one tool call at a time"></a>
+  <a href="https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html"><img src="https://github.com/lxucs/lab-harness/raw/main/img/report.png" width="330" align="top" alt="The trajectory report of a search agent run: turns, requests, tool calls, tokens, cache and cost, then every step"></a>
+</p>
+
+## Features
+
+Agent research needs what a product harness rarely gives: the exact request
+behind every response, and the freedom to swap one piece — a tool, a hook, a
+provider — without forking the rest. lab-harness keeps the core small enough to
+hold in your head, with the seams where those changes go.
 
 - **Minimal.** The stateless agent loop is about 500 lines of code, in
   [`agent/loop.py`](lab_harness/agent/loop.py); the stateful `Agent` that wraps
@@ -18,39 +44,16 @@ Agent` is the whole integration. The terminal is one consumer of that API;
   [`agent/agent.py`](lab_harness/agent/agent.py). No other framework dependencies.
 - **An agent in a few lines.** `route` a provider, pick tools, build an
   `Agent`, `await agent.prompt(...)`. The run records itself as it goes, so the
-  transcript, the [HTML report](search_agent/runs/793/report.html) and the token
+  transcript, the [HTML report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) and the token
   and cost numbers come with it.
 - **Every request reproducible.** A session records the system prompt, tools,
-  model, reasoning effort and config each request was sent with — including
-  changes mid-session and requests a hook rewrote — so every request it made
-  can be rebuilt exactly as the provider received it, down to the JSON body
-  posted, for replay, analysis, or training data. See [trajectories](docs/sessions.md#trajectories).
-- **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any
-  OpenAI-compatible endpoint, with reasoning carried across tool calls the way
-  each vendor requires. Every endpoint and model is a table in
+  model, reasoning effort and config each request was sent with.
+  [`trajectories.py --wire`](examples/trajectories.py) exports them as the JSON
+  bodies the endpoint got. See [trajectories](docs/sessions.md#trajectories).
+- **One loop, many models.** Claude, OpenAI, DeepSeek, GLM, or any other
+  OpenAI-compatible endpoint. Every endpoint and model is a table in
   [`llm/catalog.toml`](lab_harness/llm/catalog.toml), so a new vendor or model
   is a few lines of TOML, not code.
-- **Observable.** Every step is a typed event of plain JSON data. `--json`
-  streams them as JSONL, and `--log-level debug` traces each request, response
-  and tool call by shape and id.
-- **Hackable at two seams.** The event stream, and four hooks. A new tool is
-  one file and one registry entry.
-- **Tested offline.** A scripted provider drives the real loop with no network,
-  and the suite blocks sockets so no test can reach one by accident.
-
-> **Status: usable, and feature-complete against its design.** Three provider
-> adapters, the full local tool set, an interactive terminal, layered config and
-> durable sessions, all tested offline. Details in [Status](#status).
-
-## Why
-
-Agent research needs two things a product harness rarely gives you: the exact
-request behind every response, and the freedom to change one piece — a tool, a
-hook, the provider — without forking the rest. Most harnesses are either too
-minimal to grow or too large to understand. This one optimizes for the middle:
-a core you can hold in your head, with the seams already in the right places so
-that adding a tool, a provider, or a frontend is a small, local change rather
-than a refactor.
 
 ## Architecture
 
@@ -96,10 +99,9 @@ Details in [docs/architecture.md](docs/architecture.md).
 ## Quick start
 
 ```bash
-uv sync
-export ANTHROPIC_API_KEY=sk-...
+export OPENAI_API_KEY=sk-...                          # or api_key in .lab-harness/config.local.toml
 export TAVILY_API_KEY=tvly-...                        # optional, for web_search
-uv run lab-harness                                    # interactive
+uv run lab-harness                                    # interactive terminal
 uv run lab-harness -p "summarize the config module"   # one-shot
 ```
 
@@ -129,9 +131,8 @@ messages = asyncio.run(agent.prompt("What does this project do?"))
 ```
 
 That agent has no system prompt. `build_system_prompt` from `lab_harness.prompts`
-builds the one the CLI sends, as [quickstart.py](examples/quickstart.py) shows:
-the `[prompts]` sections, filled with `{cwd}`, `{agent_model}` and the rest of
-the variables [configuration.md](docs/configuration.md#prompts) lists.
+builds the one the CLI sends, as [quickstart.py](examples/quickstart.py) shows;
+see the `[prompts]` sections in [prompts.toml](lab_harness/prompts/prompts.toml).
 
 [examples/](examples/) goes further: streaming events, a custom tool, all four
 hooks, a scripted model that needs no key, and exporting a session's requests
@@ -141,27 +142,25 @@ for training. Configuration and every environment variable:
 ## Example: a search agent built on lab-harness
 
 [`search_agent/`](search_agent/) is a search agent — an agent that answers a
-question by searching and reading a corpus — running as a program you can start
-with one command. The agent itself is four lines:
+question by searching and reading documents — running as a program you can start
+with one command. The agent itself is a few lines:
 
 ```python
 model, provider = route(None, config)  # the model, from config alone
 tools = tools_for(("ls", "glob", "grep", "read", "search_docs"))
 agent = Agent(
-    model=model, provider=provider, system_prompt=SYSTEM_PROMPT, tools=tools, config=config, cwd="."
+    model=model,
+    provider=provider,
+    tools=tools,
+    config=config,
+    system_prompt=SYSTEM_PROMPT,
+    cwd=".",
 )
 messages = await agent.prompt(question)
 ```
 
-What a run leaves behind is the harness's job, not yours: a durable transcript,
-a page you can read the whole exchange on, and token, cache and cost numbers as
-data — all of it recorded by a subscriber the loop already fans out to, so
-there is no frontend to write and no instrumentation to add. The model is a
-config key, so the same program runs on any vendor; a new tool is one decorated
-function.
-
 `uv run python -m search_agent` runs it, and a real run is committed to look
-at: [the report it produced](search_agent/runs/793/report.html), with the
+at: [the report it produced](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html), with the
 trajectory as JSON beside it.
 
 ## Documentation
@@ -182,62 +181,21 @@ trajectory as JSON beside it.
 Contributing: [docs/contributing.md](docs/contributing.md). AI coding agents
 should also read [AGENTS.md](AGENTS.md).
 
-## Status
+## Roadmap
 
-**Everything planned is built.** At a glance:
+- **Context compaction** — the one planned piece unbuilt. It fits the
+  `prepare_request` hook, so it lands without touching the loop.
+- **Anthropic prompt caching** — the Messages adapter sends no `cache_control`
+  markers yet, so Anthropic's cache hit rate reads 0%.
 
-- **Runtime** — a tested agent loop; the local tool set
-  (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`/`skill`); `web_search` and
-  `web_fetch` behind pluggable backends; three provider adapters — Messages,
-  Responses, Chat Completions. Reasoning is carried across tool calls the way
-  each vendor requires. [tools.md](docs/tools.md) ·
-  [providers.md](docs/providers.md)
-- **Terminal** — streamed, collapsible thinking; colored edit diffs; slash
-  commands listed as they are typed; a per-run token, cache and cost readout;
-  a fail-closed approval gate. The tool set, the skill set and the reasoning
-  effort are each chosen in config, per run, or mid-session, and the system
-  prompt is rebuilt around them as they change. [cli.md](docs/cli.md)
-- **Config as data** — layered TOML, with the prompts and the whole model
-  catalog as config files. The system prompt is configurable sections, filled
-  from the environment, with the project's `HARNESS.md`/`AGENTS.md` appended.
-  [configuration.md](docs/configuration.md)
-- **Sessions** — durable transcripts that resume on screen where they left
-  off, export as a searchable web page, and record enough to rebuild every
-  request they made, changes mid-session included.
-  [sessions.md](docs/sessions.md)
+Not planned: MCP, sub-agents, plan mode, an RPC control channel,
+extensions-as-plugins, sandboxing, provider-native `web_search`. What each item
+needs, and why those are left out: [docs/README.md](docs/README.md#todo).
 
-A step-by-step reading order is in
-[docs/architecture.md](docs/architecture.md#reading-order).
+## Citation
 
-**Worth knowing before you use it:** `-p` one-shot mode has **no approval
-gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
-`edit` run unprompted unless `--tools` or `tools.enabled` leaves them out.
-Interactive mode asks, and fails closed on anything but an explicit yes.
-
-**Web search needs a key.** The default backend is
-[Tavily](https://tavily.com) (free tier available). The keyless `ddgs`
-alternative is implemented but unproven — the engines it scrapes are not
-reachable from every network — see
-[docs/tools.md](docs/tools.md#web-tools). `web_fetch` needs no key either way.
-
-### TODO
-
-- **Context compaction.** The one planned piece still unbuilt.
-  `prepare_request` is called before every provider request,
-  `Model.context_window` and per-message `Usage` exist, and the session schema
-  reserves a `compaction` entry — so it lands without touching the loop. Its
-  rewrites are recorded already; the entry is for writing a summary once rather
-  than the whole view with every request.
-- **Anthropic prompt caching.** The Messages adapter sends no `cache_control`
-  markers yet, so Anthropic caches nothing and its cache hit rate reads 0%.
-  Contained to one function in `anthropic.py`; the placement is planned in
-  [docs/providers.md](docs/providers.md#the-anthropic-adapter).
-
-### Not planned
-
-MCP, sub-agents, plan mode, RPC control channel, extensions-as-plugins,
-sandboxing, and provider-native `web_search` — that last one would add a second
-tool-execution path only one of the three adapters could ever use.
+If lab-harness helps your research, GitHub's **Cite this repository** button
+gives a citation in APA or BibTeX, from [CITATION.cff](CITATION.cff).
 
 ## License
 
