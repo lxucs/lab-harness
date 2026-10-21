@@ -24,12 +24,13 @@ top of it:
   the whole integration. [`search_agent/`](search_agent/) is a complete search
   agent built that way.
 
-A run in the terminal, and the [trajectory report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) a run records — the whole agentic trace for easy reading:
+A run in the terminal:
 
-<p>
-  <a href="https://github.com/lxucs/lab-harness/raw/main/img/demo.gif"><img src="https://github.com/lxucs/lab-harness/raw/main/img/demo.gif" width="466" align="top" alt="lab-harness in the terminal: a question answered from a handful of documents, one tool call at a time"></a>
-  <a href="https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html"><img src="https://github.com/lxucs/lab-harness/raw/main/img/report.png" width="330" align="top" alt="The trajectory report of a search agent run: turns, requests, tool calls, tokens, cache and cost, then every step"></a>
-</p>
+![lab-harness in the terminal: a question answered from a handful of documents, one tool call at a time](https://github.com/lxucs/lab-harness/raw/main/img/demo.gif)
+
+The [trajectory report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) a run records — the whole agentic trace for easy reading:
+
+<a href="https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html"><img src="https://github.com/lxucs/lab-harness/raw/main/img/report.png" width="600" alt="The trajectory report of a search agent run: turns, requests, tool calls, tokens, cache and cost, then every step"></a>
 
 ## Features
 
