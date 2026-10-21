@@ -121,7 +121,9 @@ messages = asyncio.run(agent.prompt("What does this project do?"))
 ```
 
 That agent has no system prompt. `build_system_prompt` from `lab_harness.prompts`
-builds the one the CLI sends, as [quickstart.py](examples/quickstart.py) shows.
+builds the one the CLI sends, as [quickstart.py](examples/quickstart.py) shows:
+the `[prompts]` sections, filled with `{cwd}`, `{agent_model}` and the rest of
+the variables [configuration.md](docs/configuration.md#prompts) lists.
 
 [examples/](examples/) goes further: streaming events, a custom tool, all four
 hooks, a scripted model that needs no key, and exporting a session's requests

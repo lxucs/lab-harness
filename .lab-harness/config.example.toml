@@ -67,24 +67,30 @@ max_bytes = 32000
 # copy one here to replace it, or set it to "" to leave that section out.
 # --system-prompt and --system-prompt-file replace `system` for one run.
 #
-# `system` opens every request's system prompt. Name no tools in any section:
-# the tool declarations already say what the model can call. To replace it, for
-# example:
-# system = """\
-# You are a careful research assistant. Keep responses concise."""
+# Every section is a template, filled at startup. Writing a placeholder is
+# optional; writing one that is not below is an error. The list, with what each
+# holds, is at the top of lab_harness/prompts/prompts.toml:
 #
-# `environment` says where the agent runs, from placeholders filled in at
-# startup: {cwd}, {git_enabled}, {system_platform}, {shell}, {os_version} and
-# {agent_model}. {cwd} is an absolute path on this machine; to keep it out of
-# every request, for example:
+#   {cwd} {git_enabled} {system_platform} {shell} {os_version} {agent_model}
+#   {date} {skills} {name} {text}
+#
+# Name no tools in any section: the tool declarations already say what the
+# model can call. `system` opens every request's system prompt; to replace it,
+# for example:
+# system = """\
+# You are {agent_model}, a careful research assistant. Keep responses concise."""
+#
+# {cwd} is an absolute path on this machine; to keep it out of every request,
+# set `environment` to a section that does not name it, for example:
 # environment = """\
 # # Environment
 #  - Platform: {system_platform}
 #  - You are powered by the model {agent_model}."""
 #
-# `project_instructions` wraps the project's instructions file, appended last.
-# {name} is the file's name, {text} its contents. In either template, write {{
-# and }} for literal braces. A shorter one, for example:
+# `project_instructions` wraps the project's instructions file, appended last,
+# and has to hold {text}: {name} is the file's name, {text} its contents. A
+# brace holding a name is a placeholder and any other is text, so {"a": 1} needs
+# no escaping -- {{ and }} write one brace. A shorter one, for example:
 # project_instructions = """\
 # # Project instructions ({name})
 #

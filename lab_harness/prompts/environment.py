@@ -5,6 +5,7 @@ data, so a Python caller can pass a fixed `Environment` instead and send the
 same prompt on any machine.
 """
 
+import datetime
 import os
 import platform
 import sys
@@ -28,6 +29,8 @@ class Environment:
     os_version: str
     #: The id of the model the agent runs.
     agent_model: str
+    #: Today's date, ISO: "2026-10-21".
+    date: str
 
 
 def detect_environment(cwd: str | Path, model: str) -> Environment:
@@ -45,6 +48,9 @@ def detect_environment(cwd: str | Path, model: str) -> Environment:
         shell=_shell(),
         os_version=f"{platform.system()} {platform.release()}",
         agent_model=model,
+        # The day the prompt is built, not of each request: a prompt naming
+        # the date changes from one day to the next, and that is change enough.
+        date=datetime.date.today().isoformat(),
     )
 
 

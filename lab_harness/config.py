@@ -570,6 +570,11 @@ class PromptsConfig:
     prompts.toml, read as this section's default. It names no tools: the
     declarations say what the model can call, and a prompt naming one that
     `--tools` left out would describe a tool that is not there.
+
+    Every section is a template: `{name}` is filled when the prompt is built,
+    from the variables prompts/system.py lists and prompts.toml names in a
+    comment. Naming one is optional; naming one that does not exist is an
+    error at startup, whichever section it is in.
     """
 
     #: Opens every request's system prompt. `--system-prompt` and
@@ -577,8 +582,7 @@ class PromptsConfig:
     system: str = ""
     #: How the harness works, as far as the model needs to know.
     harness: str = ""
-    #: Where the agent runs. A template, filled when the prompt is built; its
-    #: placeholders are the fields of `Environment` in prompts/environment.py.
+    #: Where the agent runs, as the section that names the most variables.
     environment: str = ""
     #: What happens as a conversation grows, and how to spend its turns.
     context_management: str = ""
@@ -587,8 +591,8 @@ class PromptsConfig:
     #: says when to load them.
     skills: str = ""
     #: Appended last when the working directory has project instructions:
-    #: `{name}` is the file's name and `{text}` its contents. Those are the
-    #: only placeholders, and `{text}` is required.
+    #: `{name}` is the file's name and `{text}` its contents. `{text}` is
+    #: required, and both are available in every other section too.
     project_instructions: str = "{text}"
 
 

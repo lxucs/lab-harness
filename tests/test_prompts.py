@@ -3,10 +3,11 @@
 The text itself lives in lab_harness/prompts/prompts.toml. What is pinned here is the
 contract around it: it loads as strictly as config, a config layer replaces it
 key by key, it names no tools, the sections go out in a fixed order with the
-environment filled in, and a template a user writes fails at startup rather
-than in the one directory where it is first filled.
+variables filled in, and a section naming one that does not exist fails at
+startup rather than in the one directory where it is first filled.
 """
 
+import datetime
 import re
 import subprocess
 import sys
@@ -42,6 +43,7 @@ ENVIRONMENT = Environment(
     shell="/bin/sh",
     os_version="Linux 6.1.0",
     agent_model="claude-sonnet-5",
+    date="2026-10-21",
 )
 SECTIONS = [f.name for f in fields(PromptsConfig)]
 
@@ -186,12 +188,45 @@ def test_an_empty_section_is_left_out() -> None:
     assert build_system_prompt(prompts, ENVIRONMENT) == "S\n\nC"
 
 
-def test_every_environment_placeholder_is_filled() -> None:
-    template = "{cwd} {git_enabled} {system_platform} {shell} {os_version} {agent_model}"
+def test_every_variable_is_filled() -> None:
+    template = "{cwd} {git_enabled} {system_platform} {shell} {os_version} {agent_model} {date}"
 
     prompt = build_system_prompt(PromptsConfig(environment=template), ENVIRONMENT)
 
-    assert prompt == "/path/to/project true linux /bin/sh Linux 6.1.0 claude-sonnet-5"
+    assert prompt == "/path/to/project true linux /bin/sh Linux 6.1.0 claude-sonnet-5 2026-10-21"
+
+
+def test_a_variable_is_filled_in_any_section() -> None:
+    """Every section is a template, so there is no list of the ones that are."""
+    prompts = PromptsConfig(system="You are {agent_model}.", harness="In {cwd} on {date}.")
+
+    assert build_system_prompt(prompts, ENVIRONMENT) == (
+        "You are claude-sonnet-5.\n\nIn /path/to/project on 2026-10-21."
+    )
+
+
+def test_the_project_variables_are_filled_anywhere() -> None:
+    """`{skills}`, `{name}` and `{text}` belong to the sections that wrap them,
+    but a variable is a variable wherever it is written."""
+    # `project_instructions` still has to hold {text}: what it wraps would
+    # otherwise never reach the model.
+    prompts = PromptsConfig(
+        system="Skills: {skills}.", harness="{name}: {text}", project_instructions="({name}) {text}"
+    )
+
+    prompt = build_system_prompt(prompts, ENVIRONMENT, INSTRUCTIONS, skills="- commit — Write one")
+
+    assert prompt == (
+        "Skills: - commit — Write one.\n\nAGENTS.md: Use tabs.\n\n(AGENTS.md) Use tabs."
+    )
+
+
+def test_a_brace_that_names_no_variable_is_text() -> None:
+    """`{"a": 1}`, `{}` and `{ cwd }` are text, so a section quoting JSON needs
+    no escaping — which is why only a brace holding a name is a variable."""
+    prompts = PromptsConfig(system='Reply as {"a": 1}.', harness="Use {} or { cwd }.")
+
+    assert build_system_prompt(prompts, ENVIRONMENT) == ('Reply as {"a": 1}.\n\nUse {} or { cwd }.')
 
 
 def test_outside_a_repository_git_reads_false() -> None:
@@ -200,14 +235,6 @@ def test_outside_a_repository_git_reads_false() -> None:
     prompt = build_system_prompt(PromptsConfig(environment="{git_enabled}"), outside)
 
     assert prompt == "false"
-
-
-def test_only_the_templates_are_filled() -> None:
-    """Braces elsewhere are text, so a prompt passed with `--system-prompt` that
-    holds JSON, or happens to say {cwd}, is sent as written."""
-    prompts = PromptsConfig(system='Reply as {"a": 1}.', harness="Mind {cwd}.")
-
-    assert build_system_prompt(prompts, ENVIRONMENT) == 'Reply as {"a": 1}.\n\nMind {cwd}.'
 
 
 def test_the_instructions_do_not_carry_their_absolute_path() -> None:
@@ -220,24 +247,28 @@ def test_the_instructions_do_not_carry_their_absolute_path() -> None:
 
 
 def test_braces_in_the_instructions_are_left_alone() -> None:
-    """Only the template is parsed; a file full of JSON must not be."""
-    context = ProjectContext(path=Path("AGENTS.md"), text='Config is {"a": 1}.')
+    """Only the template is parsed, and in one pass: a file full of JSON, or
+    quoting a template of its own, must not be read as one."""
+    context = ProjectContext(
+        path=Path("AGENTS.md"), text='Config is {"a": 1}, and {{ this }} is doubled.'
+    )
 
-    assert build_system_prompt(PromptsConfig(), ENVIRONMENT, context) == 'Config is {"a": 1}.'
+    assert build_system_prompt(PromptsConfig(), ENVIRONMENT, context) == (
+        'Config is {"a": 1}, and {{ this }} is doubled.'
+    )
 
 
 @pytest.mark.parametrize(
     ("template", "message"),
     [
         ("{text} from {file}", r"unknown placeholder\(s\) \{file\}"),
-        ("{text} {}", r"unknown placeholder\(s\) \{\}"),
-        ("{text.upper}", r"unknown placeholder\(s\) \{text\.upper\}"),
-        ("{text} in {cwd}", r"unknown placeholder\(s\) \{cwd\}"),
+        ("{text.upper}", r"\{text\.upper\} is not a placeholder"),
+        ("{text} in {directory}", r"unknown placeholder\(s\) \{directory\}"),
         ("Instructions from {name}", r"needs \{text\}"),
-        ("{text", "Write {{ and }} for literal braces"),
-        ("{text:d}", "Write {{ and }} for literal braces"),
+        ("{text", r"\{text is not a placeholder"),
+        ("{text:d}", r"\{text:d\} is not a placeholder"),
     ],
-    ids=["unknown", "positional", "attribute", "environment's", "no-text", "unclosed", "bad-spec"],
+    ids=["unknown", "attribute", "unknown-elsewhere", "no-text", "unclosed", "bad-spec"],
 )
 def test_a_broken_template_fails_even_with_nothing_to_fill(template: str, message: str) -> None:
     """It fails in every directory, not only in the first one with an AGENTS.md."""
@@ -249,13 +280,20 @@ def test_a_broken_template_fails_even_with_nothing_to_fill(template: str, messag
     ("template", "message"),
     [
         ("Running in {directory}", r"unknown placeholder\(s\) \{directory\}; .*\{cwd\}"),
-        ("From {name}", r"unknown placeholder\(s\) \{name\}"),
+        ("{cwd", r"is not a placeholder"),
     ],
-    ids=["unknown", "instructions'"],
+    ids=["unknown", "unclosed"],
 )
 def test_a_broken_environment_template_fails(template: str, message: str) -> None:
     with pytest.raises(ConfigError, match=rf"^prompts\.environment: .*{message}"):
         build_system_prompt(PromptsConfig(environment=template), ENVIRONMENT)
+
+
+def test_an_unknown_variable_is_an_error_in_any_section() -> None:
+    """A section that names one nobody fills would say nothing where it means
+    to say something; a startup error says what it should have said."""
+    with pytest.raises(ConfigError, match=r"^prompts\.system: unknown placeholder\(s\) \{model\}"):
+        build_system_prompt(PromptsConfig(system="You are {model}."), ENVIRONMENT)
 
 
 def test_literal_braces_are_written_doubled() -> None:
@@ -302,6 +340,10 @@ def test_the_shell_is_the_one_commands_run_in(tmp_path: Path) -> None:
     ran = subprocess.run("echo $0", shell=True, capture_output=True, text=True, check=True)
 
     assert detect_environment(tmp_path, "m").shell == ran.stdout.strip()
+
+
+def test_the_date_is_the_day_the_prompt_is_built(tmp_path: Path) -> None:
+    assert detect_environment(tmp_path, "m").date == datetime.date.today().isoformat()
 
 
 def test_on_windows_the_shell_is_comspec(monkeypatch: pytest.MonkeyPatch) -> None:

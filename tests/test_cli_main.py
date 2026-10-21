@@ -345,6 +345,20 @@ def test_an_empty_flag_drops_only_the_system_section() -> None:
     assert agent.state.system_prompt.startswith(Config().prompts.harness)
 
 
+def test_a_prompt_from_the_flag_may_name_a_variable() -> None:
+    """The flag replaces the section, not what fills it."""
+    agent = _build_agent(_args(system_prompt="You are {agent_model}."), Config())
+
+    assert agent.state.system_prompt.startswith(f"You are {agent.state.model.id}.")
+
+
+def test_an_unknown_variable_fails_at_startup() -> None:
+    """A variable nobody fills would leave the prompt saying nothing where it
+    meant to say something: better a failure naming it than a silent hole."""
+    with pytest.raises(ConfigError, match=r"^prompts\.system: unknown placeholder\(s\)"):
+        _build_agent(_args(system_prompt="You are {model_name}."), Config())
+
+
 def test_the_two_prompt_flags_exclude_each_other(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--system-prompt", "a", "--system-prompt-file", "b"])

@@ -137,7 +137,7 @@ lines smaller.
 
 **Prompts are data.** The system prompt pi assembles in code is
 `lab_harness/prompts/prompts.toml` here, the default of the `[prompts]` config
-section; code only fills in the environment and joins the sections, in
+section; code only fills in the variables and joins the sections, in
 `prompts/system.py`. It names no tools: the declarations alone tell the model
 what it can call, so the prompt stays true for any tool set.
 

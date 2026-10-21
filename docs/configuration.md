@@ -409,15 +409,15 @@ system prompt at all:
 |---|---|
 | `system` | Opens the prompt: who the model is, and how to answer |
 | `harness` | How the harness works, as far as the model needs to know — where its text goes, what a denied call means |
-| `environment` | Where the agent runs. A template: see below |
+| `environment` | Where the agent runs — the section that names the most variables |
 | `context_management` | What happens as a conversation grows, and how to spend its turns. Written for [compaction](architecture.md#todo-with-a-place-to-land), which is not built yet |
 | `skills` | Wraps the list of [skills](#skills), when any were found. `{skills}` is the list. Needs that placeholder unless it is empty |
 | `project_instructions` | Wraps the [project's instructions](#project-instructions), when it has any. `{name}` is the file's name, `{text}` its contents. |
 
-**`environment` is filled in when the prompt is built**, from these
-placeholders and no others:
+**Every section is a template**, filled in when the prompt is built, from these
+variables and no others:
 
-| Placeholder | Value |
+| Variable | Value |
 |---|---|
 | `{cwd}` | The working directory, `--cwd`, as an absolute path |
 | `{git_enabled}` | `true` if it is inside a git repository, else `false` |
@@ -425,14 +425,27 @@ placeholders and no others:
 | `{shell}` | The shell commands run in: `/bin/sh`, or `%COMSPEC%` on Windows. Not `$SHELL` — a command written for zsh can fail in the shell that actually runs it |
 | `{os_version}` | The OS and its release, e.g. `Darwin 23.4.0` |
 | `{agent_model}` | The id of the model the run uses |
+| `{date}` | Today's date, ISO: `2026-10-21` |
+| `{skills}` | The list of skills found, one line each |
+| `{name}` | The name of the project's instructions file |
+| `{text}` | Their contents |
+
+Writing one is optional — a section that names none is sent as it stands — and
+one may be written in any section, `{cwd}` in `harness` included. The last
+three are what `skills` and `project_instructions` wrap, which is where they
+are meant to go, but a variable is a variable wherever it is written.
 
 `{cwd}` is a path on this machine, so it is in every request and in every
-trajectory exported from a session; an `environment` without it keeps it out.
-The model is named too, so resuming a session under another model changes the
-prompt, and `--resume` says so.
+trajectory exported from a session; a prompt without it keeps it out. The model
+is named too, so resuming a session under another model changes the prompt, and
+`--resume` says so. `{date}` is left out of the shipped text for the same
+reason: a prompt naming it changes daily, and a session resumed the next day
+would report a changed prompt and open a new segment.
 
-Only `environment`, `skills` and `project_instructions` are templates. The
-other sections are sent as written, braces and all.
+**A brace is a variable only when it holds a name and nothing else**, so
+`{"a": 1}`, `{}` and `{ cwd }` are text a section can quote without escaping.
+`{{` and `}}` write one brace, which is how a `{cwd}` meant to stay `{cwd}` is
+written.
 
 **The system prompt names no tools.** What the model can call, and how to use
 each tool, comes from the tool declarations alone — so `tools.enabled` or
@@ -447,11 +460,11 @@ runs; after changing the model, rebuild it with `build_system_prompt` so the
 environment names the new one. Either way the session records the prompt each
 request was sent with — [sessions.md](sessions.md#changes-mid-session).
 
-Both templates are checked at startup, in every directory: a placeholder not
-in its list, or a `project_instructions` without `{text}`, is an error. Write
-`{{` and `}}` for literal braces. A line ending in a backslash inside `"""`
-continues the paragraph, so a prompt can be wrapped in the file without
-breaking the text the model sees.
+Every section is checked at startup, in every directory: a variable not in the
+table above, or a `project_instructions` without `{text}`, is an error naming
+the section it is in. A line ending in a backslash inside `"""` continues the
+paragraph, so a prompt can be wrapped in the file without breaking the text the
+model sees.
 
 ## The terminal
 

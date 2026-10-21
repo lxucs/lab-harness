@@ -25,7 +25,7 @@ what the runtime does.
 | `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
 | `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
 | `--skills` | Comma-separated skills to make available, e.g. `commit,release`. Beats `skills.selected` in config; `""` makes none available. |
-| `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. |
+| `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. A template like any other section, so `{agent_model}` in it is filled |
 | `--system-prompt-file` | The same, read from a file. Exclusive with `--system-prompt`. |
 | `--log-level` | `debug`, `info`, `warning` or `error`. Beats `$LAB_HARNESS_LOG_LEVEL`, which beats `logging.level` in config. |
 | `--yes` | Skip tool approval prompts in interactive mode. |

@@ -245,7 +245,8 @@ than a guess: resuming the wrong conversation is worse than being asked again.
 
 Resume warns when the system prompt differs from the one the last segment
 recorded — usually because the project's `AGENTS.md` changed, or because the
-run uses another model, which the prompt names. The session still
+run uses another model, which the prompt names. A prompt naming `{date}` shows
+up here too, on a session resumed the next day. The session still
 continues, under the new prompt; its segment records which one.
 
 Interactive mode prints resume warnings under the "Resumed" line, and then

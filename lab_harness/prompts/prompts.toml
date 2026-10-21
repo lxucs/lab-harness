@@ -9,9 +9,28 @@
 # strictly as in any config file. The schema, with what each key means, is
 # `PromptsConfig` in lab_harness/config.py.
 #
-# Two sections are templates, filled in when the prompt is built: `environment`
-# and `project_instructions`. Write {{ and }} in them for literal braces. The
-# others are sent as written.
+# Every section is a template, filled when the prompt is built. Writing a
+# placeholder is optional; writing one that is not below is a startup error:
+#
+#   {cwd}              the working directory, as an absolute path
+#   {git_enabled}      "true" if it is inside a git repository, else "false"
+#   {system_platform}  Python's sys.platform: "darwin", "linux", "win32"
+#   {shell}            the shell commands run in: /bin/sh, or %COMSPEC% on Windows
+#   {os_version}       the OS and its release, e.g. "Darwin 23.4.0"
+#   {agent_model}      the id of the model the agent runs
+#   {date}             today's date, ISO: 2026-10-21
+#   {skills}           the list of skills found, one line each
+#   {name}             the name of the project's instructions file
+#   {text}             their contents
+#
+# A brace is a placeholder only when it holds a name and nothing else, so
+# {"a": 1} or {} is text that needs no escaping; {{ and }} write one brace,
+# which is how a {cwd} meant to stay {cwd} is written.
+#
+# {cwd} is a path on this machine, so it is in every request and in every
+# trajectory exported from a session. {date} changes the prompt daily, which a
+# session resumed the next day reports as a changed prompt -- no section below
+# names it, and none has to.
 #
 # Name no tools here. What the model can call, and how to use it, comes from the
 # tool declarations alone, so the prompt stays true whatever tools.enabled or
@@ -23,7 +42,7 @@
 [prompts]
 
 system = """\
-You are Lab Harness, a helpful assistant running in a terminal with given tools."""
+You are a helpful assistant running in a Lab Harness terminal with given tools."""
 
 harness = """\
 # Harness
@@ -40,15 +59,10 @@ Independent tool calls can run in parallel in one response.
 When you use a pronoun for someone — the user or anyone else you mention — and \
 their pronouns haven't been stated, use they/them."""
 
-# Filled in when the prompt is built. These are the only placeholders:
-#   {cwd}              the working directory, as an absolute path
-#   {git_enabled}      "true" if it is inside a git repository, else "false"
-#   {system_platform}  Python's sys.platform: "darwin", "linux", "win32"
-#   {shell}            the shell commands run in: /bin/sh, or %COMSPEC% on Windows
-#   {os_version}       the OS and its release, e.g. "Darwin 23.4.0"
-#   {agent_model}      the id of the model the agent runs
+# The section that names the most of them; the list is at the top of the file.
 # {cwd} is a path on this machine, so it is in every request and in every
-# trajectory exported from a session.
+# trajectory exported from a session -- a config that sets this section to a
+# line without it keeps this machine's layout out of both.
 environment = """\
 # Environment
 You have been invoked in the following environment:
