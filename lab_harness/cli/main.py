@@ -8,8 +8,10 @@ docs/contributing.md.
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="lab-harness", description="A minimal agent harness in Python, built for research."
     )
     parser.add_argument("-p", "--prompt", help="Run one prompt and exit.")
-    parser.add_argument("--json", action="store_true", help="Emit the raw event stream as JSONL.")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit the raw event stream as JSONL. One-shot mode (-p) only.",
+    )
     parser.add_argument(
         "--model", help="Model id. Overrides $LAB_HARNESS_MODEL and the configured agent.model."
     )
@@ -443,6 +449,21 @@ def _local_time(stamp: str) -> str:
     return moment.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
+def _cwd(value: str) -> str:
+    """`--cwd`, expanded and checked, so nothing later runs in a ghost directory.
+
+    `~` is expanded because every use of it — config, project instructions, the
+    tools, the session's project slug — takes it literally, and a `~` that
+    reaches a subprocess is a directory that does not exist. A path that is not
+    a directory is an error at startup rather than a session whose every tool
+    call fails for a reason the screen never says.
+    """
+    directory = Path(value).expanduser()
+    if not directory.is_dir():
+        raise ConfigError(f"--cwd: {value} is not a directory")
+    return str(directory)
+
+
 def _text_sink() -> Callable[[AgentEvent], Awaitable[None]]:
     """Print assistant text and a one-line note per tool call.
 
@@ -481,6 +502,7 @@ def _brief(arguments: dict[str, object]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        args.cwd = _cwd(args.cwd)
         # Twice, deliberately. The first call uses the flag, the environment and
         # the schema defaults, so `--log-level debug` covers the loading of
         # config itself — which is exactly what you want when a setting appears
@@ -500,9 +522,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.prompt:
             return asyncio.run(run_once(args, config))
         return asyncio.run(run_interactive(args, config))
-    except (ConfigError, ResumeError) as exc:
+    except (ConfigError, ResumeError, TranscriptError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    except BrokenPipeError:
+        # A reader that closed early — `lab-harness | head`. There is nobody
+        # left to say anything to, and Python's own flush at shutdown would
+        # report the same thing again; point stdout somewhere it can land.
+        with suppress(OSError):
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+            os.close(devnull)
+        return 0
     except KeyboardInterrupt:
         return 130
 

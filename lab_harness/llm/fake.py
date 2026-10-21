@@ -22,7 +22,7 @@ from lab_harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.provider import StreamOptions, interrupted
 from lab_harness.llm.types import (
     AssistantMessage,
     Context,
@@ -42,6 +42,7 @@ FAKE_MODEL = Model(
 )
 
 _DEFAULT_USAGE = Usage(input=10, output=5)
+_ABORTED_NOTICE = "Operation aborted"
 
 
 def text_response(
@@ -179,7 +180,11 @@ def truncated_tool_call_response(
 
 
 class FakeProvider:
-    """Replays one script per request, in order."""
+    """Replays one script per request, in order.
+
+    An abort is modelled the way the adapters model one: the words already
+    streamed are reported, a tool call is not, because nothing would answer it.
+    """
 
     name = "fake"
 
@@ -204,17 +209,32 @@ class FakeProvider:
         self._index += 1
         self.requests.append(ctx)
 
+        streamed: dict[int, tuple[str, str]] = {}
         for event in script:
             if opts is not None and opts.signal is not None and opts.signal.is_set():
                 yield StreamError(
-                    message=AssistantMessage(
-                        content=(),
-                        model=model.id,
-                        provider=self.name,
-                        stop_reason="aborted",
-                        error_message="Operation aborted",
+                    message=interrupted(
+                        model, self.name, _ABORTED_NOTICE, _reached(model, streamed)
                     ),
                     reason="aborted",
                 )
                 return
+            if isinstance(event, (TextDelta, ThinkingDelta)):
+                kind = "text" if isinstance(event, TextDelta) else "thinking"
+                so_far = streamed.get(event.block_index, (kind, ""))[1]
+                streamed[event.block_index] = (kind, so_far + event.delta)
             yield event
+
+
+def _reached(model: Model, streamed: dict[int, tuple[str, str]]) -> AssistantMessage:
+    """What a script had streamed when the signal fired, as a message.
+
+    Only text and thinking: a tool call is left out, as the adapters leave one,
+    because a call the loop will not execute has no result to send with it.
+    """
+    content = [
+        ThinkingBlock(thinking=body) if kind == "thinking" else TextBlock(text=body)
+        for kind, body in streamed.values()
+        if body
+    ]
+    return AssistantMessage(content=tuple(content), model=model.id, provider="fake")

@@ -46,6 +46,7 @@ from lab_harness.llm.types import (
     ToolCallBlock,
     ToolDeclaration,
     ToolResultMessage,
+    Usage,
     UserMessage,
     text,
 )
@@ -396,6 +397,39 @@ async def test_a_signal_set_mid_stream_stops_it() -> None:
     assert failure.message.stop_reason == "aborted"
     # The text block after the abort point never made it through.
     assert not any(isinstance(e, TextDelta) for e in events)
+
+
+async def test_an_abort_reports_what_the_stream_had_reached() -> None:
+    """Ctrl-C keeps the words and the tokens, rather than reporting neither.
+
+    The input and cache counts arrive with `message_start`, before any delta —
+    they were read and charged for, so an abort must not report them as zero.
+    The tool call is dropped: it was cut off mid-argument, nothing will answer
+    it, and every provider rejects a turn that leaves a call unanswered.
+    """
+    signal = asyncio.Event()
+
+    class _SettingStream(_FakeStream):
+        async def __aiter__(self) -> AsyncIterator[object]:
+            yield _msg_start(input_tokens=1_000)
+            yield _block_start(0, {"type": "text", "text": ""})
+            yield _block_delta(0, {"type": "text_delta", "text": "half an"})
+            yield _block_start(1, {"type": "tool_use", "id": "t1", "name": "read", "input": {}})
+            signal.set()
+            yield _block_delta(1, {"type": "input_json_delta", "partial_json": '{"pa'})
+            yield _msg_delta("end_turn")
+
+    client = _FakeClient()
+    client.messages.stream = lambda **kwargs: _SettingStream(())  # type: ignore[method-assign]
+    provider = AnthropicProvider(SHIPPED, client=client)  # type: ignore[arg-type]
+
+    events = await _collect(provider, _ctx(), StreamOptions(signal=signal))
+
+    failure = events[-1]
+    assert isinstance(failure, StreamError)
+    message = failure.message
+    assert message.content == (TextBlock(text="half an"),)
+    assert message.usage == Usage(input=1_000, output=0, cache_read=2, cache_write=3)
 
 
 async def test_a_translation_failure_becomes_an_error_not_a_crash() -> None:

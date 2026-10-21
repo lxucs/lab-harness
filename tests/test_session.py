@@ -237,6 +237,29 @@ def test_unknown_entry_types_are_skipped_not_fatal(tmp_path: Path) -> None:
     assert transcript.skipped == 2
 
 
+def test_a_session_home_that_cannot_be_written_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One-shot mode has no terminal to build first, so the recorder is where
+    an unwritable home surfaces: as a message naming the path, not a traceback."""
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o500)
+    monkeypatch.setenv(SessionConfig().home_env, str(home))
+
+    try:
+        with pytest.raises(TranscriptError, match="Cannot write"):
+            start_recorder(
+                cwd=str(tmp_path),
+                model=FAKE_MODEL,
+                system_prompt="",
+                config=RUNTIME,
+                restored=0,
+            )
+    finally:
+        home.chmod(0o700)
+
+
 def test_a_truncated_final_line_does_not_lose_the_history(tmp_path: Path) -> None:
     """A crash mid-write is exactly what resume exists for."""
     path = tmp_path / "s.jsonl"

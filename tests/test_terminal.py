@@ -24,7 +24,7 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from lab_harness.agent import Agent
-from lab_harness.agent.types import AgentStart, MessageStart
+from lab_harness.agent.types import AgentEvent, AgentStart, MessageStart
 from lab_harness.cli.commands import Command
 from lab_harness.cli.renderers import GLYPH, EventRenderer
 from lab_harness.cli.terminal import (
@@ -266,6 +266,29 @@ async def test_ctrl_c_still_cancels_after_an_approval_question() -> None:
     assert calls == ["cancel"]
 
 
+async def test_a_cancelled_answer_stays_on_screen() -> None:
+    """Ctrl-C keeps what was already said rather than taking it back.
+
+    The aborted turn reports the words that arrived before it stopped, so the
+    screen, the transcript and a later `--resume` all hold the same thing.
+    Erasing them would leave the user with less than they had just read.
+    """
+    terminal, buffer = _terminal(["hello"])
+    provider = FakeProvider([text_response("half an answer", chunk_size=4)])
+    agent = _attach(terminal, provider)
+
+    async def cancel(event: AgentEvent) -> None:
+        if event.type == "message_update":
+            agent.abort()
+
+    agent.subscribe(cancel)
+
+    await terminal.run()
+
+    assert "half" in buffer.getvalue()
+    assert "Operation aborted" in buffer.getvalue()
+
+
 # --- usage ----------------------------------------------------------------
 #
 # FakeProvider reports 10 input and 5 output tokens for every request.
@@ -383,6 +406,24 @@ def test_history_stays_in_memory_when_nothing_is_persisted(tmp_path: Path) -> No
 
     assert isinstance(terminal._session.history, InMemoryHistory)  # type: ignore[attr-defined]
     assert list(tmp_path.iterdir()) == [], "nothing written"
+
+
+def test_a_session_home_that_cannot_be_written_fails_with_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A traceback at startup, or a run that cannot be recorded: neither says
+    what to fix, so startup fails with the path in the message."""
+    home = tmp_path / "home"
+    home.mkdir()
+    home.chmod(0o500)
+    monkeypatch.setenv(SessionConfig().home_env, str(home / "nested"))
+    console = Console(file=io.StringIO(), width=90, force_terminal=False, no_color=True)
+
+    try:
+        with pytest.raises(ConfigError, match="Cannot create"):
+            Terminal(console=console, config=Config())
+    finally:
+        home.chmod(0o700)
 
 
 async def test_status_shows_session_totals_without_a_request() -> None:
@@ -764,8 +805,41 @@ async def test_an_empty_answer_denies() -> None:
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, EOFError])
 async def test_interrupting_the_approval_question_denies(interrupt: type) -> None:
     terminal, _ = _terminal([interrupt])
+    _attach(terminal, FakeProvider([]))
 
     assert await terminal.ask_approval("bash", {}) == "no"
+
+
+async def test_ctrl_c_at_the_approval_question_cancels_the_turn(tmp_path) -> None:
+    """It stops the run, not just the one call — and does not ask again.
+
+    A denial alone would leave the loop free to spend another request on a run
+    the user has walked out of, and to ask the same question for the next call
+    in the batch.
+    """
+    from lab_harness.tools import default_registry
+
+    config = Config()
+    call = ToolCallBlock(id="c2", name="write", arguments={"path": "new.txt", "content": "x"})
+    terminal, _ = _terminal(["write a file", KeyboardInterrupt, "next turn"], config)
+    gate = build_approval_gate(terminal, config)
+    provider = FakeProvider(
+        [tool_call_response([call]), text_response("never"), text_response("after")]
+    )
+    agent = _attach(
+        terminal,
+        provider,
+        tools=default_registry().select(["write"]),
+        cwd=str(tmp_path),
+        before_tool_call=gate,
+    )
+
+    await terminal.run()
+
+    assert not (tmp_path / "new.txt").exists(), "an interrupted call must not run"
+    assert len(provider.requests) == 2, "no request after the cancelled turn"
+    aborted = [m for m in agent.state.messages if getattr(m, "stop_reason", "") == "aborted"]
+    assert aborted, "the turn must be recorded as aborted"
 
 
 async def test_the_question_names_the_tool() -> None:

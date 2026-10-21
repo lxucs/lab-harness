@@ -6,6 +6,7 @@ because nothing calls `stream()` — construction alone makes no request.
 
 import argparse
 import asyncio
+import io
 import logging
 import sys
 from datetime import datetime
@@ -21,6 +22,7 @@ from lab_harness.cli.main import (
     _attach_session,
     _brief,
     _build_agent,
+    _cwd,
     _selected_skills,
     build_parser,
     main,
@@ -211,6 +213,20 @@ def test_cwd_reaches_the_agent() -> None:
     agent = _build_agent(_args(cwd="/tmp/somewhere"), Config())
 
     assert agent._cwd == "/tmp/somewhere"
+
+
+def test_a_cwd_that_is_not_a_directory_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
+    """Every tool call in a run would fail, for a reason the screen never says."""
+    assert main(["-p", "hi", "--cwd", "/no/such/directory"]) == 1
+    assert "error: --cwd: /no/such/directory is not a directory" in capsys.readouterr().err
+
+
+def test_a_cwd_is_expanded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`~` reaches a subprocess as a literal path component if left alone."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "project").mkdir()
+
+    assert _cwd("~/project") == str(tmp_path / "project")
 
 
 def test_the_configured_model_reaches_the_agent() -> None:
@@ -615,6 +631,28 @@ def test_an_unknown_provider_is_a_startup_error(
 
 
 # --- sessions ---------------------------------------------------------------
+
+
+def test_a_pipe_whose_reader_went_away_exits_quietly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`lab-harness | head`: the output is gone, but not with a traceback.
+
+    Python's own flush at shutdown reports the closed pipe a second time, so
+    stdout is pointed at /dev/null on the way out.
+    """
+    provider = FakeProvider([text_response("one")])
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    broken = io.StringIO()
+
+    def closed(*_: object) -> object:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(broken, "write", closed)
+    monkeypatch.setattr(broken, "flush", closed)
+    monkeypatch.setattr(sys, "stdout", broken)
+
+    assert main(["-p", "hi", "--cwd", str(tmp_path), "--no-save"]) == 0
 
 
 def test_a_saved_session_rebuilds_every_request_the_cli_sent(

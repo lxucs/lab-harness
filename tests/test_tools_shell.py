@@ -44,6 +44,21 @@ async def test_captures_stdout(tmp_path: Path) -> None:
     assert result.details["exit_code"] == 0
 
 
+async def test_a_command_reading_stdin_gets_nothing(tmp_path: Path) -> None:
+    """Stdin is /dev/null, not the terminal the user is typing at.
+
+    A command that reads would otherwise take the keys meant for the next
+    prompt, or hang the run on a keyboard nobody is watching.
+    """
+    result = await bash.execute(
+        {"command": 'read -r line || true; echo "got=[$line]"', "timeout_seconds": 5},
+        _ctx(tmp_path),
+    )
+
+    assert not result.is_error
+    assert "got=[]" in _text(result)
+
+
 async def test_captures_stderr_too(tmp_path: Path) -> None:
     """Combined streams: the model needs the error text, not just a code."""
     result = await bash.execute({"command": "echo oops >&2"}, _ctx(tmp_path))

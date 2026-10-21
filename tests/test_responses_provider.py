@@ -759,6 +759,30 @@ async def test_an_abort_mid_stream_terminates_the_turn() -> None:
     assert events[-1].reason == "aborted"
 
 
+async def test_an_abort_keeps_what_the_stream_had_produced() -> None:
+    """A cancelled answer is not an empty one: what was said stays in the turn."""
+    signal = asyncio.Event()
+    recorder = Recorder(
+        sse(
+            item_added(0, {"type": "message", "role": "assistant"}),
+            text_delta(0, "a"),
+            text_delta(0, "b"),
+            completed(),
+        )
+    )
+    stream = provider(recorder).stream(MODEL, ctx(), StreamOptions(signal=signal))
+
+    events: list[StreamEvent] = []
+    async for event in stream:
+        events.append(event)
+        if isinstance(event, TextDelta):
+            signal.set()
+
+    message = final(events)
+    assert message.stop_reason == "aborted"
+    assert message.content == (TextBlock(text="a"),)
+
+
 # --- protocol ordering -----------------------------------------------------
 
 

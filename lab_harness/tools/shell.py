@@ -1,6 +1,12 @@
 """The bash tool.
 
-Three things make this harder than "run a subprocess":
+Four things make this harder than "run a subprocess":
+
+**No stdin.** The command gets `/dev/null`, never the terminal's. A command that
+reads — `read`, `cat`, an editor, `git commit` opening one, `ssh` asking for a
+passphrase — would otherwise take the keys meant for the next prompt, or wait
+forever on a keyboard nobody is watching. Piping inside the command still works;
+only the harness's own input is withheld.
 
 **Streaming.** Output is forwarded through `ctx.on_update` as it arrives, so a
 long build is visible while it runs rather than after.
@@ -59,6 +65,7 @@ async def bash(p: BashParams, ctx: ToolContext) -> ToolResult:
     try:
         process = await asyncio.create_subprocess_shell(
             p.command,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=ctx.cwd,

@@ -150,6 +150,14 @@ and from then on `is_set()` is true for the rest of the run.
 The loop does not raise on the signal. It polls `_aborted(cfg)` at checkpoints
 and, when tripped, emits an aborted assistant message and stops.
 
+**An abort reports what had happened, not nothing.** A provider stopped
+mid-stream hands back the content it had assembled and the usage it had been
+told — with Anthropic the input and cache counts arrive before the first delta,
+so they are known and were charged for. A tool call is left out: it was cut off
+mid-argument, the loop will not execute it, and every provider rejects a turn
+that leaves a call unanswered. An abort that fires *between* turns is the
+exception — no request was made, so that message is empty and carries no usage.
+
 Two checkpoints are load-bearing, and both must exist:
 
 - **Top of the turn loop.** The clean entry check before any work.

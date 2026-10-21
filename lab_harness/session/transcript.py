@@ -153,9 +153,14 @@ class TranscriptWriter:
         """Create the file and write the header if it is new."""
         if self._handle is not None:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        is_new = not self.path.exists() or self.path.stat().st_size == 0
-        self._handle = self.path.open("a", encoding="utf-8")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            is_new = not self.path.exists() or self.path.stat().st_size == 0
+            self._handle = self.path.open("a", encoding="utf-8")
+        except OSError as exc:
+            # A session home that cannot be written to is worth saying plainly,
+            # and before the run it would have failed to record.
+            raise TranscriptError(f"Cannot write {self.path} ({exc.strerror})") from exc
         if is_new:
             self._write({"type": ENTRY_SESSION, **to_dict(self.header)})
 

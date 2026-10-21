@@ -111,6 +111,11 @@ mid-session is reported without changing anything.
 
 Three things make it more than "run a subprocess":
 
+**No stdin.** The command gets `/dev/null`, never the terminal's — a command
+that reads (`read`, `cat`, an editor, `ssh` asking for a passphrase) would
+otherwise take the keys meant for the next prompt, or wait on a keyboard nobody
+is watching. Piping *within* the command is unaffected.
+
 **Streaming.** Output is forwarded through `ctx.on_update` as it arrives, so a
 long build is visible while it runs.
 

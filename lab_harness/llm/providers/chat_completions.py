@@ -154,8 +154,14 @@ class ChatCompletionsProvider:
                 frames = _http.Frames()
                 async for line in response.aiter_lines():
                     if _http.aborted(options):
+                        # What the stream had reached, not nothing: the words
+                        # were on screen and the tokens were read.
                         yield _http.failure(
-                            model, self.name, _http.ABORTED_NOTICE, reason="aborted"
+                            model,
+                            self.name,
+                            _http.ABORTED_NOTICE,
+                            reason="aborted",
+                            partial=accumulator.message(),
                         )
                         return
                     payload = frames.parse(line)

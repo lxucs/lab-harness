@@ -18,11 +18,11 @@ what the runtime does.
 | Flag | Purpose |
 |---|---|
 | `-p`, `--prompt` | Run one prompt and exit. Omit it to start the interactive terminal. |
-| `--json` | Emit the raw event stream as JSONL instead of rendered text. |
+| `--json` | Emit the raw event stream as JSONL instead of rendered text. One-shot mode only — an interactive session renders instead |
 | `--model` | Model id. Beats `$LAB_HARNESS_MODEL`, which beats `agent.model` in config. |
 | `--provider` | `anthropic` or a configured `providers.openai` profile. Normally inferred from the model id. |
 | `--reasoning-effort` | How hard a reasoning model thinks, in its provider's terms — `low`, `high`, …. Beats the model's `reasoning_effort` and `agent.reasoning_effort`; `""` sends none. See [Reasoning effort](#reasoning-effort). |
-| `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory. |
+| `--cwd` | Working directory for tools, config discovery, *and* project instructions. Defaults to the current directory; `~` is expanded, and a path that is not a directory is a startup error |
 | `--tools` | Comma-separated tools to enable, e.g. `read,ls,grep,glob`. Beats `tools.enabled` in config; `""` enables none. |
 | `--skills` | Comma-separated skills to make available, e.g. `commit,release`. Beats `skills.selected` in config; `""` makes none available. |
 | `--system-prompt` | Replaces `prompts.system` for this run. The other sections, project instructions included, are still sent. A template like any other section, so `{agent_model}` in it is filled |
@@ -35,7 +35,8 @@ what the runtime does.
 
 **Exit status is meaningful.** A run whose final turn ended in `error` or
 `aborted` exits `1`; a clean run exits `0`; `Ctrl-C` exits `130`. A script
-piping this needs to tell a refusal from an outage.
+piping this needs to tell a refusal from an outage — and the words a cancelled
+run had reached are on stdout either way.
 
 In plain-text mode, assistant text goes to **stdout** while tool-call notices
 and errors go to **stderr**, so `lab-harness -p "…" > answer.txt` captures the
@@ -152,7 +153,7 @@ on macOS and the BSDs, would silently drop the run's output.
 
 | Key | Action |
 |---|---|
-| `Ctrl-C` | Cancel the in-flight turn; the session survives |
+| `Ctrl-C` | Cancel the in-flight turn; the session survives. What it had reached stays on screen and in the transcript |
 | `Ctrl-O` | Toggle thinking between shown in full and the configured mode |
 | `Ctrl-D` | Exit |
 | `Enter` | Submit |
@@ -573,7 +574,10 @@ This is a `before_tool_call` hook, not loop logic — see
 [tools.md](tools.md#approval) for the full contract.
 
 **It fails closed.** Only `y`/`yes` and `a`/`always` proceed; a bare Enter, an
-unrecognized answer, Ctrl-C, and Ctrl-D all deny. `always` is remembered for the
+unrecognized answer, Ctrl-C, and Ctrl-D all deny. Ctrl-C denies *and* ends the
+turn, the way it does anywhere else in a run: refusing one call and carrying on
+would spend another request on a run the user walked out of, and ask again for
+the next call in the same batch. `always` is remembered for the
 session, never persisted. A skill's `allowed-tools` grants the same way, for the
 rest of the session, and the terminal names what it granted — see
 [tools.md](tools.md#skills). Setting `tools.approval.allow_remember` to false

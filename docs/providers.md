@@ -105,8 +105,9 @@ Four translation details that are not obvious:
 - **Tool results merge.** The API requires every `tool_result` for a turn to
   arrive in one user message; the loop emits them as separate messages, so the
   adapter merges consecutive ones.
-- **Empty content is dropped.** The API rejects a message with no content. An
-  errored or aborted assistant turn has none, so it is not replayed.
+- **Empty content is dropped.** The API rejects a message with no content, so an
+  errored turn — which has none — is not replayed. An aborted one carries what
+  the stream had reached, minus any tool call; see [Abort](events.md#abort).
 - **Signature-less thinking blocks are dropped.** The API rejects a replayed
   thinking block without its signature.
 - **Partial tool JSON is never salvaged.** A truncated argument object can parse

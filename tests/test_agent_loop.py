@@ -14,6 +14,7 @@ from lab_harness.agent.types import (
     AgentEvent,
     AgentStart,
     AgentTool,
+    BeforeToolCallContext,
     BeforeToolCallResult,
     EventSink,
     ExecutionMode,
@@ -661,6 +662,44 @@ async def test_abort_mid_batch_skips_remaining_serial_tools() -> None:
         assert "aborted" in block.text.lower()
     # Only one provider request: the loop must not start another turn.
     assert len(provider.requests) == 1
+
+
+async def test_an_abort_during_approval_stops_asking() -> None:
+    """Ctrl-C at an approval prompt ends the batch, not just the one call.
+
+    Approval is asked for one call at a time, so without this check a batch of
+    three keeps prompting after the user has asked the run to stop — and then
+    spends another request on it.
+    """
+    signal = asyncio.Event()
+    asked: list[str] = []
+
+    async def before_call(context: BeforeToolCallContext) -> BeforeToolCallResult | None:
+        """Refuses the call, the way Ctrl-C at the approval question does."""
+        asked.append(context.tool_call.id)
+        signal.set()
+        return BeforeToolCallResult(block=True, reason="Operation aborted")
+
+    tool = RecordingTool()
+    calls = [
+        ToolCallBlock(id="c1", name="echo", arguments={}),
+        ToolCallBlock(id="c2", name="echo", arguments={}),
+    ]
+    provider = FakeProvider([tool_call_response(calls), text_response("never")])
+    _, emit = _collector()
+
+    messages = await run_agent_loop(
+        _ctx(tool),
+        _cfg(provider, signal=signal, before_tool_call=before_call),
+        emit,
+    )
+
+    assert asked == ["c1"], "the rest must not be asked for"
+    assert tool.calls == [], "nothing runs after the abort"
+    assert len(provider.requests) == 1
+    last = messages[-1]
+    assert isinstance(last, AssistantMessage)
+    assert last.stop_reason == "aborted"
 
 
 async def test_abort_during_parallel_batch_is_reported_on_the_last_turn() -> None:

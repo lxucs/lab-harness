@@ -373,6 +373,12 @@ async def _execute_tool_calls(
         # Argument names, not values: those are the conversation's, and the
         # transcript has them under the same call id.
         _log.debug("Tool call %s: %s(%s)", call.id, call.name, ", ".join(call.arguments))
+        if _aborted(cfg):
+            # The signal can fire while an earlier call is being approved, so
+            # the rest are never asked for — a batch that would otherwise keep
+            # prompting after the user has asked it to stop.
+            prepared.append((call, None, _aborted_result()))
+            continue
         tool = tools_by_name.get(call.name)
         if tool is None:
             _log.debug("Tool call %s: no tool named %r", call.id, call.name)

@@ -52,7 +52,7 @@ from lab_harness.llm.events import (
     ToolCallEnd,
     ToolCallStart,
 )
-from lab_harness.llm.provider import StreamOptions, reasoning_effort
+from lab_harness.llm.provider import StreamOptions, interrupted, reasoning_effort
 from lab_harness.llm.providers._trace import request_shape
 from lab_harness.llm.types import (
     AssistantMessage,
@@ -169,7 +169,15 @@ class AnthropicProvider:
                 yield StreamStart()
                 async for event in stream:
                     if _aborted(options):
-                        yield _failure(model, self.name, _ABORTED_NOTICE, reason="aborted")
+                        # What the stream had reached, not nothing: the words
+                        # were on screen and the tokens were read.
+                        yield _failure(
+                            model,
+                            self.name,
+                            _ABORTED_NOTICE,
+                            reason="aborted",
+                            partial=accumulator.message(),
+                        )
                         return
                     for translated in accumulator.feed(event):
                         yield translated
@@ -550,19 +558,23 @@ def _failure(
     error: str,
     *,
     reason: str = "error",
+    partial: AssistantMessage | None = None,
 ) -> StreamError:
-    """The one place a failure becomes a stream event. Nothing here raises."""
+    """The one place a failure becomes a stream event. Nothing here raises.
+
+    `partial` is what an aborted stream had assembled — reported rather than
+    discarded, since it was read and paid for. An error has nothing to report.
+    """
     if reason == "aborted":
         _log.debug("Stream aborted for %s", model.id)
+        message = interrupted(model, provider, error, partial)
     else:
         _log.warning("%s request failed for %s: %s", provider, model.id, error)
-    return StreamError(
-        message=AssistantMessage(
+        message = AssistantMessage(
             content=(),
             model=model.id,
             provider=provider,
-            stop_reason="aborted" if reason == "aborted" else "error",
+            stop_reason="error",
             error_message=error,
-        ),
-        reason="aborted" if reason == "aborted" else "error",
-    )
+        )
+    return StreamError(message=message, reason="aborted" if reason == "aborted" else "error")

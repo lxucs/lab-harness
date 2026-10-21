@@ -77,8 +77,29 @@ def test_context_is_the_latest_request_not_the_sum() -> None:
     assert summarize(messages, MODELS).context_tokens == 200 + 50 + 1_100
 
 
+def test_a_cancelled_request_counts_what_it_read() -> None:
+    """An aborted request was read and charged for; the cache figures are its.
+
+    The provider reports the counts it had when the run was stopped — Anthropic
+    sends them before the first delta — so they belong in the total, in the
+    cache figures and in the context, not in the blank a request that never
+    reached the model leaves.
+    """
+    messages = [
+        reply(Usage(input=300, output=20)),
+        reply(Usage(input=1_000, cache_read=9_000), stop_reason="aborted"),
+    ]
+
+    summary = summarize(messages, MODELS)
+
+    assert summary.requests == 2
+    assert summary.usage.cache_read == 9_000
+    assert summary.context_tokens == 10_000
+    assert summary.cost is not None
+
+
 def test_context_skips_a_trailing_request_that_reported_nothing() -> None:
-    """An aborted turn has no usage; the context is still what came before it."""
+    """An abort between turns made no request, so it reports nothing either."""
     messages = [reply(Usage(input=300, output=20)), reply(Usage(), stop_reason="aborted")]
 
     assert summarize(messages, MODELS).context_tokens == 320

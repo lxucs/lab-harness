@@ -615,7 +615,13 @@ class Terminal:
             try:
                 with patch_stdout(raw=True):
                     answer = await self._session.prompt_async(question)
-            except (KeyboardInterrupt, EOFError):
+            except KeyboardInterrupt:
+                # Ctrl-C here is the same request as anywhere in a turn: stop
+                # the run, not just this call. Denying one and going on would
+                # spend another request on a run the user walked out of.
+                self.agent.abort()
+                return "no"
+            except EOFError:
                 # Interrupting the question is a refusal, not an approval.
                 return "no"
         return _ANSWERS.get(answer.strip().lower()[:1], "no")
@@ -676,7 +682,13 @@ def _history(config: Config) -> History:
     if not config.session.enabled:
         return InMemoryHistory()
     path = lab_harness_home(config.session) / config.session.history_file
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # A home that cannot be written to fails at startup, as a message
+        # rather than a traceback — and before a run that could not be
+        # recorded has begun.
+        raise ConfigError(f"Cannot create {path.parent}: {exc.strerror}") from exc
     return FileHistory(str(path))
 
 

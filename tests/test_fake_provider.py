@@ -1,6 +1,15 @@
+import asyncio
+
 import pytest
 
-from lab_harness.llm.events import StreamDone, StreamError, StreamEvent, StreamStart
+from lab_harness.llm.events import (
+    StreamDone,
+    StreamError,
+    StreamEvent,
+    StreamStart,
+    TextDelta,
+    ToolCallEnd,
+)
 from lab_harness.llm.fake import (
     FAKE_MODEL,
     FakeProvider,
@@ -8,6 +17,7 @@ from lab_harness.llm.fake import (
     text_response,
     tool_call_response,
 )
+from lab_harness.llm.provider import StreamOptions
 from lab_harness.llm.types import Context, TextBlock, ToolCallBlock
 
 
@@ -62,3 +72,39 @@ async def test_raises_when_script_is_exhausted() -> None:
 
     with pytest.raises(AssertionError, match="exhausted"):
         await _drain(provider, _ctx())
+
+
+async def test_a_signal_mid_script_aborts_with_what_was_streamed() -> None:
+    """As the adapters do: the words already sent are kept, a call is not.
+
+    A call is dropped for the reason the adapters drop one — nothing will
+    answer it, and a turn with an unanswered call cannot be sent again.
+    """
+    signal = asyncio.Event()
+    call = ToolCallBlock(id="c1", name="read", arguments={"path": "a.py"})
+    provider = FakeProvider([text_response("half an answer", chunk_size=4)])
+
+    events: list[StreamEvent] = []
+    async for event in provider.stream(FAKE_MODEL, _ctx(), StreamOptions(signal=signal)):
+        events.append(event)
+        if isinstance(event, TextDelta):
+            signal.set()
+
+    last = events[-1]
+    assert isinstance(last, StreamError)
+    assert last.reason == "aborted"
+    assert last.message.stop_reason == "aborted"
+    assert last.message.content == (TextBlock(text="half"),)
+
+    # A call already announced is dropped, rather than left unanswered.
+    signal = asyncio.Event()
+    provider = FakeProvider([tool_call_response([call])])
+    events = []
+    async for event in provider.stream(FAKE_MODEL, _ctx(), StreamOptions(signal=signal)):
+        events.append(event)
+        if isinstance(event, ToolCallEnd):
+            signal.set()
+
+    last = events[-1]
+    assert isinstance(last, StreamError)
+    assert last.message.content == ()

@@ -18,7 +18,7 @@ import httpx
 
 from lab_harness.config import OpenAIConfig
 from lab_harness.llm.events import StreamError
-from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.provider import StreamOptions, interrupted
 from lab_harness.llm.types import AssistantMessage, Model
 
 ABORTED_NOTICE = "Operation aborted"
@@ -202,22 +202,26 @@ def failure(
     error: str,
     *,
     reason: str = "error",
+    partial: AssistantMessage | None = None,
 ) -> StreamError:
-    """The one place a failure becomes a stream event. Nothing here raises."""
+    """The one place a failure becomes a stream event. Nothing here raises.
+
+    `partial` is what an aborted stream had assembled — reported rather than
+    discarded, since it was read and paid for. An error has nothing to report.
+    """
     if reason == "aborted":
         _log.debug("Stream aborted for %s via %s", model.id, provider)
+        message = interrupted(model, provider, error, partial)
     else:
         _log.warning("%s request failed for %s: %s", provider, model.id, error)
-    return StreamError(
-        message=AssistantMessage(
+        message = AssistantMessage(
             content=(),
             model=model.id,
             provider=provider,
-            stop_reason="aborted" if reason == "aborted" else "error",
+            stop_reason="error",
             error_message=error,
-        ),
-        reason="aborted" if reason == "aborted" else "error",
-    )
+        )
+    return StreamError(message=message, reason="aborted" if reason == "aborted" else "error")
 
 
 def missing_credential(provider: str, config: OpenAIConfig) -> str:

@@ -908,6 +908,23 @@ async def test_an_abort_mid_stream_terminates_the_turn() -> None:
     assert final(events).stop_reason == "aborted"
 
 
+async def test_an_abort_keeps_what_the_stream_had_produced() -> None:
+    """A cancelled answer is not an empty one: what was said stays in the turn."""
+    signal = asyncio.Event()
+    recorder = Recorder(sse(delta(content="a"), delta(content="b"), finish()))
+    stream = provider(recorder).stream(MODEL, ctx(), StreamOptions(signal=signal))
+
+    events: list[StreamEvent] = []
+    async for event in stream:
+        events.append(event)
+        if isinstance(event, TextDelta):
+            signal.set()
+
+    message = final(events)
+    assert message.stop_reason == "aborted"
+    assert message.content == (TextBlock(text="a"),)
+
+
 async def test_a_request_building_failure_is_reported_not_raised() -> None:
     """Arguments that cannot be serialized are a bug, but not a fatal one."""
 
