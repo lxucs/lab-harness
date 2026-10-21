@@ -6,8 +6,9 @@
 The model comes from config — `$LAB_HARNESS_MODEL`, else `agent.model` — so the
 same script runs against any configured vendor, given that vendor's API key
 (`ANTHROPIC_API_KEY` for the default). So does the system prompt: the one the
-CLI sends, from `[prompts]` in config and this machine, with this project's
-AGENTS.md appended.
+CLI sends, built from `[prompts]` in config and from the machine it runs on,
+with this project's AGENTS.md appended.
+
 The tools are read-only: nothing on disk changes.
 """
 

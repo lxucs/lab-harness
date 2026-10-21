@@ -80,8 +80,8 @@ max_bytes = 32000
 # system = """\
 # You are {agent_model}, a careful research assistant. Keep responses concise."""
 #
-# {cwd} is an absolute path on this machine; to keep it out of every request,
-# set `environment` to a section that does not name it, for example:
+# {cwd} is an absolute path on the machine the agent runs on; to keep it out of
+# every request, set `environment` to a section that does not name it, for example:
 # environment = """\
 # # Environment
 #  - Platform: {system_platform}

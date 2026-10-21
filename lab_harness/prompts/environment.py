@@ -34,7 +34,7 @@ class Environment:
 
 
 def detect_environment(cwd: str | Path, model: str) -> Environment:
-    """The environment of an agent running `model` in `cwd`, on this machine.
+    """The environment of an agent running `model` in `cwd`, read from here.
 
     A Python caller that later changes `agent.state.model` builds the prompt
     again to keep the two in step.

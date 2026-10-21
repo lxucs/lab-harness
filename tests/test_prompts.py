@@ -239,7 +239,7 @@ def test_outside_a_repository_git_reads_false() -> None:
 
 def test_the_instructions_do_not_carry_their_absolute_path() -> None:
     """Where the project is, is `environment`'s to say: a config that sets it
-    to "" keeps this machine's layout out of every request."""
+    to "" keeps the machine's layout out of every request."""
     context = ProjectContext(path=Path("/home/someone/secret-project/AGENTS.md"), text="x")
     prompts = replace(Config().prompts, environment="")
 

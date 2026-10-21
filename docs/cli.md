@@ -53,7 +53,7 @@ else it has to say:
 ```
 ╭───────────────────────────────────────────────────────────╮
 │ lab-harness · claude-sonnet-5 via anthropic               │
-│ ~/gitrepo/harness                                         │
+│ ~/projects/my-project                                     │
 │ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking │
 ╰───────────────────────────────────────────────────────────╯
 ```
@@ -339,28 +339,13 @@ transcript across many invocations. Sessions are scoped to the working
 directory — resuming in one project never surfaces another's history.
 
 The interactive terminal prints the saved conversation before the first
-prompt: questions, answers, tool calls and their output, thinking settled the
-configured way and expandable with Ctrl-O. A rule heads it — `── Resumed
-20261010T11 — 12 message(s) ──` — because what follows is drawn exactly as new
-turns are, and nothing else says it is old. An edit shows its result but not
-its diff, which is display-only and never recorded. With `--no-save` this is a
-read-only view — nothing is appended to the file.
+prompt, drawn exactly as new turns are and expandable with Ctrl-O, headed by a
+rule that says it is old: `── Resumed 20261010T11 — 12 message(s) ──`. With
+`--no-save` it is a read-only view — nothing is appended to the file.
 
-`--export` turns a session into a web page:
-
-```bash
-lab-harness --export 20261010T11   # writes <session-id>.html beside it, prints the path
-```
-
-One self-contained file — styles and script inline, nothing fetched, a
-Content-Security-Policy that lets only its own script run — so it opens from
-disk and can be shared as it is. It shows what the terminal does not: each
-invocation's system prompt, tool declarations and config (credentials
-redacted), when the context changed and why, tokens and cost per request, and
-turns resume dropped. Thinking and tool calls fold, edits show as diffs, and a
-search box (`/`) filters turns and steps through matches; `t` and `o` fold or
-unfold every thought and every call. Everything from the transcript is escaped:
-it is model and tool output, and the page treats it as untrusted.
+`--export [ID]` writes the session as one self-contained HTML page beside its
+transcript and prints its path — the conversation, every segment's context,
+and tokens and cost per request, opening from disk with nothing fetched.
 
 Each invocation also records the system prompt, tool declarations, model and
 config (credentials redacted) it ran with, and records them again whenever one
@@ -370,15 +355,13 @@ trimming of interrupted turns, rebuilding trajectories, and the reserved
 
 ## The system prompt
 
-What every request opens with: the sections of `[prompts]` in config —
-`system`, how the harness works, the environment it runs in (working
-directory, git, platform, shell, model), context management, the skills found
-below — and last the project's instructions. The text ships in
-[`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml), and
-[`lab_harness/prompts/system.py`](../lab_harness/prompts/system.py) puts it
-together. It names no tools — what the model can call comes from the tool
-declarations alone, so narrowing `--tools` never leaves the prompt describing
-a tool that is not there.
+What every request opens with: the sections of `[prompts]` in config — who the
+model is, how the harness works, the environment it runs in, context
+management, the skills found — and last the project's instructions. It names no
+tools: what the model can call comes from the tool declarations alone, so
+narrowing `--tools` never leaves the prompt describing a tool that is not
+there. The text ships in
+[`lab_harness/prompts/prompts.toml`](../lab_harness/prompts/prompts.toml).
 
 ```bash
 lab-harness --system-prompt "Answer in one sentence."
@@ -407,25 +390,22 @@ capped at `project.max_bytes`. Full behavior:
 
 ## Skills
 
-Instructions for particular kinds of task, kept in `.lab-harness/skills` or in
-home and loaded when the model asks for one by name. The model sees a list of
-their names and what each is for; the instructions themselves arrive only when
-it calls `skill` with a name, so a directory of them costs a list rather than
-the text of every one. A skill may also name tools it is allowed to use without
-asking. The format, `allowed-tools`, and the config:
+Instructions for a kind of task, loaded when the model asks for one by name:
+the model sees their names and what each is for, and the instructions arrive
+only when it calls `skill`. The format, `allowed-tools` and the config:
 [tools.md](tools.md#skills).
 
-**You can pick one instead.** Each is listed in the `/` menu and runs as
-`/commit [request]`, and `/skills` prints them with what each allows — see
+**Each is also a command** — `/commit [request]` sends one's instructions as
+the next turn, and `/skills` lists them with what each allows — see
 [Commands](#commands) above.
 
-**Which apply is yours to choose**, at any of the three levels: `skills.selected`
-in config, `--skills` for one run, and `/skills commit,release` mid-session.
+**Which apply is yours to choose**, at any of the three levels:
+`skills.selected` in config, `--skills` for one run, and `/skills` mid-session;
 `--skills ""` and `/skills none` make none available. The same for tools:
-`tools.enabled`, `--tools`, and `/tools read,skill`. A change mid-session
-rebuilds the system prompt, so what the model is offered and what it can ask
-for never disagree — and the next run's `agent_start` carries the new
-declarations, so a recorded session opens a new segment there.
+`tools.enabled`, `--tools` and `/tools`. A change mid-session rebuilds the
+system prompt, so what the model is offered and what it can ask for never
+disagree — and the next run's `agent_start` carries the new declarations, so a
+recorded session opens a new segment there.
 
 ## Choosing a model
 

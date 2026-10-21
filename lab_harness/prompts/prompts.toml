@@ -27,10 +27,10 @@
 # {"a": 1} or {} is text that needs no escaping; {{ and }} write one brace,
 # which is how a {cwd} meant to stay {cwd} is written.
 #
-# {cwd} is a path on this machine, so it is in every request and in every
-# trajectory exported from a session. {date} changes the prompt daily, which a
-# session resumed the next day reports as a changed prompt -- no section below
-# names it, and none has to.
+# {cwd} is a path on the machine the agent runs on, so it goes into every
+# request and into every trajectory exported from a session. {date} changes the
+# prompt daily, which a session resumed the next day reports as a changed
+# prompt -- no section below names it, and none has to.
 #
 # Name no tools here. What the model can call, and how to use it, comes from the
 # tool declarations alone, so the prompt stays true whatever tools.enabled or
@@ -60,9 +60,10 @@ When you use a pronoun for someone — the user or anyone else you mention — a
 their pronouns haven't been stated, use they/them."""
 
 # The section that names the most of them; the list is at the top of the file.
-# {cwd} is a path on this machine, so it is in every request and in every
-# trajectory exported from a session -- a config that sets this section to a
-# line without it keeps this machine's layout out of both.
+# {cwd} is a path on the machine the agent runs on, so it goes into every
+# request and into every trajectory exported from a session -- a config that
+# sets this section to a line without it keeps that machine's layout out of
+# both.
 environment = """\
 # Environment
 You have been invoked in the following environment:

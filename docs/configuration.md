@@ -84,7 +84,7 @@ context_files = ["HARNESS.md", "AGENTS.md"]  # first one that exists is loaded
 max_bytes = 32000                            # longer files are truncated
 
 [prompts]               # ships in lab_harness/prompts/; see "Prompts" below
-system = "You are Lab Harness, a helpful assistant running in a terminal …"
+system = "You are a helpful assistant running in a Lab Harness terminal …"
 harness = "# Harness\n - Text you output outside of tool use …"
 environment = "# Environment\n…\n - Primary working directory: {cwd}\n…"
 context_management = "# Context management\n…"
@@ -435,8 +435,9 @@ one may be written in any section, `{cwd}` in `harness` included. The last
 three are what `skills` and `project_instructions` wrap, which is where they
 are meant to go, but a variable is a variable wherever it is written.
 
-`{cwd}` is a path on this machine, so it is in every request and in every
-trajectory exported from a session; a prompt without it keeps it out. The model
+`{cwd}` is an absolute path on the machine the agent runs on, so it is in every
+request and in every trajectory exported from a session; a prompt without it
+keeps it out. The model
 is named too, so resuming a session under another model changes the prompt, and
 `--resume` says so. `{date}` is left out of the shipped text for the same
 reason: a prompt naming it changes daily, and a session resumed the next day

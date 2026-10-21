@@ -88,15 +88,12 @@ So do not read `message_start.message.content` for an assistant message.
 Accumulate the `message_update` deltas, or read
 `agent.state.streaming_message`.
 
-So overall:
-
-- **Every message is announced as a start/end pair, even when both carry the
-  same content.** Non-streaming ones, e.g. the user turn, tool results, and a
-  `finish_turn`-injected message are still all emitted `message_start` then
-  `message_end`, with identical messages. Though, only `message_end.message` is 
-  consumed — the start's content is ignored. The pairing is kept uniform so 
-  every consumer implements one code path (`start → deltas? → end`) and never 
-  special-cases "this message has no deltas".
+**Every message is announced as a start/end pair, even when both carry the same
+content.** The user turn, tool results and a `finish_turn`-injected message are
+still emitted `message_start` then `message_end` with identical messages, and
+only `message_end.message` is consumed — the start's content is ignored. The
+pairing is kept uniform so a consumer implements one path —
+`start → deltas? → end` — and never special-cases "this message has no deltas".
 
 ### The user message is on the stream too
 

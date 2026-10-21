@@ -303,12 +303,10 @@ meta description, which is the practical difference from a keyless backend. Set
 raw content for five results is usually far more than the answer needs and
 `web_fetch` can get it for the one result that matters.
 
-> **`ddgs` did not work from the development machine.** Every engine failed:
-> mojeek was unreachable at the TLS layer, and duckduckgo, brave and google
-> each returned a page the scraper could not parse — the normal anti-bot
-> response. This may be specific to that network. The backend is implemented
-> and unit-tested, and it surfaces the failure as a readable tool error rather
-> than an exception, but it has never returned a real result here. Tavily is
+> **The keyless `ddgs` backend is unproven.** It is implemented and
+> unit-tested, and a failure surfaces as a readable tool error rather than an
+> exception — but it scrapes search front-ends that are not reachable from
+> every network, so it has not been confirmed against a live engine. Tavily is
 > the default partly for this reason.
 
 ### Keys

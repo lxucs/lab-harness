@@ -676,7 +676,7 @@ def _history(config: Config) -> History:
 
 
 def _short_home(path: str) -> str:
-    """`~/gitrepo/harness` rather than the whole path. Display only."""
+    """`~/projects/my-project` rather than the whole path. Display only."""
     home = str(Path.home())
     return path.replace(home, "~", 1) if path.startswith(home) else path
 

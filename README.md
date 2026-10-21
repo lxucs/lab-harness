@@ -8,9 +8,9 @@ and searches the web, with whichever of those tools you give it — from an
 interactive terminal, a one-shot command, or your own Python. Architecturally it follows
 [pi](https://github.com/earendil-works/pi): the same layering, trimmed to the core logics.
 
-- **Minimal.** The stateless agent loop is under 500 lines of code, in
+- **Minimal.** The stateless agent loop is about 500 lines of code, in
   [`agent/loop.py`](lab_harness/agent/loop.py); the stateful `Agent` that wraps
-  it — transcript, subscribers, abort — is under 150 lines, in
+  it — transcript, subscribers, abort — about 150, in
   [`agent/agent.py`](lab_harness/agent/agent.py). No other framework dependencies.
 - **Every request reproducible.** A session records the system prompt, tools,
   model, reasoning effort and config each request was sent with — including
@@ -25,8 +25,8 @@ interactive terminal, a one-shot command, or your own Python. Architecturally it
 - **Observable.** Every step is a typed event of plain JSON data. `--json`
   streams them as JSONL, and `--log-level debug` traces each request, response
   and tool call by shape and id.
-- **Hackable at two seams.** Four hooks and the event stream. A new tool is one
-  file and one registry entry.
+- **Hackable at two seams.** The event stream, and four hooks. A new tool is
+  one file and one registry entry.
 - **Tested offline.** A scripted provider drives the real loop with no network,
   and the suite blocks sockets so no test can reach one by accident.
 
@@ -149,23 +149,30 @@ should also read [AGENTS.md](AGENTS.md).
 
 ## Status
 
-**Everything planned is built:** a tested runtime core, the full local tool set
-(`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`/`skill`), `web_search`/`web_fetch` with
-pluggable backends, three provider adapters (Messages, Responses, Chat
-Completions), an interactive terminal with streamed, collapsible thinking,
-colored edit diffs, slash commands listed as they are typed and a per-run
-token, cache and cost readout, a fail-closed approval gate, a tool set and a
-skill set chosen in config, per run, or mid-session — the system prompt rebuilt
-around them as they change, skills loaded on demand with the tools they are
-allowed to use, a reasoning effort set
-in config, per run or mid-session, layered
-TOML config with the prompts and the model catalog as data, a system prompt built from
-configurable sections with the environment filled in and the project's
-`HARNESS.md`/`AGENTS.md` appended, levelled diagnostics on stderr, and durable
-sessions that resume on screen where they left off, export as a searchable
-web page, and record enough to rebuild every request they made, changes
-mid-session included. A step-by-step
-reading order is in [docs/architecture.md](docs/architecture.md#reading-order).
+**Everything planned is built.** At a glance:
+
+- **Runtime** — a tested agent loop; the local tool set
+  (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`/`skill`); `web_search` and
+  `web_fetch` behind pluggable backends; three provider adapters — Messages,
+  Responses, Chat Completions. Reasoning is carried across tool calls the way
+  each vendor requires. [tools.md](docs/tools.md) ·
+  [providers.md](docs/providers.md)
+- **Terminal** — streamed, collapsible thinking; colored edit diffs; slash
+  commands listed as they are typed; a per-run token, cache and cost readout;
+  a fail-closed approval gate. The tool set, the skill set and the reasoning
+  effort are each chosen in config, per run, or mid-session, and the system
+  prompt is rebuilt around them as they change. [cli.md](docs/cli.md)
+- **Config as data** — layered TOML, with the prompts and the whole model
+  catalog as config files. The system prompt is configurable sections, filled
+  from the environment, with the project's `HARNESS.md`/`AGENTS.md` appended.
+  [configuration.md](docs/configuration.md)
+- **Sessions** — durable transcripts that resume on screen where they left
+  off, export as a searchable web page, and record enough to rebuild every
+  request they made, changes mid-session included.
+  [sessions.md](docs/sessions.md)
+
+A step-by-step reading order is in
+[docs/architecture.md](docs/architecture.md#reading-order).
 
 **Worth knowing before you use it:** `-p` one-shot mode has **no approval
 gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
@@ -173,10 +180,10 @@ gate** — there is nobody at the keyboard to answer, so `bash`, `write`, and
 Interactive mode asks, and fails closed on anything but an explicit yes.
 
 **Web search needs a key.** The default backend is
-[Tavily](https://tavily.com) (free tier available); the keyless `ddgs`
-alternative is implemented but did not return results from the development
-machine — see [docs/tools.md](docs/tools.md#web-tools). `web_fetch` needs no
-key either way.
+[Tavily](https://tavily.com) (free tier available). The keyless `ddgs`
+alternative is implemented but unproven — the engines it scrapes are not
+reachable from every network — see
+[docs/tools.md](docs/tools.md#web-tools). `web_fetch` needs no key either way.
 
 ### TODO
 
