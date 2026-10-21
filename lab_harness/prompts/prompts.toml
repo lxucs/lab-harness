@@ -39,6 +39,7 @@
 # A line ending in a backslash continues its paragraph: the text sent has no
 # break there, so wrapping lines in this file changes nothing the model sees.
 
+# Some prompts are taken from Claude Code.
 [prompts]
 
 system = """\

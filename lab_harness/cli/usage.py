@@ -127,6 +127,18 @@ def format_cost(amount: float, symbol: str) -> str:
     return f"{symbol}{amount:.4f}" if amount < 1 else f"{symbol}{amount:.2f}"
 
 
+def format_effort(model: Model) -> str | None:
+    """The reasoning effort to show, or None for a model that is sent none.
+
+    A model flagged as not reasoning is sent no level whatever config says, so
+    None is the honest display. Empty reads "default" — the level is the
+    provider's own, not one named here.
+    """
+    if not model.supports_reasoning:
+        return None
+    return model.reasoning_effort or "default"
+
+
 def format_footer(summary: UsageSummary, model: Model, symbol: str) -> str | None:
     """One line for the end of a run, or None when no request reported usage.
 
@@ -140,6 +152,8 @@ def format_footer(summary: UsageSummary, model: Model, symbol: str) -> str | Non
     rate = cache_hit_rate(usage)
     if rate is not None:
         parts.append(f"{rate:.0%} cached")
+    if (effort := format_effort(model)) is not None:
+        parts.append(f"effort {effort}")
     parts.append(f"context {_context(summary.context_tokens, model)}")
     if summary.cost is not None:
         parts.append(format_cost(summary.cost, symbol))
@@ -149,9 +163,10 @@ def format_footer(summary: UsageSummary, model: Model, symbol: str) -> str | Non
 def format_status(summary: UsageSummary, model: Model, symbol: str) -> list[str]:
     """Aligned `label  value` lines for `/status`."""
     usage = summary.usage
+    effort = format_effort(model)
     rows = [
         ("model", f"{model.id} via {model.provider}"),
-        *([("effort", model.reasoning_effort or "default")] if model.supports_reasoning else []),
+        *([("effort", effort)] if effort is not None else []),
         ("requests", str(summary.requests)),
         (
             "input",

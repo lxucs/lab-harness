@@ -47,15 +47,15 @@ answer alone. Diagnostics follow the same rule — see
 prompt_toolkit handles input: history, multi-line entry, and key bindings. rich
 handles output: streaming text, markdown with highlighted code, and diffs.
 
-A session opens with a box saying what is running and where, before anything
-else it has to say:
+A session opens with a box saying what is running, where, and how hard it is
+asked to think, before anything else it has to say:
 
 ```
-╭───────────────────────────────────────────────────────────╮
-│ lab-harness · claude-sonnet-5 via anthropic               │
-│ ~/projects/my-project                                     │
-│ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking │
-╰───────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────╮
+│ lab-harness · claude-sonnet-5 via anthropic · effort medium │
+│ ~/projects/my-project                                       │
+│ / for commands · Ctrl-C cancels · Ctrl-O toggles thinking   │
+╰─────────────────────────────────────────────────────────────╯
 ```
 
 Output is **inline** — it lands in real terminal scrollback rather than being
@@ -253,7 +253,7 @@ came before, and the next run opens a new segment in it.
 Each run ends with one dim line covering every request it made:
 
 ```
-45.2k in · 1.3k out · 82% cached · context 15.1k of 1M (2%) · $0.0421
+45.2k in · 1.3k out · 82% cached · effort medium · context 15.1k of 1M (2%) · $0.0421
 ```
 
 | Part | Meaning |
@@ -261,6 +261,7 @@ Each run ends with one dim line covering every request it made:
 | `in` | Prompt tokens read across the run's requests, cached or not |
 | `out` | Tokens generated |
 | `cached` | Share of `in` served from the provider's prompt cache |
+| `effort` | The [reasoning effort](#reasoning-effort) the requests went out with; `default` when none is sent, and left out for a model that does not reason |
 | `context` | Size of the latest request — prompt plus output — against the model's window |
 | cost | From the model's [`price`](configuration.md#prices); left out for an unpriced model |
 
@@ -273,6 +274,7 @@ into uncached, cache-read and cache-write tokens:
 
 ```
 model      claude-sonnet-5 via anthropic
+effort     medium
 requests   12
 input      450.4k (38.1k uncached · 392k cache read · 20.3k cache write)
 output     5.2k
@@ -466,8 +468,10 @@ sent no level at all.
 
 A level is part of the model a request goes to, so a session records it with
 the model in each `context` entry: a changed level opens a new segment, the
-export page marks it, and a rebuilt request body carries it. `/status` shows
-the current one.
+export page marks it, and a rebuilt request body carries it. The current one is
+on screen throughout — in the box a session opens with, in the line that ends
+each run, and in `/status`. A model that does not reason gets no level, and no
+place claims one.
 
 ## Diagnostics
 

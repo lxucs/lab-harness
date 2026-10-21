@@ -91,6 +91,7 @@ from lab_harness.cli.renderers import GLYPH, EventRenderer, display_name
 from lab_harness.cli.usage import (
     UsageSummary,
     context_share,
+    format_effort,
     format_footer,
     format_status,
     summarize,
@@ -228,14 +229,18 @@ class Terminal:
         after its restored history has been printed."""
         model = self.agent.state.model
         theme = self.config.terminal.theme
+        effort = format_effort(model)
+        lines: list[tuple[str, str]] = [
+            ("lab-harness", theme.accent),
+            (f" · {model.id} via {model.provider}", ""),
+            *([(f" · effort {effort}", theme.muted)] if effort is not None else []),
+            ("\n", ""),
+            (f"{_short_home(self.agent.cwd)}\n", theme.muted),
+            (_TIPS, theme.muted),
+        ]
         self.console.print(
             Panel(
-                Text.assemble(
-                    ("lab-harness", theme.accent),
-                    (f" · {model.id} via {model.provider}\n", ""),
-                    (f"{_short_home(self.agent.cwd)}\n", theme.muted),
-                    (_TIPS, theme.muted),
-                ),
+                Text.assemble(*lines),
                 box=ROUNDED,
                 border_style=theme.muted,
                 expand=False,

@@ -503,6 +503,17 @@ async def test_the_session_opens_with_a_box_naming_the_model_and_the_directory()
     assert "╭" in output, "a box, not another line of text"
 
 
+async def test_the_box_names_the_effort_the_session_asks_for() -> None:
+    """What every request in it goes out with, until `/effort` says otherwise."""
+    terminal, buffer = _terminal([])
+    agent = _attach(terminal, FakeProvider([]), cwd="proj")
+    agent.state.model = replace(FAKE_MODEL, supports_reasoning=True, reasoning_effort="high")
+
+    terminal.welcome()
+
+    assert "effort high" in buffer.getvalue()
+
+
 async def test_help_lists_every_command_with_what_it_does() -> None:
     terminal, buffer = _terminal(["/help"])
     _attach(terminal, FakeProvider([]))

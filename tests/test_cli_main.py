@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
@@ -692,6 +693,25 @@ def test_resume_without_an_id_lists_the_sessions_and_runs_nothing(
     assert "--resume SESSION_ID" in out
     assert len(provider.requests) == 2, "the prompt was not sent"
     assert len(list_sessions(tmp_path, Config().session)) == 2, "and nothing was recorded"
+
+
+def test_resume_without_an_id_dates_each_session_in_local_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file holds UTC and ISO; the menu answers "which one was this morning"."""
+    provider = FakeProvider([text_response("one")])
+    monkeypatch.setattr("lab_harness.cli.main.route", lambda *_: (FAKE_MODEL, provider))
+    assert main(["-p", "first", "--cwd", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["--resume", "--cwd", str(tmp_path)]) == 0
+
+    out = capsys.readouterr().out
+    [path] = list_sessions(tmp_path, Config().session)
+    stamp = read_transcript(path).header.timestamp
+    expected = datetime.fromisoformat(stamp).astimezone().strftime("%Y-%m-%d %H:%M")
+    assert expected in out
+    assert stamp not in out, "the raw UTC stamp it was formatted from"
 
 
 def test_resume_without_an_id_and_no_sessions_says_so(

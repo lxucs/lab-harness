@@ -11,6 +11,7 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from rich.console import Console
@@ -414,7 +415,7 @@ def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
             continue
         console.print(
             f"{path.stem}  {len(transcript.messages):>4} msg  "
-            f"{transcript.header.model}  {transcript.header.timestamp}"
+            f"{transcript.header.model}  {_local_time(transcript.header.timestamp)}"
         )
     console.print(
         Text(
@@ -423,6 +424,23 @@ def list_saved_sessions(args: argparse.Namespace, config: Config) -> int:
         )
     )
     return 0
+
+
+def _local_time(stamp: str) -> str:
+    """The timestamp a transcript holds — UTC, as ISO — as a local date and time.
+
+    Right in a file, wrong in a menu: what a list of sessions has to answer is
+    "which one was this morning", and an offset nobody asked for is in the way.
+    A stamp that will not parse is shown as it stands rather than dropped —
+    that row is the only place the time appears.
+    """
+    try:
+        moment = datetime.fromisoformat(stamp)
+    except ValueError:
+        return stamp
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _text_sink() -> Callable[[AgentEvent], Awaitable[None]]:

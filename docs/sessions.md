@@ -236,8 +236,10 @@ lab-harness --no-save             # run without persisting anything
 
 `--resume` alone lists and exits rather than continuing the most recent
 session, which would be the wrong conversation whenever the last run was not
-the one meant. In Python, `resume()` without a `session_id` does take the most
-recent.
+the one meant. Each is listed with its message count, its model and the local
+time it started — the transcript holds UTC, which is right for a file and the
+wrong thing to answer "which one was this morning". In Python, `resume()`
+without a `session_id` does take the most recent.
 
 Resume reads the file, rebuilds the message list, and continues writing to the
 **same** file, opening a new segment. An ambiguous id prefix is an error rather

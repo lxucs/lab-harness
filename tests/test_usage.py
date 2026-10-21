@@ -4,11 +4,14 @@ Pure functions over messages, so they are tested on hand-built transcripts
 rather than through a run. The terminal tests cover the wiring.
 """
 
+from dataclasses import replace
+
 import pytest
 
 from lab_harness.cli.usage import (
     cache_hit_rate,
     format_cost,
+    format_effort,
     format_footer,
     format_status,
     format_tokens,
@@ -17,7 +20,7 @@ from lab_harness.cli.usage import (
 )
 from lab_harness.config import PricingConfig
 from lab_harness.llm.fake import FAKE_MODEL
-from lab_harness.llm.types import AssistantMessage, Usage, UserMessage, text
+from lab_harness.llm.types import AssistantMessage, Model, Usage, UserMessage, text
 from tests.entries import model_entry
 
 PRICED = "priced-model"
@@ -176,6 +179,39 @@ def test_a_large_cost_is_shown_in_cents() -> None:
 
 def test_the_currency_symbol_is_configurable() -> None:
     assert format_cost(1.5, "¥") == "¥1.50"
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        (FAKE_MODEL, None),
+        (replace(FAKE_MODEL, supports_reasoning=True), "default"),
+        (replace(FAKE_MODEL, supports_reasoning=True, reasoning_effort="low"), "low"),
+    ],
+    ids=["does-not-reason", "none-set", "a-level"],
+)
+def test_the_effort_shown_is_the_one_a_request_carries(model: Model, expected: str | None) -> None:
+    """A model flagged as not reasoning is sent no level, so none is claimed."""
+    assert format_effort(model) == expected
+
+
+def test_the_footer_names_the_effort_the_run_went_out_with() -> None:
+    summary = summarize([reply(Usage(input=1_000, output=500))], MODELS)
+
+    footer = format_footer(summary, replace(FAKE_MODEL, supports_reasoning=True), "$")
+
+    assert footer is not None
+    assert "effort default" in footer
+
+
+def test_the_footer_omits_the_effort_for_a_model_that_does_not_reason() -> None:
+    """A level is configured but never sent, so showing it would be untrue."""
+    summary = summarize([reply(Usage(input=1_000, output=500))], MODELS)
+
+    footer = format_footer(summary, replace(FAKE_MODEL, reasoning_effort="high"), "$")
+
+    assert footer is not None
+    assert "effort" not in footer
 
 
 def test_the_footer_shows_tokens_cache_context_and_cost() -> None:
