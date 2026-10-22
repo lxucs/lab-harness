@@ -79,7 +79,7 @@ max_turns = 50                   # ceiling on provider requests in one run
 parallel_tools = true            # run independent tool calls concurrently
 model = "gpt-6-luna"             # used when --model and $LAB_HARNESS_MODEL are absent
 model_env = "LAB_HARNESS_MODEL"  # NAME of the variable that overrides `model`
-provider = "anthropic"           # for a model id nothing else routes
+provider = "openai"              # for a model id nothing else routes
 reasoning_effort = ""            # for a model whose entry sets none; "" sends none
 
 [project]

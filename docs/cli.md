@@ -421,9 +421,11 @@ lab-harness --model their-model --provider groq
 ```
 
 The provider is inferred from the model id, so `--provider` is only needed for
-an id the catalog does not list. OpenAI, DeepSeek and GLM are configured out of
-the box, in [`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml);
-any other endpoint speaking either protocol is a few lines of config —
+an id the catalog does not list — and not even then if OpenAI serves it, where
+such an id goes by default (`agent.provider`). OpenAI, DeepSeek and GLM are
+configured out of the box, in
+[`lab_harness/llm/catalog.toml`](../lab_harness/llm/catalog.toml); any other
+endpoint speaking either protocol is a few lines of config —
 [configuration.md](configuration.md#provider-profiles).
 
 Reasoning models differ in what they will show you and what has to be handed

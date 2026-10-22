@@ -323,7 +323,7 @@ still fails at startup.
 1. `--provider`
 2. the `provider` of the id's [`models`](configuration.md#models) entry — so
    `--model deepseek-flash` reaches DeepSeek with no flag
-3. `agent.provider` (default `anthropic`)
+3. `agent.provider` (default `openai`)
 
 Rung 2 is config like any other, so re-pointing a catalogued model at a
 gateway, or at a local server running the same weights, is one line:
@@ -357,8 +357,9 @@ then the configured default.
 An **unknown model id is not an error**. Model names ship faster than this
 catalog does, so an unlisted id is given conservative limits rather than
 refused. Being unable to use a model released last week is worse than a
-slightly wrong `context_window`. Routing still works for it: give it a
-`[models]` entry naming its provider, or pass `--provider`.
+slightly wrong `context_window`. Routing still works for it: it goes to
+`agent.provider`, OpenAI by default, unless a `[models]` entry or `--provider`
+names another.
 
 A model's `provider` names the *profile* that serves it, not the
 dialect it speaks — `deepseek-flash` says `deepseek`, not `openai`.

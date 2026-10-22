@@ -54,7 +54,7 @@ class AgentConfig:
     #: Provider used for a model id nothing else routes — one with no `models`
     #: entry, or an entry naming no provider. The last rung of the ladder in
     #: llm/providers/select_provider; `--provider` is the first.
-    provider: str = "anthropic"
+    provider: str = "openai"
     #: Reasoning effort for a model whose `models` entry sets none, in the
     #: provider's own terms: "low", "high", … Empty asks for nothing, leaving
     #: it to the model. `--reasoning-effort` beats both.

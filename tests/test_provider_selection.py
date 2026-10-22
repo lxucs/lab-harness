@@ -112,8 +112,8 @@ def test_route_writes_the_chosen_provider_onto_an_unknown_model() -> None:
     """An unlisted id resolves naming no provider; the Model must say what served it."""
     model, provider = route("something-released-last-week", Config())
 
-    assert model.provider == "anthropic"
-    assert isinstance(provider, AnthropicProvider)
+    assert model.provider == "openai"
+    assert isinstance(provider, ResponsesProvider)
 
 
 def test_route_honors_the_flag() -> None:

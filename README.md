@@ -10,8 +10,7 @@ enough to read in an afternoon, complete enough to run full experiments on.
 A lightweight Python alternative to [pi](https://github.com/earendil-works/pi),
 with the same layering: `llm/` for pi-ai, `agent/` for pi-agent-core, a pure
 loop wrapped by a stateful `Agent`. A hands-on option for running an agent
-harness locally: read it end to end, change it in place, and see exactly what
-it sends to the model.
+harness locally.
 
 At its core is a local agentic loop: the model reads and writes files, runs
 commands and searches the web, with whichever of those tools you give it. On
@@ -106,10 +105,25 @@ uv run lab-harness                                    # interactive terminal
 uv run lab-harness -p "summarize the config module"   # one-shot
 ```
 
-Interactive mode asks before `bash`, `write` or `edit` runs; `-p` has nobody to
-ask, so they run unprompted — give it fewer tools with `--tools read,ls,grep,glob`
-to rule them out. Sessions, JSONL events, other models, the system prompt and
-debug logs: [examples/terminal.md](examples/terminal.md).
+Check [examples/terminal.md](examples/terminal.md) for more details on the interactive terminal.
+
+To keep settings without exporting them each time, put them in
+`~/.lab-harness/config.local.toml` for every project. It merges over the
+defaults, so it holds only the keys you change:
+
+```toml
+[agent]
+model = "gpt-6.1-sol"     # the default model; --model still wins
+
+[providers.openai.openai]
+api_key = "sk-..."        # OPENAI_API_KEY still wins if set
+
+[tools.web.tavily]
+api_key = "tvly-..."
+```
+
+Every key, and the order the layers apply in:
+[docs/configuration.md](docs/configuration.md).
 
 ## From Python
 
