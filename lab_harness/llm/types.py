@@ -97,6 +97,13 @@ class AssistantMessage:
     usage: Usage = field(default_factory=Usage)
     stop_reason: StopReason = "stop"
     error_message: str | None = None
+    #: How many times the request behind this reply was sent again before it
+    #: arrived — 0 for the usual case of first time. A turn is one message
+    #: however many attempts it took, so this is the only record that an
+    #: endpoint was being flaky, which is worth telling apart from a model
+    #: being slow when reading a run back. Always 0 from Claude's adapter: the
+    #: SDK does the retrying there and does not report a count.
+    retries: int = 0
     role: Literal["assistant"] = "assistant"
 
     @property

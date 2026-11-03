@@ -11,7 +11,7 @@ Append-only JSONL, one file per session:
 Line 1 is the header; every subsequent line is one entry.
 
 ```jsonc
-{"type": "session", "version": 4, "id": "...", "cwd": "/path",
+{"type": "session", "version": 5, "id": "...", "cwd": "/path",
  "timestamp": "...", "model": "..."}
 {"type": "context", "timestamp": "...", "restored": 0, "system_prompt": "...",
  "tools": [ /* declarations */ ], "model": { /* Model */ }, "config": { /* ... */ }}
@@ -219,9 +219,11 @@ says how long it ran.
 
 ### Older files
 
-Version 3 files are version 4 files whose models ask for no reasoning effort —
-none was sent then — and version 2 files are those without `rewrite` entries;
-both read as such. Files written before the `context` entry (version 1) still read and
+Version 4 files are version 5 files whose assistant messages were never
+retried — the count was not recorded then, and reads as 0. Version 3 files are
+version 4 files whose models ask for no reasoning effort, none having been sent
+then, and version 2 files are those without `rewrite` entries; all read as
+such. Files written before the `context` entry (version 1) still read and
 resume. Their messages count as history for anything appended later, but yield
 no steps of their own: nothing recorded what they were sent with. Their
 timestamps read as empty.
@@ -293,7 +295,7 @@ terminal shows the history anyway, by drawing it directly through the renderer
 | Command | Shows |
 |---|---|
 | `lab-harness --resume ID --no-save` | The conversation in the terminal, read-only |
-| `lab-harness --export [ID]` | One self-contained HTML page beside the transcript: the conversation, every segment's context, usage and cost per request |
+| `lab-harness --export [ID]` | One self-contained HTML page beside the transcript: the conversation, every segment's context, usage, cost and retries per request |
 | `examples/trajectories.py [ID]` | Every request exactly as sent, one JSON line each; `--wire` as the endpoint received it |
 
 The page is a view, not a record: it is written next to the `.jsonl`, never
@@ -308,7 +310,7 @@ read back, and safe to delete. See [cli.md](cli.md#sessions).
 | `session.directory_name` | `sessions` | Subdirectory holding projects |
 | `session.history_file` | `history` | File in `home` keeping typed lines, for `Up` in a later session |
 | `session.enabled` | `true` | Write transcripts at all — off means nothing is persisted |
-| `session.version` | `4` | Schema version written to each header |
+| `session.version` | `5` | Schema version written to each header |
 
 Tests redirect `LAB_HARNESS_HOME` through an autouse fixture, so the suite can never
 write to a real `~/.lab-harness`.

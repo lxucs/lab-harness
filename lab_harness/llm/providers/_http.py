@@ -2,22 +2,24 @@
 
 `chat_completions.py` and `responses.py` speak different protocols but reach
 them the same way: a bearer token resolved env-first, an httpx client that may
-be injected for tests, SSE frames parsed off the body, and every failure
-funnelled into one `StreamError` builder.
+be injected for tests, SSE frames parsed off the body, one retry policy, and
+every failure funnelled into one `StreamError` builder.
 
 Nothing here knows about messages or events — that is each adapter's job.
 """
 
+import asyncio
 import json
 import logging
 import os
 from contextlib import nullcontext
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
 
 from lab_harness.config import OpenAIConfig
-from lab_harness.llm.events import StreamError
+from lab_harness.llm.events import StreamDone, StreamError, StreamEvent
 from lab_harness.llm.provider import StreamOptions, interrupted
 from lab_harness.llm.types import AssistantMessage, Model
 
@@ -165,6 +167,134 @@ def describe(response: httpx.Response, body: bytes) -> str:
 
 def aborted(opts: StreamOptions) -> bool:
     return opts.signal is not None and opts.signal.is_set()
+
+
+#: Statuses worth sending again: a request timeout, a lock conflict, rate
+#: limiting, and anything the server calls its own fault. Every other 4xx is
+#: the request's own fault and would fail the same way however often it is
+#: sent — retrying a 401 only delays the error that was already certain.
+RETRYABLE_STATUSES = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+
+@dataclass
+class Retries:
+    """How many times one request has been sent again so far.
+
+    Mutable and shared: `again` counts into it, and `stamp` reads it when the
+    stream ends, which is the only moment the total is known. Deliberately not
+    a plain int — an adapter's retry loop and the event on its way out need to
+    see the same number without threading a return value through every exit.
+    """
+
+    count: int = 0
+
+
+def stamp(event: StreamEvent, retries: Retries) -> StreamEvent:
+    """`event` with the request's retry count on the message it carries.
+
+    Applied once at a provider's generator boundary rather than at each exit: a
+    stream has many ways to end — a give-up, an abort, a body that was not one,
+    a clean finish — and stamping them one at a time would miss the next one
+    added. The two terminal events carry a message; nothing else does.
+    """
+    if retries.count and isinstance(event, StreamDone | StreamError):
+        return replace(event, message=replace(event.message, retries=retries.count))
+    return event
+
+
+async def again(
+    *,
+    model: Model,
+    provider: str,
+    config: OpenAIConfig,
+    opts: StreamOptions,
+    retries: Retries,
+    error: str,
+    response: httpx.Response | None = None,
+) -> StreamError | None:
+    """None to send the request again, or the event to end the turn with.
+
+    One place decides whether a failure is worth another attempt, waits out the
+    backoff, counts it, and turns a give-up into the error turn the contract
+    requires — so an adapter's retry site stays a single `if`.
+
+    **A caller must not retry once its consumer has seen events.** A retry
+    repeats the whole reply, and a consumer that already holds the first half
+    of one would be handed it twice. Judging that is the adapter's job, since
+    only it knows what it has yielded; this function is reached only for a
+    failure that arrived before anything else did.
+    """
+    delay = backoff(config, retries.count, response)
+    if delay is None:
+        return failure(model, provider, error)
+    _log.warning(
+        "%s attempt %d of %d failed (%s); retrying in %.1fs",
+        provider,
+        retries.count + 1,
+        config.max_retries + 1,
+        error,
+        delay,
+    )
+    if await _pause(delay, opts):
+        # Not counted: the retry was decided on but never sent.
+        return failure(model, provider, ABORTED_NOTICE, reason="aborted")
+    retries.count += 1
+    return None
+
+
+def backoff(config: OpenAIConfig, attempt: int, response: httpx.Response | None) -> float | None:
+    """Seconds to wait before attempt `attempt + 1`, or None not to retry.
+
+    `attempt` counts from 0, so `max_retries = 5` allows attempts 0 through 5:
+    the first request and five more. The delay doubles each time from
+    `retry_initial_seconds`, and `retry_max_seconds` caps it — the cap is what
+    keeps a generous `max_retries` from becoming a half-hour sleep.
+
+    `response` is the reply to judge, or None for a transport failure, which is
+    always worth another attempt: a refused connection or a dropped socket says
+    nothing about whether the request itself was acceptable.
+    """
+    if attempt >= config.max_retries:
+        return None
+    if response is not None and response.status_code not in RETRYABLE_STATUSES:
+        return None
+    delay = min(config.retry_initial_seconds * 2**attempt, config.retry_max_seconds)
+    if response is not None and (asked := _retry_after(response)) is not None:
+        # The server's own instruction wins, still under our cap: a 429 retried
+        # sooner than it asked for is another 429, or a block.
+        delay = min(max(asked, delay), config.retry_max_seconds)
+    return delay
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """`Retry-After` in seconds, when it is given as seconds.
+
+    The header has an HTTP-date form too. It is ignored rather than parsed —
+    none of these vendors sends it — which leaves the doubling in charge.
+    """
+    raw = response.headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+async def _pause(delay: float, opts: StreamOptions) -> bool:
+    """Wait out a backoff. True when the abort signal fired instead.
+
+    Raced rather than slept through: a run stopped during the last of five
+    doublings should not have to sit out the rest of it.
+    """
+    if opts.signal is None:
+        await asyncio.sleep(delay)
+        return False
+    try:
+        await asyncio.wait_for(opts.signal.wait(), timeout=delay)
+    except TimeoutError:
+        return False
+    return True
 
 
 def precondition(

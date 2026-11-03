@@ -241,8 +241,9 @@ history_file = "history"
 enabled = true
 # Schema version written into each file header. A protocol constant, not a knob.
 # Version 2 added the `context` entry, version 3 the `rewrite` entry, version
-# 4 the model's `reasoning_effort`; older files still read.
-version = 4
+# 4 the model's `reasoning_effort`, version 5 an assistant message's
+# `retries`; older files still read.
+version = 5
 
 # LLMs -- Claude's adapter, the OpenAI-family endpoints, every model, and what
 # an endpoint or a model gets for a key it leaves out -- are all in

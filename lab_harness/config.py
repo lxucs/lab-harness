@@ -278,6 +278,12 @@ class AnthropicConfig:
     base_url_env: str
     #: Sampling ceiling when the model declares none.
     default_max_tokens: int
+    #: Extra attempts for a retryable failure, handed to the SDK, which owns
+    #: the schedule: it backs off exponentially with jitter and honors
+    #: `Retry-After`. Only the count is ours, so that every provider retries
+    #: the same number of times — an eval whose providers disagree about this
+    #: measures the endpoints as much as the models.
+    max_retries: int
     #: What comes back in a thinking block: "summarized" or "omitted". The
     #: 5-series models think whether asked to or not, but default to omitted —
     #: the blocks arrive empty, and a terminal has nothing to show. Billing is
@@ -324,10 +330,27 @@ class OpenAIConfig:
     #: Wall-clock limit for one streamed request. Generous next to the web
     #: tools': a long answer with reasoning legitimately takes minutes.
     timeout_seconds: float
+    #: Extra attempts for a request that failed in a way another one could
+    #: fix — a timeout, rate limiting, a 5xx, a dropped connection. Zero sends
+    #: each request once. A reply already being delivered is never retried: the
+    #: consumer holds part of it, and a second attempt would repeat it.
+    max_retries: int
+    #: Wait before the first retry, in seconds. It doubles for each one after.
+    retry_initial_seconds: float
+    #: Ceiling on one wait, in seconds. What keeps a generous `max_retries`
+    #: from doubling its way into a half-hour sleep. A `Retry-After` the server
+    #: sends is honored up to this too.
+    retry_max_seconds: float
     #: Ask for token counts in the stream. Not every compatible server
     #: implements `stream_options`; turn this off for one that rejects it.
     #: `chat_completions` only — Responses always reports usage.
     include_usage: bool
+    #: `chat_completions` only. Stream the reply token by token. Off asks for
+    #: the whole reply in one response, which a server or proxy that has to
+    #: record each exchange may require: an RL training gateway needs a
+    #: complete body to record and refuses a streaming request outright. The
+    #: loop sees the same events either way — see providers/_single.py.
+    stream: bool
     #: `chat_completions` only. Field each earlier assistant turn's reasoning
     #: is sent back in; empty sends none. DeepSeek returns a 400 for a request
     #: with tools unless every earlier turn's `reasoning_content` comes back,
@@ -631,8 +654,9 @@ class SessionConfig:
     #: Schema version written into each file's header. Readers use it to refuse
     #: files they do not understand. A genuine protocol constant, not a knob.
     #: Version 2 added the `context` entry, version 3 the `rewrite` entry,
-    #: version 4 the model's `reasoning_effort`; older files still read.
-    version: int = 4
+    #: version 4 the model's `reasoning_effort`, version 5 an assistant
+    #: message's `retries`; older files still read.
+    version: int = 5
 
 
 @dataclass(frozen=True, slots=True)

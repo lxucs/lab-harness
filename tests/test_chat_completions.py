@@ -21,7 +21,7 @@ import pytest
 from pydantic import BaseModel
 
 from lab_harness.agent import Agent
-from lab_harness.config import Config, OpenAIConfig
+from lab_harness.config import Config, OpenAIConfig, profile_defaults
 from lab_harness.llm.events import (
     StreamDone,
     StreamError,
@@ -38,6 +38,7 @@ from lab_harness.llm.events import (
     ToolCallStart,
 )
 from lab_harness.llm.provider import StreamOptions
+from lab_harness.llm.providers import _http
 from lab_harness.llm.providers.chat_completions import ChatCompletionsProvider
 from lab_harness.llm.registry import resolve_model
 from lab_harness.llm.types import (
@@ -55,11 +56,12 @@ from lab_harness.llm.types import (
     text,
 )
 from lab_harness.tools.base import ToolContext, ToolResult, ok, tool
-from tests.entries import profile_entry
+from tests.entries import profile_entry, retrying_profile
 from tests.http_fakes import (
     TEST_KEY,
     Exploding,
     Recorder,
+    Scripted,
     assert_blocks_open_before_deltas,
     final,
 )
@@ -1023,6 +1025,464 @@ async def test_the_shipped_deepseek_profile_survives_a_tool_loop() -> None:
     turn = next(m for m in transport.payloads[1]["messages"] if m["role"] == "assistant")
     assert turn["reasoning_content"] == "I should look first."
     assert turn["tool_calls"][0]["id"] == "c1"
+
+
+# --- the whole reply at once ----------------------------------------------
+
+
+def completion(
+    message: dict[str, Any],
+    *,
+    finish_reason: str = "stop",
+    usage: dict[str, Any] | None = None,
+) -> str:
+    """A non-streamed reply, in the shape these endpoints actually return.
+
+    `object`, `created` and the per-choice `logprobs` are part of the real
+    payload and are ignored by the adapter. They stay here so the fixture is
+    the document rather than a trimmed version of it — and so a reply carrying
+    keys the adapter does not read, as a training server's token ids do, is
+    what the tests run against.
+    """
+    body: dict[str, Any] = {
+        "id": "chatcmpl-7",
+        "object": "chat.completion",
+        "created": 1_700_000_000,
+        "model": "deepseek-flash",
+        "choices": [
+            {"index": 0, "message": message, "logprobs": None, "finish_reason": finish_reason}
+        ],
+    }
+    if usage is not None:
+        body["usage"] = usage
+    return json.dumps(body)
+
+
+def unstreamed(**settings: Any) -> OpenAIConfig:
+    """A profile that asks for the whole reply in one response."""
+    return profile_entry(api_key=TEST_KEY, stream=False, **settings)
+
+
+class _Slow:
+    """A transport that does not answer until it is released."""
+
+    def __init__(self, body: str) -> None:
+        self._body = body
+        self.arrived = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.arrived.set()
+        await self.release.wait()
+        return httpx.Response(200, text=self._body)
+
+    def client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self))
+
+
+async def test_a_profile_can_ask_for_the_whole_reply_at_once() -> None:
+    recorder = Recorder(completion({"role": "assistant", "content": "hi"}))
+
+    events = await collect(provider(recorder, unstreamed()))
+
+    assert recorder.payload["stream"] is False
+    # Only valid on a streaming request; a server may refuse it on this one.
+    assert "stream_options" not in recorder.payload
+    assert final(events).content == (TextBlock(text="hi"),)
+
+
+async def test_a_non_streamed_reply_arrives_as_one_delta_per_block() -> None:
+    """The whole block in a single delta. The only difference a consumer sees."""
+    recorder = Recorder(
+        completion({"role": "assistant", "reasoning_content": "thinking", "content": "answer"})
+    )
+
+    events = await collect(provider(recorder, unstreamed()))
+
+    assert_blocks_open_before_deltas(events)
+    assert [e for e in events if isinstance(e, ThinkingDelta)] == [
+        ThinkingDelta(block_index=0, delta="thinking")
+    ]
+    assert [e for e in events if isinstance(e, TextDelta)] == [
+        TextDelta(block_index=1, delta="answer")
+    ]
+    assert final(events).content == (
+        ThinkingBlock(thinking="thinking"),
+        TextBlock(text="answer"),
+    )
+
+
+async def test_a_non_streamed_reply_ends_every_block_it_opened() -> None:
+    """The end events are the stream's, not the wire's — nothing sends them."""
+    recorder = Recorder(completion({"role": "assistant", "content": "answer"}))
+
+    events = await collect(provider(recorder, unstreamed()))
+
+    assert [type(e) for e in events] == [
+        StreamStart,
+        TextStart,
+        TextDelta,
+        TextEnd,
+        StreamDone,
+    ]
+
+
+async def test_a_non_streamed_reply_keeps_parallel_tool_calls_apart() -> None:
+    """A reply indexes none of its calls, and a missing index reads as 0.
+
+    So without indices assigned on the way through, both calls accumulate into
+    one block: a single call with the two names concatenated and the arguments
+    run together. The regression this guards is silent and destructive.
+    """
+    recorder = Recorder(
+        completion(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {"name": "read", "arguments": '{"path": "a.py"}'},
+                    },
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {"name": "ls", "arguments": "{}"},
+                    },
+                ],
+            },
+            finish_reason="tool_calls",
+        )
+    )
+
+    message = final(await collect(provider(recorder, unstreamed())))
+
+    assert message.stop_reason == "tool_use"
+    assert message.tool_calls == (
+        ToolCallBlock(id="c1", name="read", arguments={"path": "a.py"}),
+        ToolCallBlock(id="c2", name="ls", arguments={}),
+    )
+
+
+async def test_a_non_streamed_reply_reports_its_usage() -> None:
+    recorder = Recorder(
+        completion(
+            {"role": "assistant", "content": "hi"},
+            usage={
+                "prompt_tokens": 100,
+                "completion_tokens": 7,
+                "total_tokens": 107,
+                "prompt_tokens_details": {"cached_tokens": 60},
+            },
+        )
+    )
+
+    usage = final(await collect(provider(recorder, unstreamed()))).usage
+
+    # prompt_tokens counts the cached portion, so subtracting keeps the total
+    # from charging those tokens twice.
+    assert (usage.input, usage.cache_read, usage.output) == (40, 60, 7)
+
+
+async def test_a_non_streamed_error_status_becomes_an_error_turn() -> None:
+    recorder = Recorder(json.dumps({"error": {"message": "model not found"}}), status=404)
+
+    message = final(await collect(provider(recorder, unstreamed())))
+
+    assert message.stop_reason == "error"
+    assert message.error_message is not None
+    assert "model not found" in message.error_message
+
+
+async def test_a_non_streamed_body_that_is_not_json_becomes_an_error_turn() -> None:
+    """A misconfigured base_url answers with a page, not a reply."""
+    recorder = Recorder("<html>upstream error</html>")
+
+    message = final(await collect(provider(recorder, unstreamed())))
+
+    assert message.stop_reason == "error"
+    assert message.error_message is not None
+    assert "expected a reply" in message.error_message
+
+
+async def test_a_gateway_refusing_with_a_200_becomes_an_error_turn() -> None:
+    """Valid JSON, no `choices`: an answer-shaped nothing, which would
+    otherwise end the turn as a clean stop carrying no answer and no error."""
+    recorder = Recorder(json.dumps({"code": 1005, "msg": "invalid model"}))
+
+    message = final(await collect(provider(recorder, unstreamed())))
+
+    assert message.stop_reason == "error"
+    assert message.error_message is not None
+    assert "invalid model" in message.error_message
+
+
+async def test_an_abort_mid_request_does_not_wait_for_the_whole_reply() -> None:
+    """Nothing arrives until the reply is complete, so the signal is raced.
+
+    The transport is never released: were the signal only read before the
+    request, this would hang instead of ending the turn.
+    """
+    transport = _Slow(completion({"role": "assistant", "content": "too late"}))
+    signal = asyncio.Event()
+    prov = ChatCompletionsProvider(unstreamed(), "deepseek", client=transport.client())
+
+    async def run() -> list[StreamEvent]:
+        return [event async for event in prov.stream(MODEL, ctx(), StreamOptions(signal=signal))]
+
+    task = asyncio.create_task(run())
+    await asyncio.wait_for(transport.arrived.wait(), timeout=5)
+    signal.set()
+    events = await asyncio.wait_for(task, timeout=5)
+
+    message = final(events)
+    assert message.stop_reason == "aborted"
+    # Nothing had arrived, so there is nothing to report alongside the stop.
+    assert message.content == ()
+
+
+async def test_the_loop_runs_a_tool_call_from_a_non_streamed_reply() -> None:
+    """The loop is told nothing about any of this: same events, same run."""
+    transport = Scripted(
+        completion(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "ls", "arguments": "{}"}}
+                ],
+            },
+            finish_reason="tool_calls",
+        ),
+        completion({"role": "assistant", "content": "There is one file."}),
+    )
+    agent = Agent(
+        model=MODEL,
+        provider=ChatCompletionsProvider(unstreamed(), "deepseek", client=transport.client()),
+        tools=(_ls,),
+    )
+
+    produced = await agent.prompt("what is here?")
+
+    assert [message.role for message in produced] == ["assistant", "tool_result", "assistant"]
+    assert len(transport.payloads) == 2
+    assert transport.payloads[1]["stream"] is False
+    # The tool result went back under the call that asked for it.
+    assert transport.payloads[1]["messages"][-1]["tool_call_id"] == "c1"
+
+
+# --- retries --------------------------------------------------------------
+
+
+class _Failing:
+    """Fails with a given status the first `times`, then serves the body."""
+
+    def __init__(self, body: str, *, status: int, times: int, retry_after: str = "") -> None:
+        self._body = body
+        self._status = status
+        self._times = times
+        self._retry_after = retry_after
+        self.attempts = 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.attempts += 1
+        if self.attempts > self._times:
+            return httpx.Response(200, text=self._body)
+        headers = {"retry-after": self._retry_after} if self._retry_after else {}
+        return httpx.Response(self._status, text="slow down", headers=headers)
+
+    def client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=httpx.MockTransport(self))
+
+
+def test_retry_defaults() -> None:
+    """The shipped numbers, which every other test turns off. See tests/entries.py."""
+    shipped = profile_defaults()
+
+    assert shipped.max_retries == 5
+    assert shipped.retry_initial_seconds == 1.0
+    assert shipped.retry_max_seconds == 60.0
+
+
+async def test_a_rate_limited_request_is_sent_again() -> None:
+    transport = _Failing(sse(delta(content="hi"), finish()), status=429, times=2)
+    prov = ChatCompletionsProvider(
+        retrying_profile(api_key=TEST_KEY), "deepseek", client=transport.client()
+    )
+
+    events = await collect(prov)
+
+    assert transport.attempts == 3
+    assert final(events).content == (TextBlock(text="hi"),)
+
+
+async def test_the_reply_records_how_many_times_it_was_sent_again() -> None:
+    """A turn is one message however many attempts it took, so the count on it
+    is the only record that the endpoint was being flaky."""
+    transport = _Failing(sse(delta(content="hi"), finish()), status=429, times=2)
+    prov = ChatCompletionsProvider(
+        retrying_profile(api_key=TEST_KEY), "deepseek", client=transport.client()
+    )
+
+    message = final(await collect(prov))
+
+    assert message.retries == 2
+    assert message.stop_reason == "stop"
+
+
+async def test_a_first_time_reply_records_no_retries() -> None:
+    message = final(await collect(provider(Recorder(sse(delta(content="hi"), finish())))))
+
+    assert message.retries == 0
+
+
+async def test_a_turn_that_gave_up_records_every_attempt_it_made() -> None:
+    transport = _Failing(sse(finish()), status=503, times=99)
+    prov = ChatCompletionsProvider(
+        retrying_profile(api_key=TEST_KEY), "deepseek", client=transport.client()
+    )
+
+    message = final(await collect(prov))
+
+    assert (message.stop_reason, message.retries) == ("error", 5)
+
+
+async def test_retries_stop_at_the_configured_count() -> None:
+    """Six attempts for five retries, then the error turn the contract wants."""
+    transport = _Failing(sse(finish()), status=503, times=99)
+    prov = ChatCompletionsProvider(
+        retrying_profile(api_key=TEST_KEY), "deepseek", client=transport.client()
+    )
+
+    message = final(await collect(prov))
+
+    assert transport.attempts == 6
+    assert message.stop_reason == "error"
+
+
+async def test_a_request_the_server_refused_is_not_sent_again() -> None:
+    """A 400 is the request's own fault: sending it again only delays the error."""
+    transport = _Failing(sse(finish()), status=400, times=99)
+    prov = ChatCompletionsProvider(
+        retrying_profile(api_key=TEST_KEY), "deepseek", client=transport.client()
+    )
+
+    message = final(await collect(prov))
+
+    assert transport.attempts == 1
+    assert message.stop_reason == "error"
+
+
+async def test_a_dropped_connection_is_sent_again() -> None:
+    """A transport failure says nothing about whether the request was good."""
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, text=sse(delta(content="hi"), finish()))
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    prov = ChatCompletionsProvider(retrying_profile(api_key=TEST_KEY), "deepseek", client=client)
+
+    events = await collect(prov)
+
+    assert attempts == 3
+    assert final(events).content == (TextBlock(text="hi"),)
+
+
+async def test_a_stream_that_fails_part_way_through_is_not_sent_again() -> None:
+    """The consumer holds the first half; a retry would hand it the whole reply.
+
+    The body ends mid-frame after a delta the consumer has already seen, so the
+    turn fails rather than repeating text that is on screen.
+    """
+    sent = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sent
+        sent += 1
+        return httpx.Response(200, text=f"data: {json.dumps(delta(content='half'))}\n\ndata: {{")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    prov = ChatCompletionsProvider(retrying_profile(api_key=TEST_KEY), "deepseek", client=client)
+
+    events = await collect(prov)
+
+    assert sent == 1
+    # The delta reached the consumer, so the stream had opened.
+    assert any(isinstance(event, TextDelta) for event in events)
+
+
+async def test_a_retry_after_the_server_asked_for_wins_under_the_cap() -> None:
+    """`backoff` is the policy, so the schedule is checked directly.
+
+    Timing assertions on a real sleep would be flaky; these are the decisions
+    that matter, and the adapter tests above cover the wiring.
+    """
+    config = retrying_profile(api_key=TEST_KEY, retry_initial_seconds=1.0, retry_max_seconds=60.0)
+    too_many = httpx.Response(429, headers={"retry-after": "45"})
+    unhurried = httpx.Response(503)
+
+    # Doubling, from retry_initial_seconds.
+    assert [_http.backoff(config, n, unhurried) for n in range(4)] == [1.0, 2.0, 4.0, 8.0]
+    # retry_max_seconds caps a long doubling and a long Retry-After alike.
+    assert _http.backoff(replace(config, max_retries=20), 9, unhurried) == 60.0
+    assert _http.backoff(replace(config, retry_max_seconds=5.0), 0, too_many) == 5.0
+    # The server's own number beats ours when it is longer.
+    assert _http.backoff(config, 0, too_many) == 45.0
+    # An unparseable header leaves the doubling in charge.
+    assert _http.backoff(config, 0, httpx.Response(429, headers={"retry-after": "Wed, 21 Oct"}))
+    # None means a transport failure, which is always worth another attempt.
+    assert _http.backoff(config, 0, None) == 1.0
+    # Past the count, and a status that will not improve: no retry at all.
+    assert _http.backoff(config, config.max_retries, unhurried) is None
+    assert _http.backoff(config, 0, httpx.Response(400)) is None
+
+
+async def test_an_abort_during_a_backoff_ends_the_turn() -> None:
+    """A run stopped mid-backoff should not sit out the rest of the doubling.
+
+    The backoff here is 30 seconds and the signal fires once the first attempt
+    has failed. Slept through rather than raced, this test would take that long.
+    """
+    arrived = asyncio.Event()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        arrived.set()
+        return httpx.Response(503, text="unavailable")
+
+    signal = asyncio.Event()
+    config = retrying_profile(api_key=TEST_KEY, retry_initial_seconds=30.0, retry_max_seconds=30.0)
+    prov = ChatCompletionsProvider(
+        config, "deepseek", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    async def stop_once_it_fails() -> None:
+        await arrived.wait()
+        signal.set()
+
+    waker = asyncio.create_task(stop_once_it_fails())
+    events = await asyncio.wait_for(collect(prov, opts=StreamOptions(signal=signal)), timeout=5)
+    await waker
+
+    assert final(events).stop_reason == "aborted"
+
+
+async def test_a_non_streamed_request_is_retried_too() -> None:
+    body = completion({"role": "assistant", "content": "hi"})
+    transport = _Failing(body, status=500, times=2)
+    config = retrying_profile(api_key=TEST_KEY, stream=False)
+    prov = ChatCompletionsProvider(config, "deepseek", client=transport.client())
+
+    message = final(await collect(prov))
+
+    assert transport.attempts == 3
+    assert message.content == (TextBlock(text="hi"),)
+    assert message.retries == 2
 
 
 # --- what is logged -------------------------------------------------------

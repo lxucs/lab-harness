@@ -4,7 +4,7 @@
 dispatches on the `type` / `role` discriminator each type carries.
 """
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, fields, is_dataclass
 from typing import Any
 
 from lab_harness.llm import events as _events
@@ -71,7 +71,12 @@ def message_from_dict(data: dict[str, Any]) -> _types.Message:
         payload["content"] = tuple(block_from_dict(b) for b in payload["content"])
     if "usage" in payload and isinstance(payload["usage"], dict):
         payload["usage"] = _types.Usage(**payload["usage"])
-    return cls(**payload)
+    # Keys this version does not know are dropped, as `_header_from` drops
+    # them: a transcript written by a later one must not cost a reader the
+    # whole message. Losing a field it cannot place leaves the history intact;
+    # skipping the message shifts everything recorded after it.
+    known = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in payload.items() if k in known})
 
 
 def event_from_dict(data: dict[str, Any]) -> _events.StreamEvent:

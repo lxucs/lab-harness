@@ -77,6 +77,8 @@ MESSAGES = [
         provider="p",
         stop_reason="error",
         error_message="boom",
+        # A turn that gave up: the shape a retried failure is recorded in.
+        retries=5,
     ),
     ToolResultMessage(tool_call_id="c1", tool_name="ls", content=text("a.py"), duration_ms=12),
 ]
@@ -117,6 +119,19 @@ def test_message_roundtrip(message: object) -> None:
 @pytest.mark.parametrize("event", EVENTS, ids=lambda e: e.type)
 def test_event_roundtrip(event: object) -> None:
     assert event_from_dict(json.loads(json.dumps(to_dict(event)))) == event
+
+
+def test_a_message_key_this_version_does_not_know_is_dropped() -> None:
+    """What a transcript from a later version must cost a reader: the field
+    alone, never the message.
+
+    Skipping the message would shift every request rebuilt after it, so a field
+    addition could not be made without a reader somewhere losing history. This
+    is the same tolerance `_header_from` has, for the same reason.
+    """
+    encoded = json.loads(json.dumps(to_dict(_ASSISTANT))) | {"a_later_field": 7}
+
+    assert message_from_dict(encoded) == _ASSISTANT
 
 
 def test_every_event_type_is_covered() -> None:

@@ -31,6 +31,59 @@ start → {text,thinking,toolcall}_{start,delta,end}* → done | error
   as a stream, is a turn that said nothing. Both HTTP adapters read the body
   through `_http.Frames`, which reports it like an error status.
 
+## Retries
+
+A request that failed in a way another attempt could fix is sent again:
+**`max_retries = 5`** by default, waiting `retry_initial_seconds` and doubling
+each time — 1, 2, 4, 8, 16 seconds — capped by `retry_max_seconds`. All three
+are per-profile config; `max_retries = 0` sends each request once.
+
+Retryable is `408, 409, 429, 500, 502, 503, 504`, plus any transport failure
+(a refused connection, a dropped socket), which says nothing about whether the
+request was acceptable. **Every other status is not retried** — a 400 or a 401
+is the request's own fault and would fail the same way however often it is
+sent, so another attempt only delays an error that was already certain.
+
+A `Retry-After` header given in seconds wins when it is longer than the
+computed delay, still under `retry_max_seconds`: a 429 retried sooner than the
+server asked for is another 429, or a block. The HTTP-date form of the header
+is ignored rather than parsed, which leaves the doubling in charge.
+
+**A reply already being delivered is never retried.** This is the rule that
+makes the rest safe: once `StreamStart` and the first deltas have reached the
+consumer it holds part of one reply, and a retry would deliver a whole one on
+top of it — duplicated text, or two answers in one message. So each adapter
+tracks whether it has yielded anything and retries only a failure that arrived
+before that. A stream that dies half way through is an error turn, as it was
+before. The rule costs nothing in tokens: a retryable failure means the request
+never produced any.
+
+The backoff is **raced against the abort signal**, so a run stopped during the
+last of five doublings does not sit out the rest of it.
+
+### What is recorded
+
+`AssistantMessage.retries` says how many times the request behind that reply
+was sent again — 0 for the usual case.
+The count is stamped at the provider's generator boundary, by `_http.stamp`,
+rather than at each exit. A stream has several ways to end — a give-up, an
+abort, a body that was not a reply, a clean finish — and stamping them
+individually would miss the next one added.
+
+**Claude's adapter always reports 0**, because the SDK does the retrying there
+and does not surface a count. Worth remembering before reading the field across
+providers: a zero from `anthropic` means "not known", a zero from an
+OpenAI-family profile means "first time".
+
+The policy lives in one place — `_http.backoff` and `_http.again` — so the two
+OpenAI-family adapters cannot drift apart. Claude's adapter hands the same
+count to the SDK and lets it own the schedule, which already backs off
+exponentially with jitter and honors `Retry-After`.
+
+Retries are **off in the test suite** unless a test asks for them — see the
+docstring in `tests/entries.py`. A suite that inherited the shipped five would
+sit out 31 seconds for every test of a failure.
+
 ## Core types
 
 **Content blocks:** `TextBlock`, `ThinkingBlock`, `ImageBlock`, `ToolCallBlock`,
@@ -44,7 +97,7 @@ type to `llm/types.py`, use `ProviderBlock` instead.
 
 **Messages:** `SystemMessage`, `UserMessage`, `AssistantMessage`,
 `ToolResultMessage`. `AssistantMessage` carries `usage`, `stop_reason`,
-`error_message`, and the model and provider that produced it.
+`error_message`, `retries`, and the model and provider that produced it.
 
 **`Model`** carries `context_window`, `max_tokens`, and capability flags
 (reasoning, image input, server tools). `context_window` exists in v1 even
@@ -248,6 +301,36 @@ Five translation details, each forced by the wire format rather than chosen:
 Reasoning deltas are read from `reasoning_content` (DeepSeek's name) or
 `reasoning` (what several gateways relabel it to).
 
+### Replies that are not streamed
+
+`stream = false` on a profile asks for the whole reply in one response.
+`lab_harness/llm/providers/_single.py` replays it as the stream the loop
+expects: a single chunk in delta shape, fed to the same accumulator, then the
+end events the streaming path emits. The translation is shared, so tool-call
+assembly, the reasoning fields, usage and the finish-reason mapping cannot
+drift between the two modes.
+
+What changes:
+
+- A block's text arrives in **one delta**, so a terminal prints the answer at
+  once rather than word by word. Nothing else downstream can tell the modes
+  apart — the event sequence is the same.
+- `stream_options` is **not sent**, since it is only valid on a streaming
+  request; a non-streamed reply reports its usage of its own accord.
+- **Tool calls are indexed by the adapter.** A streamed call may arrive with no
+  `index` and a missing one reads as 0, which is right for a stream carrying a
+  single call. A non-streamed reply indexes none of its calls, so every call in
+  a parallel batch would otherwise accumulate into the same block.
+- **An abort is raced against the request.** Nothing arrives until the reply is
+  complete, so the signal cannot be read between frames; the two are awaited
+  together and the request is cancelled if the signal wins.
+- A 200 **with no `choices`** is an error turn, not an empty one — the
+  non-streamed half of what `Frames.not_a_stream` catches for a stream.
+
+`request_body` reports `"stream": false` too, so a transcript's `--wire` export
+is what the server actually received. See
+[sessions.md](sessions.md) and `examples/trajectories.py`.
+
 ## The Responses adapter
 
 `lab_harness/llm/providers/responses.py`. Opt in with `api = "responses"`.
@@ -314,6 +397,10 @@ false}` — GLM's Preserved Thinking, exactly as Z.ai documents it. Only the
 thinking on for GLM-4.6, the one model in the lineup that otherwise decides for
 itself. Z.ai documents it for GLM-4.7 and recommends it for GLM-5.3-Flash; it
 does not say whether GLM-4.6 accepts it.
+
+`stream` is on for every shipped profile. Turn it off for an endpoint that has
+to see a whole exchange to record it — see
+[replies that are not streamed](#replies-that-are-not-streamed).
 
 Keys inside a profile are checked as strictly as anywhere else, so a typo there
 still fails at startup.

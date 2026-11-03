@@ -31,6 +31,10 @@ api_key_env = "ANTHROPIC_API_KEY"
 base_url_env = "ANTHROPIC_BASE_URL"
 # Sampling ceiling when the model declares none.
 default_max_tokens = 8_192
+# Extra attempts for a retryable failure. The SDK owns the schedule — it backs
+# off exponentially with jitter and honors Retry-After — so only the count is
+# set here, matching max_retries on the endpoint profiles below.
+max_retries = 5
 # What comes back in a thinking block: "summarized" or "omitted". The 5-series
 # models think whether asked or not, but default to omitted — empty blocks, so
 # nothing to show. Billing is the same either way. "" sends no preference.
@@ -83,9 +87,23 @@ base_url_env = "OPENAI_BASE_URL"
 default_max_tokens = 8_192
 # Wall-clock limit for one streamed request, in seconds.
 timeout_seconds = 120.0
+# Extra attempts for a request that failed in a way another one could fix: a
+# timeout, rate limiting, a 5xx, a dropped connection. Any other status is the
+# request's own fault and is not sent again. 0 sends each request once. A reply
+# already being delivered is never retried — see docs/providers.md.
+max_retries = 5
+# Wait before the first retry, doubling for each one after: 1, 2, 4, 8, 16.
+retry_initial_seconds = 1.0
+# Ceiling on one wait, which a Retry-After from the server is honored up to.
+retry_max_seconds = 60.0
 # chat_completions only: ask for token counts in the stream. Turn off for a
 # server that rejects stream_options — some implementations do.
 include_usage = true
+# chat_completions only: stream the reply token by token. Turn off for an
+# endpoint that has to see a whole exchange to record it — an RL training
+# gateway refuses a streaming request. The reply reaches the loop as the same
+# events either way, a block's text arriving in one delta rather than many.
+stream = true
 # chat_completions only: field each earlier turn's reasoning is sent back in;
 # empty sends none. A vendor that wants it may refuse a tool loop without it,
 # and one that never asked may refuse the field — so none, unless the vendor

@@ -135,6 +135,11 @@ class AnthropicProvider:
         if base_url:
             _log.debug("Endpoint overridden by %s", cfg.base_url_env)
             kwargs["base_url"] = base_url
+        # The count is ours, the schedule the SDK's: it backs off exponentially
+        # with jitter and honors Retry-After. Passed rather than left to the
+        # SDK's own default so that every provider retries the same number of
+        # times — an eval whose providers disagree measures the endpoints too.
+        kwargs["max_retries"] = cfg.max_retries
         return anthropic.AsyncAnthropic(**kwargs)  # type: ignore[arg-type]
 
     async def stream(

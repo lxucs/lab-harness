@@ -109,6 +109,22 @@ class ResponsesProvider:
         ctx: Context,
         opts: StreamOptions | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Stream one turn, the terminal event stamped with its retry count.
+
+        A wrapper, so the count reaches the message whichever of the body's
+        several exits produced it.
+        """
+        retries = _http.Retries()
+        async for event in self._stream(model, ctx, opts, retries):
+            yield _http.stamp(event, retries)
+
+    async def _stream(
+        self,
+        model: Model,
+        ctx: Context,
+        opts: StreamOptions | None,
+        retries: _http.Retries,
+    ) -> AsyncIterator[StreamEvent]:
         options = opts if opts is not None else StreamOptions()
         cfg = self._config
 
@@ -127,48 +143,80 @@ class ResponsesProvider:
         _log.debug("Request to %s via %s: %s", model.id, self.name, request_shape(request))
 
         accumulator = _Accumulator(model=model, provider=self.name)
-        try:
-            async with (
-                _http.client(self._client, cfg) as client,
-                client.stream(
-                    "POST", url, json=request, headers=_http.headers(_http.credential(cfg))
-                ) as response,
-            ):
-                if response.status_code >= 400:
-                    yield _http.failure(
-                        model, self.name, _http.describe(response, await response.aread())
-                    )
-                    return
-                yield StreamStart()
-                frames = _http.Frames()
-                async for line in response.aiter_lines():
-                    if _http.aborted(options):
-                        # What the stream had reached, not nothing: the words
-                        # were on screen and the tokens were read.
-                        yield _http.failure(
-                            model,
-                            self.name,
-                            _http.ABORTED_NOTICE,
-                            reason="aborted",
-                            partial=accumulator.message(),
+        # `again` owns the bound: it stops retrying at cfg.max_retries.
+        while True:
+            # Whether the consumer has seen any of this attempt. Once it has,
+            # the turn is no longer repeatable — a retry would deliver the
+            # reply from the start and duplicate what it already holds.
+            opened = False
+            try:
+                async with (
+                    _http.client(self._client, cfg) as client,
+                    client.stream(
+                        "POST", url, json=request, headers=_http.headers(_http.credential(cfg))
+                    ) as response,
+                ):
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        stop = await _http.again(
+                            model=model,
+                            provider=self.name,
+                            config=cfg,
+                            opts=options,
+                            retries=retries,
+                            error=_http.describe(response, body),
+                            response=response,
                         )
+                        if stop is None:
+                            continue
+                        yield stop
                         return
-                    payload = frames.parse(line)
-                    if payload is None:
-                        continue
-                    if isinstance(payload, _http.Done):
-                        break
-                    if (fatal := _fatal(payload)) is not None:
-                        yield _http.failure(model, self.name, fatal)
+                    yield StreamStart()
+                    opened = True
+                    frames = _http.Frames()
+                    async for line in response.aiter_lines():
+                        if _http.aborted(options):
+                            # What the stream had reached, not nothing: the words
+                            # were on screen and the tokens were read.
+                            yield _http.failure(
+                                model,
+                                self.name,
+                                _http.ABORTED_NOTICE,
+                                reason="aborted",
+                                partial=accumulator.message(),
+                            )
+                            return
+                        payload = frames.parse(line)
+                        if payload is None:
+                            continue
+                        if isinstance(payload, _http.Done):
+                            break
+                        if (fatal := _fatal(payload)) is not None:
+                            yield _http.failure(model, self.name, fatal)
+                            return
+                        for translated in accumulator.feed(payload):
+                            yield translated
+                    if (error := frames.not_a_stream(response)) is not None:
+                        yield _http.failure(model, self.name, error)
                         return
-                    for translated in accumulator.feed(payload):
-                        yield translated
-                if (error := frames.not_a_stream(response)) is not None:
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                if opened:
                     yield _http.failure(model, self.name, error)
                     return
-        except Exception as exc:
-            yield _http.failure(model, self.name, f"{type(exc).__name__}: {exc}")
-            return
+                stop = await _http.again(
+                    model=model,
+                    provider=self.name,
+                    config=cfg,
+                    opts=options,
+                    retries=retries,
+                    error=error,
+                )
+                if stop is None:
+                    continue
+                yield stop
+                return
+            break
 
         for closing in accumulator.close():
             yield closing

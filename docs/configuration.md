@@ -283,6 +283,18 @@ earlier reasoning unless the request says `thinking.clear_thinking: false`, so
 replaying it there would buy nothing. The shipped `glm` profile turns this on;
 it sends GLM's own request shape, so leave it off for any other vendor.
 
+**`max_retries`, `retry_initial_seconds` and `retry_max_seconds` govern a
+second attempt** at a request that failed in a way one could fix — five
+retries by default, waiting 1, 2, 4, 8 then 16 seconds. `max_retries = 0`
+sends each request once, which is what the test suite does.
+[providers.md](providers.md#retries) has the rules: which failures qualify, and
+why a reply already being delivered is never retried.
+
+**`stream = false` asks for the whole reply in one response**, for an endpoint
+that cannot be streamed — a recording proxy in front of a training server. The
+loop sees the same events either way; see
+[providers.md](providers.md#replies-that-are-not-streamed).
+
 **Adding does not replace.** A profile named in a config file merges into the
 shipped one; `[providers.openai.deepseek] timeout_seconds = 30` leaves its
 `base_url` and `api_key_env` alone. A new profile starts from the catalog's

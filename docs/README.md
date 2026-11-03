@@ -37,8 +37,9 @@ does rather than what it will do. At a glance:
   (`read`/`write`/`edit`/`ls`/`bash`/`grep`/`glob`/`skill`); `web_search` and
   `web_fetch` behind pluggable backends; three provider adapters — Messages,
   Responses, Chat Completions. Reasoning is carried across tool calls the way
-  each vendor requires. [tools.md](tools.md) ·
-  [providers.md](providers.md)
+  each vendor requires, a retryable failure is sent again with a doubling
+  backoff, and a Chat Completions endpoint that cannot be streamed is read in
+  one response. [tools.md](tools.md) · [providers.md](providers.md)
 - **Terminal** — streamed, collapsible thinking; colored edit diffs; slash
   commands listed as they are typed; a per-run token, cache and cost readout;
   a fail-closed approval gate. The tool set, the skill set and the reasoning

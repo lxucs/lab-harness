@@ -356,6 +356,19 @@ def test_usage_and_cost_are_totalled_and_shown_per_reply(tmp_path: Path) -> None
     assert "$0.0108" in page
 
 
+def test_a_retried_reply_says_so(tmp_path: Path) -> None:
+    page = _page(tmp_path, _reply(TextBlock(text="a"), usage=Usage(input=10, output=5), retries=2))
+
+    assert "10 in · 5 out · 0% cached · 2 retries" in page
+
+
+def test_a_reply_that_gave_up_still_says_how_many_attempts_it_made(tmp_path: Path) -> None:
+    """It reports no tokens, so the attempts are all there is to say about it."""
+    page = _page(tmp_path, _reply(stop_reason="error", error_message="boom", retries=5))
+
+    assert "5 retries" in page
+
+
 def test_an_unpriced_model_shows_no_cost(tmp_path: Path) -> None:
     page = _page(tmp_path, _reply(TextBlock(text="a"), usage=Usage(input=10, output=5)))
 

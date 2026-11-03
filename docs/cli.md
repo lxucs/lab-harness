@@ -348,7 +348,8 @@ rule that says it is old: `── Resumed 20261010T11 — 12 message(s) ──`.
 
 `--export [ID]` writes the session as one self-contained HTML page beside its
 transcript and prints its path — the conversation, every segment's context,
-and tokens and cost per request, opening from disk with nothing fetched.
+and tokens, cost and retries per request, opening from disk with nothing
+fetched.
 
 Each invocation also records the system prompt, tool declarations, model and
 config (credentials redacted) it ran with, and records them again whenever one

@@ -7,6 +7,11 @@ is named for the protocol rather than for a vendor.
 
 A profile picks its protocol with `api = "chat_completions"` — the default.
 
+A profile can also ask for the whole reply in one response with
+`stream = false`, for an endpoint that cannot be streamed — a recording proxy
+in front of a training server. The request is built here either way; `_single`
+replays the reply as the stream the loop expects.
+
 **This module must never raise** for request, model, or runtime failures — see
 `lab_harness/llm/provider.py`. Every failure path ends in a `StreamError`, built by
 the shared `_http.failure`.
@@ -46,7 +51,7 @@ from lab_harness.llm.events import (
     ToolCallStart,
 )
 from lab_harness.llm.provider import StreamOptions, reasoning_effort
-from lab_harness.llm.providers import _http
+from lab_harness.llm.providers import _http, _single
 from lab_harness.llm.providers._trace import request_shape
 from lab_harness.llm.types import (
     AssistantMessage,
@@ -114,6 +119,22 @@ class ChatCompletionsProvider:
         ctx: Context,
         opts: StreamOptions | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        """Stream one turn, the terminal event stamped with its retry count.
+
+        A wrapper, so the count reaches the message whichever of the body's
+        several exits produced it.
+        """
+        retries = _http.Retries()
+        async for event in self._stream(model, ctx, opts, retries):
+            yield _http.stamp(event, retries)
+
+    async def _stream(
+        self,
+        model: Model,
+        ctx: Context,
+        opts: StreamOptions | None,
+        retries: _http.Retries,
+    ) -> AsyncIterator[StreamEvent]:
         options = opts if opts is not None else StreamOptions()
         cfg = self._config
 
@@ -138,48 +159,98 @@ class ChatCompletionsProvider:
             _log.debug("Reasoning replayed on %d turn(s) as %s", replayed, field)
 
         accumulator = _Accumulator(model=model, provider=self.name)
-        try:
-            async with (
-                _http.client(self._client, cfg) as client,
-                client.stream("POST", url, json=request, headers=headers) as response,
+        if not cfg.stream:
+            # The whole reply in one response, replayed as the stream the loop
+            # expects. Same accumulator, so the translation is shared.
+            async for event in _single.events(
+                model=model,
+                provider=self.name,
+                config=cfg,
+                client=self._client,
+                url=url,
+                request=request,
+                headers=headers,
+                opts=options,
+                accumulator=accumulator,
+                retries=retries,
             ):
-                if response.status_code >= 400:
-                    # A streamed response has not read its body yet, and the
-                    # error detail lives in it.
-                    yield _http.failure(
-                        model, self.name, _http.describe(response, await response.aread())
-                    )
-                    return
-                yield StreamStart()
-                frames = _http.Frames()
-                async for line in response.aiter_lines():
-                    if _http.aborted(options):
-                        # What the stream had reached, not nothing: the words
-                        # were on screen and the tokens were read.
-                        yield _http.failure(
-                            model,
-                            self.name,
-                            _http.ABORTED_NOTICE,
-                            reason="aborted",
-                            partial=accumulator.message(),
+                yield event
+            return
+
+        # `again` owns the bound: it stops retrying at cfg.max_retries.
+        while True:
+            # Whether the consumer has seen any of this attempt. Once it has,
+            # the turn is no longer repeatable — a retry would deliver the
+            # reply from the start and duplicate what it already holds.
+            opened = False
+            try:
+                async with (
+                    _http.client(self._client, cfg) as client,
+                    client.stream("POST", url, json=request, headers=headers) as response,
+                ):
+                    if response.status_code >= 400:
+                        # A streamed response has not read its body yet, and the
+                        # error detail lives in it.
+                        body = await response.aread()
+                        stop = await _http.again(
+                            model=model,
+                            provider=self.name,
+                            config=cfg,
+                            opts=options,
+                            retries=retries,
+                            error=_http.describe(response, body),
+                            response=response,
                         )
+                        if stop is None:
+                            continue
+                        yield stop
                         return
-                    payload = frames.parse(line)
-                    if payload is None:
-                        continue
-                    if isinstance(payload, _http.Done):
-                        break
-                    for translated in accumulator.feed(payload):
-                        yield translated
-                if (error := frames.not_a_stream(response)) is not None:
+                    yield StreamStart()
+                    opened = True
+                    frames = _http.Frames()
+                    async for line in response.aiter_lines():
+                        if _http.aborted(options):
+                            # What the stream had reached, not nothing: the words
+                            # were on screen and the tokens were read.
+                            yield _http.failure(
+                                model,
+                                self.name,
+                                _http.ABORTED_NOTICE,
+                                reason="aborted",
+                                partial=accumulator.message(),
+                            )
+                            return
+                        payload = frames.parse(line)
+                        if payload is None:
+                            continue
+                        if isinstance(payload, _http.Done):
+                            break
+                        for translated in accumulator.feed(payload):
+                            yield translated
+                    if (error := frames.not_a_stream(response)) is not None:
+                        yield _http.failure(model, self.name, error)
+                        return
+            except Exception as exc:
+                # httpx.HTTPError and anything else alike: the contract is the
+                # same, and a failure part-way through a stream is still a
+                # failed turn rather than a partial one.
+                error = f"{type(exc).__name__}: {exc}"
+                if opened:
                     yield _http.failure(model, self.name, error)
                     return
-        except Exception as exc:
-            # httpx.HTTPError and anything else alike: the contract is the
-            # same, and a failure part-way through a stream is still a failed
-            # turn rather than a partial one.
-            yield _http.failure(model, self.name, f"{type(exc).__name__}: {exc}")
-            return
+                stop = await _http.again(
+                    model=model,
+                    provider=self.name,
+                    config=cfg,
+                    opts=options,
+                    retries=retries,
+                    error=error,
+                )
+                if stop is None:
+                    continue
+                yield stop
+                return
+            break
 
         for closing in accumulator.close():
             yield closing
@@ -196,12 +267,14 @@ class ChatCompletionsProvider:
             "messages": _to_wire_messages(
                 ctx.system_prompt, ctx.messages, self._config.replay_reasoning_field
             ),
-            "stream": True,
+            "stream": self._config.stream,
             "max_tokens": opts.max_tokens or model.max_tokens or self._config.default_max_tokens,
         }
-        if self._config.include_usage:
+        if self._config.stream and self._config.include_usage:
             # Without this the final chunk carries no usage at all, and token
-            # accounting silently reads zero for every turn.
+            # accounting silently reads zero for every turn. A non-streamed
+            # reply reports usage of its own, and `stream_options` is not a key
+            # a request that asked for one may carry.
             request["stream_options"] = {"include_usage": True}
         if self._config.preserve_thinking:
             request["thinking"] = dict(_PRESERVED_THINKING)

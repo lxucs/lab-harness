@@ -2,8 +2,8 @@
 
 The page is a *view* of the transcript, never a second record: it reads the
 file, writes a page beside it, and changes nothing. It shows what the terminal
-cannot — every invocation's system prompt, tools and config, usage and cost per
-request — and folds what would bury the conversation: thinking, tool input and
+cannot — every invocation's system prompt, tools and config, usage, cost and
+retries per request — and folds what would bury the conversation: thinking, tool input and
 output, those declarations.
 
 **Self-contained.** One file with its styles and script inline, opened from
@@ -385,15 +385,23 @@ class _Page:
         )
 
     def _usage(self, message: AssistantMessage) -> str:
+        parts: list[str] = []
         usage = message.usage
-        if usage.total == 0:
-            return ""
-        parts = [f"{format_tokens(prompt_tokens(usage))} in", f"{format_tokens(usage.output)} out"]
-        rate = cache_hit_rate(usage)
-        if rate is not None:
-            parts.append(f"{rate:.0%} cached")
-        if (cost := self._cost(message.model, usage)) is not None:
-            parts.append(cost)
+        if usage.total:
+            parts += [
+                f"{format_tokens(prompt_tokens(usage))} in",
+                f"{format_tokens(usage.output)} out",
+            ]
+            rate = cache_hit_rate(usage)
+            if rate is not None:
+                parts.append(f"{rate:.0%} cached")
+            if (cost := self._cost(message.model, usage)) is not None:
+                parts.append(cost)
+        if message.retries:
+            # Outside the usage branch on purpose: a reply that gave up after
+            # five attempts reports no tokens at all, and the attempts are then
+            # the only thing there is to say about it.
+            parts.append("1 retry" if message.retries == 1 else f"{message.retries} retries")
         return " · ".join(parts)
 
     def _cost(self, model: str, usage: Usage) -> str | None:

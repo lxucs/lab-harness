@@ -356,6 +356,26 @@ async def test_missing_credentials_report_through_the_stream_not_the_constructor
     assert config.api_key_env in (failure.message.error_message or "")
 
 
+async def test_the_configured_retry_count_reaches_the_sdk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK owns the schedule; the count is ours, so every provider agrees.
+
+    Left unset, the SDK would quietly retry twice while the OpenAI-family
+    adapters retried five times — a difference an eval would read as the
+    models disagreeing.
+    """
+    monkeypatch.setenv(SHIPPED.api_key_env, "test-key-not-real")
+    monkeypatch.delenv(SHIPPED.auth_token_env, raising=False)
+
+    provider = AnthropicProvider(replace(SHIPPED, max_retries=4))
+    client = provider._client
+    assert isinstance(client, anthropic.AsyncAnthropic)
+
+    assert SHIPPED.max_retries == 5
+    assert client.max_retries == 4
+
+
 async def test_an_already_set_signal_aborts_before_any_request() -> None:
     import asyncio
 

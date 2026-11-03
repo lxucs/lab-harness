@@ -16,6 +16,7 @@ import logging
 from dataclasses import replace
 from typing import Any
 
+import httpx
 import pytest
 
 from lab_harness.config import OpenAIConfig
@@ -49,7 +50,7 @@ from lab_harness.llm.types import (
     UserMessage,
     text,
 )
-from tests.entries import profile_entry
+from tests.entries import profile_entry, retrying_profile
 from tests.http_fakes import (
     TEST_KEY,
     Exploding,
@@ -823,6 +824,60 @@ async def test_a_block_is_closed_exactly_once() -> None:
     events = await collect(provider(recorder))
 
     assert len([e for e in events if isinstance(e, TextEnd)]) == 1
+
+
+#: An assistant message item, as the stream opens one.
+_ASSISTANT = {"type": "message", "role": "assistant"}
+
+
+# --- retries --------------------------------------------------------------
+#
+# The policy itself is `_http.backoff`, tested once in test_chat_completions.py.
+# These cover this adapter's wiring of it: that it retries at all, and that it
+# stops once the consumer has seen part of a reply.
+
+
+async def test_a_rate_limited_request_is_sent_again() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return httpx.Response(429, text="slow down")
+        body = sse(item_added(0, _ASSISTANT), text_delta(0, "hi"), completed())
+        return httpx.Response(200, text=body)
+
+    config = retrying_profile(api="responses", api_key=TEST_KEY)
+    prov = ResponsesProvider(
+        config, "openai", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    events = [event async for event in prov.stream(MODEL, ctx(), None)]
+
+    assert attempts == 3
+    assert final(events).content == (TextBlock(text="hi"),)
+
+
+async def test_a_stream_that_fails_part_way_through_is_not_sent_again() -> None:
+    """The consumer holds the first half; a retry would hand it the whole reply."""
+    sent = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sent
+        sent += 1
+        opening = sse(item_added(0, _ASSISTANT), text_delta(0, "half"))
+        return httpx.Response(200, text=f"{opening}data: {{")
+
+    config = retrying_profile(api="responses", api_key=TEST_KEY)
+    prov = ResponsesProvider(
+        config, "openai", client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    events = [event async for event in prov.stream(MODEL, ctx(), None)]
+
+    assert sent == 1
+    assert any(isinstance(event, TextDelta) for event in events)
 
 
 # --- what is logged -------------------------------------------------------
