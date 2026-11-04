@@ -27,7 +27,7 @@ A run in the terminal:
 
 <img src="https://github.com/lxucs/lab-harness/raw/main/img/demo.gif" width="600" alt="lab-harness in the terminal: a question answered from a handful of documents, one tool call at a time">
 
-The [trajectory report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) a run records — the whole agentic trace for easy reading:
+The [trajectory report](https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html) a run records by `/export` in the terminal — the whole agentic trace for easy reading:
 
 <a href="https://lxucs.github.io/lab-harness/search_agent/runs/793/report.html"><img src="https://github.com/lxucs/lab-harness/raw/main/img/report.png" width="600" alt="The trajectory report of a search agent run: turns, requests, tool calls, tokens, cache and cost, then every step"></a>
 

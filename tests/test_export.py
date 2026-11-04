@@ -394,3 +394,23 @@ def test_the_page_is_written_beside_its_transcript(tmp_path: Path) -> None:
     assert target == tmp_path / "s1.html"
     assert "q" in target.read_text(encoding="utf-8")
     assert path.read_bytes() == before, "exporting must never change the session"
+
+
+def test_the_page_can_be_written_to_a_file_named(tmp_path: Path) -> None:
+    path = _write(tmp_path / "s1.jsonl", (_context(), (UserMessage(content=text("q")),)))
+
+    target = export_html(path, Config(), tmp_path / "page.html")
+
+    assert target == tmp_path / "page.html"
+    assert "q" in target.read_text(encoding="utf-8")
+    assert not (tmp_path / "s1.html").exists()
+
+
+def test_a_directory_named_gets_the_page_under_the_session_id(tmp_path: Path) -> None:
+    path = _write(tmp_path / "s1.jsonl", (_context(), (UserMessage(content=text("q")),)))
+    (tmp_path / "out").mkdir()
+
+    target = export_html(path, Config(), tmp_path / "out")
+
+    assert target == tmp_path / "out" / "s1.html"
+    assert "q" in target.read_text(encoding="utf-8")

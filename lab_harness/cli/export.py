@@ -1,10 +1,10 @@
-"""A saved session as one HTML page: `lab-harness --export`.
+"""A saved session as one HTML page: `lab-harness --export`, or `/export`.
 
 The page is a *view* of the transcript, never a second record: it reads the
-file, writes a page beside it, and changes nothing. It shows what the terminal
-cannot — every invocation's system prompt, tools and config, usage, cost and
-retries per request — and folds what would bury the conversation: thinking, tool input and
-output, those declarations.
+file, writes a page — beside it unless told where — and changes nothing. It
+shows what the terminal cannot — every invocation's system prompt, tools and
+config, usage, cost and retries per request — and folds what would bury the
+conversation: thinking, tool input and output, those declarations.
 
 **Self-contained.** One file with its styles and script inline, opened from
 disk with no server and nothing fetched. A Content-Security-Policy says so to
@@ -87,9 +87,18 @@ _MARKDOWN = (
 )
 
 
-def export_html(path: Path, config: Config) -> Path:
-    """Write the page for the transcript at `path` beside it; return where."""
-    target = path.with_suffix(SUFFIX)
+def export_html(path: Path, config: Config, target: Path | None = None) -> Path:
+    """Write the page for the transcript at `path` and return where.
+
+    Beside the transcript unless `target` names a file, or a directory to
+    write it into under the session's id. Either way an earlier page there is
+    replaced, so exporting again brings it up to date.
+    """
+    page = path.with_suffix(SUFFIX)
+    if target is None:
+        target = page
+    elif target.is_dir():
+        target = target / page.name
     target.write_text(render_html(read_transcript(path), config), encoding="utf-8")
     return target
 

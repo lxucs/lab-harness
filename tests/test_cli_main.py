@@ -470,6 +470,24 @@ async def test_the_gate_guards_the_configured_tools(monkeypatch: pytest.MonkeyPa
     assert not gate.requires_approval("read")
 
 
+async def test_the_terminal_is_handed_the_transcript_to_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminals: list[_StubTerminal] = []
+
+    class _FakeTerminal(_StubTerminal):
+        def __init__(self, console: object, config: Config) -> None:
+            super().__init__({})
+            terminals.append(self)
+
+    monkeypatch.setattr("lab_harness.cli.main.Terminal", _FakeTerminal)
+
+    await run_interactive(_args(no_save=False, cwd=str(tmp_path)), Config())
+
+    [path] = list_sessions(tmp_path, Config().session)
+    assert getattr(terminals[0], "transcript", None) == path
+
+
 def test_interactive_resume_shows_the_restored_history(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

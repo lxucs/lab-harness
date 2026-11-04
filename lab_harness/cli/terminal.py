@@ -35,6 +35,10 @@ as a turn; `/skills` lists them. `/tools` and `/skills` also *choose* what
 applies mid-session, and the system prompt is rebuilt to match — by a callable
 the CLI hands over, being what knows the flags that shaped it.
 
+**`/export` reads the transcript, not the agent.** The CLI hands over the
+path once recording starts, so the page is what `--export` would write for the
+session so far, and a session that saves nothing has nothing to export.
+
 **`/model` and `/effort` change what the next runs ask for.** Each replaces
 the agent's model, so the next run's `agent_start` carries it and a recorded
 session opens a new segment there. `/model` stays inside the provider this
@@ -87,6 +91,7 @@ from lab_harness.cli.commands import (
     UnknownCommand,
     menu_style,
 )
+from lab_harness.cli.export import export_html
 from lab_harness.cli.renderers import GLYPH, EventRenderer, display_name
 from lab_harness.cli.usage import (
     UsageSummary,
@@ -178,6 +183,12 @@ class Terminal:
                     self._print_skills,
                     arguments="[names]",
                 ),
+                Command(
+                    "export",
+                    "Write the session as an HTML page, beside its transcript or to a path",
+                    self._export,
+                    arguments="[path]",
+                ),
                 Command("clear", "Forget the conversation and start over", self._clear),
                 Command("help", "List the commands", self._print_help),
                 Command("exit", "Exit the session", self._exit, aliases=("quit",)),
@@ -202,6 +213,9 @@ class Terminal:
         #: being what knows the flags that shaped the prompt; None leaves the
         #: prompt as it was built.
         self.rebuild_prompt: Callable[[str], str] | None = None
+        #: The transcript this session is recorded to, which `/export` reads.
+        #: The CLI sets it once recording starts; None while nothing is saved.
+        self.transcript: Path | None = None
 
     def attach(self, agent: Agent) -> None:
         """Bind the agent and start rendering its events."""
@@ -541,6 +555,27 @@ class Terminal:
                 style=self.config.terminal.theme.muted,
             )
         )
+        self.console.print()
+
+    async def _export(self, path: str) -> None:
+        """`/export` writes the page beside the transcript; `/export PATH` to a
+        file or into a directory, relative to the session's directory."""
+        theme = self.config.terminal.theme
+        if self.transcript is None:
+            self.console.print(
+                Text(
+                    "This session is not being saved, so there is nothing to export",
+                    style=theme.warning,
+                )
+            )
+            self.console.print()
+            return
+        target = None
+        if path:
+            target = (Path(self.agent.cwd).expanduser() / Path(path).expanduser()).resolve()
+        written = export_html(self.transcript, self.config, target)
+        # Unwrapped, so a long path stays one line to copy.
+        self.console.print(Text(f"Exported to {written}", style=theme.muted), soft_wrap=True)
         self.console.print()
 
     async def _set_model(self, wanted: str) -> None:

@@ -368,6 +368,9 @@ async def run_interactive(args: argparse.Namespace, config: Config) -> int:
     terminal.attach(agent)
     terminal.welcome()
     recorder = _attach_session(agent, args, config, console)
+    if recorder is not None:
+        # What `/export` reads; the terminal never sees the recorder itself.
+        terminal.transcript = recorder.path
     if args.resume is not None:
         # The history itself, so the session continues where the eye left off
         # rather than from the one-line note above it. One-shot skips this: its

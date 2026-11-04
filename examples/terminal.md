@@ -20,6 +20,7 @@ uv run lab-harness
 | `/status` | Tokens, cache hits and cost so far |
 | `/effort [LEVEL]` | Show or set how hard the model thinks, e.g. `/effort low`; `/effort default` sends none |
 | `/model [ID]` | Show or switch the model, among the ones this session's provider serves |
+| `/export [PATH]` | Write the session so far as a web page, beside its transcript or to `PATH` |
 | `/clear` | Forget the conversation; the transcript on disk keeps it |
 | `/help` | Every command, with what it does |
 | `Esc` | Close the command list once it is open |
@@ -80,13 +81,9 @@ open "$(uv run lab-harness --export)"                # the latest session, in a 
 ```
 
 `--resume` with `--no-save` is a read-only view: the whole conversation, Ctrl-O
-to expand every thought, and nothing appended to the file. `--export` writes
-one self-contained HTML page beside the transcript, with more than the terminal
-shows: each invocation's system prompt, tools and config, and tokens and cost
-per request. The page searches the conversation (`/`), folds thinking (`t`) and
-tool calls (`o`), lists the turns down the side, and follows the system's light
-or dark theme. It loads nothing from the network, so it can be mailed or
-attached as it is.
+to expand every thought, and nothing appended to the file. `--export` — or
+`/export` inside a session — writes one self-contained HTML page beside the
+transcript.
 
 Transcripts live under `~/.lab-harness/sessions/`, one directory per project.
 Each records what every request was sent with;

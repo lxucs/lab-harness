@@ -54,6 +54,7 @@ from lab_harness.llm.types import (
     text,
 )
 from lab_harness.logs import configure_logging
+from lab_harness.session import SessionRecorder, start_recorder
 from lab_harness.tools.skills import skill
 from tests.entries import model_entry
 
@@ -686,6 +687,74 @@ async def test_clear_forgets_the_conversation_but_keeps_the_session() -> None:
 
     assert len(agent.state.messages) == 2, "only the second run's pair is left"
     assert "Conversation cleared" in buffer.getvalue()
+
+
+def _record(terminal: Terminal, agent: Agent) -> SessionRecorder:
+    """Record the session and hand the terminal its transcript, as the CLI does."""
+    recorder = start_recorder(
+        cwd=agent.cwd,
+        model=agent.state.model,
+        system_prompt=agent.state.system_prompt,
+        config=terminal.config,
+        restored=0,
+    )
+    agent.subscribe(recorder)
+    terminal.transcript = recorder.path
+    return recorder
+
+
+async def test_export_writes_the_session_beside_its_transcript() -> None:
+    terminal, buffer = _terminal(["hello", "/export"])
+    agent = _attach(terminal, FakeProvider([text_response("Hi there")]))
+    recorder = _record(terminal, agent)
+
+    await terminal.run()
+    recorder.close()
+
+    page = recorder.path.with_suffix(".html")
+    assert "Hi there" in page.read_text(encoding="utf-8")
+    assert str(page) in buffer.getvalue(), "it says where, on one line to copy"
+
+
+async def test_export_again_replaces_the_page_with_the_session_so_far() -> None:
+    terminal, _ = _terminal(["hello", "/export", "again", "/export"])
+    agent = _attach(terminal, FakeProvider([text_response("first"), text_response("second")]))
+    recorder = _record(terminal, agent)
+
+    await terminal.run()
+    recorder.close()
+
+    [page] = recorder.path.parent.glob("*.html")
+    assert "second" in page.read_text(encoding="utf-8")
+
+
+async def test_export_to_a_path_resolves_it_against_the_session_directory(tmp_path: Path) -> None:
+    (tmp_path / "proj" / "out").mkdir(parents=True)
+    terminal, buffer = _terminal(["hello", "/export page.html", "/export out"])
+    agent = _attach(terminal, FakeProvider([text_response("Hi there")]), cwd=str(tmp_path / "proj"))
+    recorder = _record(terminal, agent)
+
+    await terminal.run()
+    recorder.close()
+
+    named = tmp_path / "proj" / "page.html"
+    into = tmp_path / "proj" / "out" / f"{recorder.session_id}.html"
+    assert "Hi there" in named.read_text(encoding="utf-8")
+    assert "Hi there" in into.read_text(encoding="utf-8"), "a directory gets the session's id"
+    assert str(named) in buffer.getvalue() and str(into) in buffer.getvalue()
+    assert not recorder.path.with_suffix(".html").exists(), "nothing beside the transcript"
+
+
+async def test_export_without_a_transcript_says_there_is_nothing_to_export(
+    tmp_path: Path,
+) -> None:
+    terminal, buffer = _terminal(["hello", "/export page.html"])
+    _attach(terminal, FakeProvider([text_response("Hi there")]), cwd=str(tmp_path))
+
+    await terminal.run()
+
+    assert "not being saved" in buffer.getvalue()
+    assert not (tmp_path / "page.html").exists()
 
 
 async def test_model_shows_the_model_and_the_ones_on_its_provider() -> None:

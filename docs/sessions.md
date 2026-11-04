@@ -295,11 +295,11 @@ terminal shows the history anyway, by drawing it directly through the renderer
 | Command | Shows |
 |---|---|
 | `lab-harness --resume ID --no-save` | The conversation in the terminal, read-only |
-| `lab-harness --export [ID]` | One self-contained HTML page beside the transcript: the conversation, every segment's context, usage, cost and retries per request |
+| `lab-harness --export [ID]`, or `/export [PATH]` in a session | One self-contained HTML page beside the transcript, or at `PATH`: the conversation, every segment's context, usage, cost and retries per request |
 | `examples/trajectories.py [ID]` | Every request exactly as sent, one JSON line each; `--wire` as the endpoint received it |
 
-The page is a view, not a record: it is written next to the `.jsonl`, never
-read back, and safe to delete. See [cli.md](cli.md#sessions).
+The page is a view, not a record: it is written next to the `.jsonl` unless
+`/export` is given a path, never read back, and safe to delete. See [cli.md](cli.md#sessions).
 
 ## Configuration
 

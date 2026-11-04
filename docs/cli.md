@@ -192,6 +192,7 @@ rather than sending:
 | `/model [ID]` | Show the model, or switch to another one this session's provider serves |
 | `/tools [NAMES]` | Show the tools this session has, or choose them — `read,skill`; `none` is none |
 | `/skills [NAMES]` | List the skills that apply, or choose them — `commit,release`; `none` is none |
+| `/export [PATH]` | Write the session so far as an HTML page beside its transcript, or to `PATH` — a file, or a directory to put it in; relative to the session's directory. Again replaces it |
 | `/clear` | Forget the conversation and start over; the transcript keeps what came before |
 | `/help` | List the commands |
 | `/exit`, `/quit`, `exit` | Exit |
@@ -349,7 +350,9 @@ rule that says it is old: `── Resumed 20261010T11 — 12 message(s) ──`.
 `--export [ID]` writes the session as one self-contained HTML page beside its
 transcript and prints its path — the conversation, every segment's context,
 and tokens, cost and retries per request, opening from disk with nothing
-fetched.
+fetched. `/export` does the same from inside a session, for the session so far:
+run it again and the page is replaced, never added to. `/export PATH` writes it
+elsewhere. A session run with `--no-save` has no transcript to export.
 
 Each invocation also records the system prompt, tool declarations, model and
 config (credentials redacted) it ran with, and records them again whenever one
